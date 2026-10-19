@@ -1,33 +1,58 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { CreditCard, Plus, CheckCircle2, Clock, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatRupiah } from '@/lib/formatters';
 
+interface DebtItem {
+  id: string;
+  name: string;
+  type: string;
+  amount: number;
+  dueDate: string;
+  creditor: string;
+}
+
 export function DebtTab() {
-  const { settings, addToast } = useApp();
+  const { settings, addToast, user, walletsWithBalance, dataResetVersion } = useApp();
   const hide = settings.hideBalance;
 
-  const [debts, setDebts] = useState([
-    {
-      id: 'd-1',
-      name: 'BCA KrisFlyer Cicilan',
-      type: 'payable',
-      amount: 2030500,
-      dueDate: '10 Apr 2026',
-      creditor: 'Bank BCA',
-    },
-    {
-      id: 'd-2',
-      name: 'ShopeePayLater',
-      type: 'payable',
-      amount: 120000,
-      dueDate: '14 Apr 2026',
-      creditor: 'Shopee',
-    },
-  ]);
+  const storageKey = user?.uid ? `budggt_debts_${user.uid}` : 'budggt_debts';
+  const scopeKey = `${storageKey}_${dataResetVersion}`;
+  const [debtState, setDebtState] = useState<{ scope: string; items: DebtItem[] } | null>(null);
+
+  const debts = useMemo<DebtItem[]>(() => {
+    if (debtState?.scope === scopeKey) return debtState.items;
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw !== null) {
+        return JSON.parse(raw);
+      }
+      if (!user) {
+        const creditWallets = walletsWithBalance.filter(
+          (w) => (w.type === 'credit' || w.type === 'paylater') && w.balance < 0
+        );
+        if (creditWallets.length > 0) {
+          const initial = creditWallets.map((w) => ({
+            id: `d-${w.id}`,
+            name: w.name,
+            type: 'payable',
+            amount: Math.abs(w.balance),
+            dueDate: w.type === 'credit' ? '10 Apr 2026' : '14 Apr 2026',
+            creditor: w.name,
+          }));
+          localStorage.setItem(storageKey, JSON.stringify(initial));
+          return initial;
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  }, [debtState, scopeKey, storageKey, user, walletsWithBalance]);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [name, setName] = useState('');
@@ -41,7 +66,7 @@ export function DebtTab() {
     const val = Number(amount.replace(/\D/g, ''));
     if (!name.trim() || val <= 0) return;
 
-    setDebts([
+    const updated = [
       ...debts,
       {
         id: `d-${Date.now()}`,
@@ -51,7 +76,11 @@ export function DebtTab() {
         dueDate: dueDate || 'Akhir Bulan',
         creditor: 'Pihak Terkait',
       },
-    ]);
+    ];
+    setDebtState({ scope: scopeKey, items: updated });
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+    } catch {}
 
     addToast('Utang Ditambahkan', 'Catatan utang berhasil disimpan.');
     setIsAddOpen(false);
@@ -61,48 +90,87 @@ export function DebtTab() {
   };
 
   const handlePay = (id: string) => {
-    setDebts(debts.filter((d) => d.id !== id));
+    const updated = debts.filter((d) => d.id !== id);
+    setDebtState({ scope: scopeKey, items: updated });
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(updated));
+    } catch {}
     addToast('Utang Lunas', 'Selamat! Catatan utang telah ditandai lunas.');
   };
 
+  const liquidAssets = walletsWithBalance
+    .filter((w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance > 0)
+    .reduce((acc, w) => acc + w.balance, 0);
+  const debtRatioPct = liquidAssets > 0 ? Math.round((totalDebt / liquidAssets) * 100) : 0;
+
   return (
-    <div className="space-y-4 pb-28">
+    <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
-      <div className="flex items-center justify-between pt-2 px-1">
+      <div className="flex items-center justify-between pt-2 lg:pt-0 px-1">
         <div>
-          <h1 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
+          <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
             Utang & Cicilan
           </h1>
-          <p className="text-xs font-semibold text-gray-400 mt-0.5">
-            Pantau dan lunasi utang tepat waktu.
+          <p className="text-xs lg:text-sm font-semibold text-gray-400 mt-0.5">
+            Pantau dan lunasi kewajiban tepat waktu agar arus kas tetap sehat.
           </p>
         </div>
         <button
           type="button"
           onClick={() => setIsAddOpen(true)}
-          className="w-10 h-10 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center font-bold shadow-xs cursor-pointer"
+          className="h-10 px-3.5 lg:px-4 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95"
         >
-          <Plus size={20} strokeWidth={2.6} />
+          <Plus size={18} strokeWidth={2.8} />
+          <span className="hidden sm:inline">Catat Utang</span>
         </button>
       </div>
 
-      {/* Summary Box */}
-      <div className="bg-[#14161C] text-white p-5 rounded-3xl shadow-xl space-y-2 border border-white/5">
-        <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider block">
-          TOTAL KEWAJIBAN
-        </span>
-        <div className="text-3xl font-black tabular-nums text-white">
-          {formatRupiah(totalDebt, hide)}
+      {/* Full-Width Black Hero Card */}
+      <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl border border-white/5">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-black text-[#D4F826] uppercase tracking-widest">
+                TOTAL KEWAJIBAN AKTIF
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-white/10 text-gray-200 text-[10px] font-black uppercase">
+                {debts.length > 0 ? `${debts.length} TAGIHAN` : 'BEBAS UTANG'}
+              </span>
+            </div>
+            <div className="text-3xl sm:text-4xl lg:text-[42px] font-black tabular-nums text-white leading-none">
+              {formatRupiah(totalDebt, hide)}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-6 lg:gap-10 pt-3 lg:pt-0 border-t lg:border-t-0 border-white/10">
+            <div>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+                RASIO TERHADAP KAS
+              </span>
+              <span
+                className={`text-sm lg:text-lg font-black tabular-nums mt-0.5 block ${
+                  debtRatioPct <= 20 ? 'text-[#D4F826]' : 'text-[#FB7185]'
+                }`}
+              >
+                {debtRatioPct}% dari aset likuid
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+                STATUS KESEHATAN
+              </span>
+              <span className="text-sm lg:text-lg font-black text-white mt-0.5 block">
+                {totalDebt === 0 ? 'Sangat Prima' : debtRatioPct <= 25 ? 'Terkendali' : 'Perlu Perhatian'}
+              </span>
+            </div>
+          </div>
         </div>
-        <span className="text-xs text-gray-400 block">
-          {debts.length > 0 ? `${debts.length} tagihan aktif` : 'Bebas utang!'}
-        </span>
       </div>
 
       {/* Debts List */}
-      <div className="space-y-3">
+      <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-4">
         {debts.length === 0 ? (
-          <div className="text-center py-12 bg-white dark:bg-[#16181D] rounded-3xl p-6 border border-gray-100 dark:border-gray-800 space-y-1">
+          <div className="lg:col-span-2 text-center py-12 bg-white dark:bg-[#16181D] rounded-3xl p-6 border border-gray-100 dark:border-gray-800 space-y-1">
             <span className="text-3xl">🎉</span>
             <p className="text-sm font-extrabold text-gray-900 dark:text-white mt-2">
               Tidak ada utang – keren!
@@ -113,15 +181,17 @@ export function DebtTab() {
           debts.map((d) => (
             <div
               key={d.id}
-              className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 flex items-center justify-between"
+              className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 flex items-center justify-between gap-4 hover:border-[#D4F826]/60 transition-colors"
             >
-              <div className="space-y-1">
-                <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">{d.name}</h3>
-                <div className="flex items-center gap-2 text-[10px] text-gray-400 font-medium">
-                  <Clock size={11} />
+              <div className="space-y-1 min-w-0">
+                <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white truncate">
+                  {d.name}
+                </h3>
+                <div className="flex items-center gap-2 text-[11px] text-gray-400 font-medium">
+                  <Clock size={12} />
                   <span>Jatuh tempo: {d.dueDate}</span>
                 </div>
-                <div className="text-base font-black text-red-500 tabular-nums">
+                <div className="text-base lg:text-lg font-black text-red-500 tabular-nums pt-0.5">
                   {formatRupiah(d.amount, hide)}
                 </div>
               </div>
@@ -129,7 +199,7 @@ export function DebtTab() {
               <button
                 type="button"
                 onClick={() => handlePay(d.id)}
-                className="px-3.5 py-2 bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black rounded-xl cursor-pointer"
+                className="px-4 py-2.5 bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black rounded-2xl cursor-pointer shrink-0 transition-transform active:scale-95"
               >
                 Bayar Lunas
               </button>

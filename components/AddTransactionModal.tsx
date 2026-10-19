@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Delete, Check, Sparkles } from 'lucide-react';
 import { useApp } from './AppContext';
@@ -22,6 +22,8 @@ function AddTransactionForm() {
     activeDate,
     addToast,
   } = useApp();
+
+  const amountInputRef = useRef<HTMLInputElement>(null);
 
   const [type, setType] = useState<TransactionType>(() => editingTransaction?.transaction.type || 'expense');
   const [amountStr, setAmountStr] = useState<string>(() =>
@@ -54,6 +56,13 @@ function AddTransactionForm() {
   const [note, setNote] = useState<string>(() => editingTransaction?.transaction.note || '');
   const [activeGroup, setActiveGroup] = useState<string>('Semua');
 
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      amountInputRef.current?.focus();
+    }, 80);
+    return () => clearTimeout(timer);
+  }, []);
+
   // Filter categories by type
   const availableCategories = categories.filter((c) => c.type === (type === 'income' ? 'income' : 'expense'));
 
@@ -75,32 +84,22 @@ function AddTransactionForm() {
     }
   };
 
-  // Keypad actions
-  const handleDigit = (digit: string) => {
-    if (amountStr.length >= 11) return;
-    if (digit === '000') {
-      if (!amountStr || amountStr === '0') return;
-      setAmountStr((prev) => prev + '000');
-    } else {
-      if (amountStr === '0') {
-        setAmountStr(digit);
-      } else {
-        setAmountStr((prev) => prev + digit);
-      }
+  const handleAmountInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawDigits = e.target.value.replace(/\D/g, '').replace(/^0+/, '');
+    if (rawDigits.length <= 12) {
+      setAmountStr(rawDigits);
     }
-  };
-
-  const handleBackspace = () => {
-    setAmountStr((prev) => prev.slice(0, -1));
   };
 
   const handleQuickAdd = (addVal: number) => {
     const cur = parseInt(amountStr, 10) || 0;
     setAmountStr(String(cur + addVal));
+    amountInputRef.current?.focus();
   };
 
   const handleClear = () => {
     setAmountStr('');
+    amountInputRef.current?.focus();
   };
 
   const handleSave = () => {
@@ -167,11 +166,16 @@ function AddTransactionForm() {
     setIsAddTransactionOpen(false);
   };
 
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   const handleDelete = () => {
-    if (editingTransaction && confirm('Hapus transaksi ini?')) {
-      deleteTransaction(editingTransaction.transaction.id);
-      setIsAddTransactionOpen(false);
+    if (!editingTransaction) return;
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
     }
+    deleteTransaction(editingTransaction.transaction.id);
+    setIsAddTransactionOpen(false);
   };
 
   // Accent colors
@@ -181,9 +185,6 @@ function AddTransactionForm() {
       : type === 'income'
       ? 'text-emerald-600 dark:text-emerald-400'
       : 'text-blue-600 dark:text-blue-400';
-
-  const accentBgClass =
-    type === 'expense' ? 'bg-red-500' : type === 'income' ? 'bg-emerald-600' : 'bg-blue-600';
 
   return (
     <div className="w-full max-w-lg landscape:max-w-xl max-h-[92vh] landscape:max-h-[96vh] flex flex-col bg-white dark:bg-[#111827] rounded-t-3xl sm:rounded-3xl landscape:rounded-3xl shadow-2xl overflow-hidden border border-black/5 dark:border-white/10">
@@ -211,10 +212,15 @@ function AddTransactionForm() {
             <button
               type="button"
               onClick={handleDelete}
-              className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors"
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
+                confirmDelete
+                  ? 'bg-red-600 text-white hover:bg-red-700'
+                  : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30'
+              }`}
               title="Hapus transaksi"
             >
-              <Delete size={20} />
+              <Delete size={16} />
+              {confirmDelete && <span>Yakin Hapus?</span>}
             </button>
           )}
           <button
@@ -227,7 +233,7 @@ function AddTransactionForm() {
         </div>
       </div>
 
-      <div className="overflow-y-auto flex-1 p-5 space-y-5 no-scrollbar">
+      <div className="overflow-y-auto flex-1 p-5 space-y-4 no-scrollbar">
         {/* Segmented Type Selector */}
         <div className="grid grid-cols-3 p-1 bg-gray-100 dark:bg-gray-800 rounded-2xl">
           <button
@@ -265,21 +271,44 @@ function AddTransactionForm() {
           </button>
         </div>
 
-        {/* Display Nominal */}
-        <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl border border-gray-100 dark:border-gray-800 text-center">
-          <span className="text-xs uppercase tracking-wider text-gray-400 font-semibold">Nominal</span>
-          <div className="flex items-center justify-center gap-1.5 mt-1">
-            <span className={`text-2xl font-bold ${accentColorClass}`}>Rp</span>
-            <span className={`text-4xl font-extrabold tracking-tight tabular-nums ${accentColorClass}`}>
-              {currentAmount > 0 ? formatNumberOnly(currentAmount) : '0'}
-            </span>
+        {/* Direct Keyboard Nominal Input */}
+        <div
+          onClick={() => amountInputRef.current?.focus()}
+          className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl border-2 border-gray-200 dark:border-gray-700 focus-within:border-teal-500 dark:focus-within:border-teal-400 transition-all text-center cursor-text"
+        >
+          <label
+            htmlFor="tx-nominal-input"
+            className="text-xs uppercase tracking-wider text-gray-400 font-semibold block cursor-text"
+          >
+            Ketik Nominal dengan Keyboard (Rp)
+          </label>
+          <div className="flex items-center justify-center gap-2 mt-1.5">
+            <span className={`text-2xl font-bold select-none ${accentColorClass}`}>Rp</span>
+            <input
+              ref={amountInputRef}
+              id="tx-nominal-input"
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              autoFocus
+              placeholder="0"
+              value={currentAmount > 0 ? formatNumberOnly(currentAmount) : ''}
+              onChange={handleAmountInputChange}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && currentAmount > 0) {
+                  e.preventDefault();
+                  handleSave();
+                }
+              }}
+              className={`w-full max-w-[260px] bg-transparent text-center text-4xl font-extrabold tracking-tight tabular-nums focus:outline-none placeholder:text-gray-300 dark:placeholder:text-gray-600 ${accentColorClass}`}
+            />
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
             {type === 'expense'
-              ? 'Uang keluar dari dompet pilihan'
+              ? 'Ketik langsung nominal pengeluaran Anda'
               : type === 'income'
-              ? 'Uang masuk ke dompet pilihan'
-              : 'Pindahkan saldo antar dompet'}
+              ? 'Ketik langsung nominal pemasukan Anda'
+              : 'Ketik langsung nominal yang ingin ditransfer'}
           </p>
         </div>
 
@@ -401,7 +430,7 @@ function AddTransactionForm() {
             </div>
 
             {/* Categories Grid */}
-            <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 max-h-36 overflow-y-auto p-1 rounded-xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 no-scrollbar">
+            <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 max-h-44 overflow-y-auto p-1 rounded-xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 no-scrollbar">
               {filteredCategories.map((c) => {
                 const isSelected = selectedCategoryId === c.id;
                 return (
@@ -454,32 +483,16 @@ function AddTransactionForm() {
               placeholder="Mis: Sarapan, beli bensin, dll"
               value={note}
               onChange={(e) => setNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && currentAmount > 0) {
+                  e.preventDefault();
+                  handleSave();
+                }
+              }}
               maxLength={60}
               className="w-full py-2 px-3 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 text-gray-900 dark:text-gray-100"
             />
           </div>
-        </div>
-
-        {/* Numeric Keypad */}
-        <div className="grid grid-cols-3 gap-2 pt-1 border-t border-gray-100 dark:border-gray-800">
-          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '000', '0'].map((digit) => (
-            <button
-              key={digit}
-              type="button"
-              onClick={() => handleDigit(digit)}
-              className="h-12 flex items-center justify-center text-lg font-bold rounded-xl bg-gray-50 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 active:scale-95 transition-all text-gray-900 dark:text-gray-100"
-            >
-              {digit}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={handleBackspace}
-            className="h-12 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 active:scale-95 transition-all text-gray-600 dark:text-gray-300"
-            title="Hapus"
-          >
-            <Delete size={20} />
-          </button>
         </div>
       </div>
 

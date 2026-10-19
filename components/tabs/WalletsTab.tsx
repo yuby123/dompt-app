@@ -23,6 +23,7 @@ export function WalletsTab() {
   const {
     walletsWithBalance,
     totalBalance,
+    goals,
     settings,
     openAddWallet,
     openEditWallet,
@@ -30,7 +31,9 @@ export function WalletsTab() {
     verifyWalletBalance,
   } = useApp();
 
-  const [expandedWalletId, setExpandedWalletId] = useState<string | null>('wallet-bca');
+  const [expandedWalletId, setExpandedWalletId] = useState<string | null>(
+    () => walletsWithBalance[0]?.id || null
+  );
   const hide = settings.hideBalance;
 
   const getWalletIcon = (type: string) => {
@@ -71,68 +74,104 @@ export function WalletsTab() {
     }
   };
 
-  // Earmarked goals for BCA and Mandiri
-  const reservedBreakdownBCA = [
-    { name: 'Dana Darurat', amount: 14500000, emoji: '🚨' },
-  ];
+  const totalAvailable = walletsWithBalance
+    .filter((w) => w.type !== 'credit' && w.type !== 'paylater' && w.availableBalance > 0)
+    .reduce((acc, w) => acc + w.availableBalance, 0);
 
-  const reservedBreakdownMandiri = [
-    { name: 'Jalan ke Jogja', amount: 150000, emoji: '🌲' },
-    { name: 'Kado Mama', amount: 300000, emoji: '👱' },
-    { name: 'Sepeda Adik', amount: 50000, emoji: '🚲' },
-    { name: 'Emas 5gr', amount: 2000000, emoji: '🥇' },
-  ];
+  const totalReserved = walletsWithBalance.reduce((acc, w) => acc + (w.reservedAmount || 0), 0);
+
+  const totalCreditLiability = walletsWithBalance
+    .filter((w) => (w.type === 'credit' || w.type === 'paylater') && w.balance < 0)
+    .reduce((acc, w) => acc + Math.abs(w.balance), 0);
 
   return (
-    <div className="space-y-4 pb-28">
+    <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
-      <div className="flex items-center justify-between pt-2 px-1">
+      <div className="flex items-center justify-between pt-2 lg:pt-0 px-1">
         <div>
-          <h1 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
+          <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
             Dompet
           </h1>
-          <p className="text-xs font-semibold text-gray-400 mt-0.5">
-            Atur semua sumber uangmu.
+          <p className="text-xs lg:text-sm font-semibold text-gray-400 mt-0.5">
+            Atur semua sumber uang, rekening bank, e-wallet, dan kartu kreditmu.
           </p>
         </div>
         <button
           type="button"
           onClick={openAddWallet}
-          className="w-10 h-10 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center font-bold shadow-xs cursor-pointer"
+          className="h-10 px-3.5 lg:px-4 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95"
           title="Tambah Dompet"
         >
-          <Plus size={20} strokeWidth={2.6} />
+          <Plus size={18} strokeWidth={2.8} />
+          <span className="hidden sm:inline">Tambah Dompet</span>
         </button>
       </div>
 
-      {/* Saldo & Tabungan Total Banner */}
-      <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-[#D4F826]/30 text-black dark:text-[#D4F826] flex items-center justify-center font-bold">
-            ⚡
+      {/* Full-Width Black Hero Card (Consistent across pages) */}
+      <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl border border-white/5 space-y-5">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+          {/* Left: Total Saldo & Tabungan */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest">
+                TOTAL SALDO & TABUNGAN BERSIH
+              </span>
+              <span className="px-2 py-0.5 rounded-md bg-[#D4F826] text-black text-[10px] font-black uppercase">
+                {walletsWithBalance.length} DOMPET
+              </span>
+            </div>
+            <div className="text-3xl sm:text-4xl lg:text-[42px] font-black tracking-tight tabular-nums leading-none">
+              {formatRupiah(totalBalance, hide)}
+            </div>
+            <p className="text-xs text-gray-400 font-semibold">
+              Klik salah satu kartu dompet di bawah untuk verifikasi saldo atau melihat rincian dana cadangan.
+            </p>
           </div>
-          <span className="text-xs font-black text-gray-500 uppercase tracking-wider">
-            SALDO & TABUNGAN
-          </span>
+
+          {/* Right: 3 Summary Metrics */}
+          <div className="grid grid-cols-3 gap-3 lg:gap-8 pt-4 lg:pt-0 border-t lg:border-t-0 border-white/10">
+            <div>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+                SIAP PAKAI
+              </span>
+              <span className="text-sm lg:text-lg font-black text-[#D4F826] tabular-nums mt-0.5 block">
+                {formatRupiah(totalAvailable, hide)}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+                DICADANGKAN
+              </span>
+              <span className="text-sm lg:text-lg font-black text-white tabular-nums mt-0.5 block">
+                {formatRupiah(totalReserved, hide)}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+                TAGIHAN KREDIT
+              </span>
+              <span className="text-sm lg:text-lg font-black text-[#FB7185] tabular-nums mt-0.5 block">
+                {formatRupiah(totalCreditLiability, hide)}
+              </span>
+            </div>
+          </div>
         </div>
-        <span className="text-base sm:text-lg font-black text-[#84CC16] dark:text-[#D4F826] tabular-nums">
-          {formatRupiah(totalBalance, hide)}
-        </span>
       </div>
 
-      {/* Wallet Cards List */}
-      <div className="space-y-3">
+      {/* Wallet Cards List: Single Column on Mobile (<lg), 3-Column Grid on Desktop (lg+) */}
+      <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-3 lg:gap-4 lg:items-start">
         {walletsWithBalance.map((w: WalletWithBalance) => {
           const Icon = getWalletIcon(w.type);
           const isExpanded = expandedWalletId === w.id;
           const isNegative = w.balance < 0;
 
-          const breakdown =
-            w.id === 'wallet-bca'
-              ? reservedBreakdownBCA
-              : w.id === 'wallet-mandiri'
-              ? reservedBreakdownMandiri
-              : [];
+          const breakdown = goals
+            .filter((g) => g.walletId === w.id && g.currentAmount > 0)
+            .map((g) => ({
+              name: g.name,
+              amount: g.currentAmount,
+              emoji: g.emoji || '🎯',
+            }));
 
           return (
             <div

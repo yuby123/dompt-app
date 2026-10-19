@@ -14,7 +14,7 @@ export function Navigation() {
     : 'bg-[#D4F826] hover:bg-[#c6ec15] shadow-[#D4F826]/30';
 
   return (
-    <nav className="fixed bottom-0 inset-x-0 z-40 pb-4 pt-1 px-4 pointer-events-none transition-all">
+    <nav className="fixed bottom-0 inset-x-0 z-40 pb-4 pt-1 px-4 pointer-events-none transition-all lg:hidden">
       <div className="w-full max-w-md mx-auto pointer-events-auto">
         <div className="bg-white/95 dark:bg-[#16181D]/95 backdrop-blur-xl rounded-full p-2 shadow-2xl border border-gray-200/80 dark:border-gray-800/80 flex items-center justify-between px-3">
           {/* 1. Dashboard Tab */}

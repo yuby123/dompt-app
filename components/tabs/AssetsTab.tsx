@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Plus,
   Landmark,
@@ -9,27 +9,87 @@ import {
   TrendingUp,
   Lightbulb,
   X,
+  Trash2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatRupiah } from '@/lib/formatters';
 
+type AssetItem = { id: string; name: string; amount: number };
+
 export function AssetsTab() {
-  const { walletsWithBalance, totalBalance, settings, addToast } = useApp();
+  const { walletsWithBalance, totalBalance, dashboardSummary, settings, addToast, user, dataResetVersion } = useApp();
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [assetType, setAssetType] = useState<'liquid' | 'fixed'>('liquid');
   const [assetName, setAssetName] = useState('');
   const [assetAmount, setAssetAmount] = useState('');
 
-  const [liquidAssets, setLiquidAssets] = useState<{ id: string; name: string; amount: number }[]>([]);
-  const [fixedAssets, setFixedAssets] = useState<{ id: string; name: string; amount: number }[]>([]);
+  const storagePrefix = user?.uid ? `_${user.uid}` : '';
+  const liquidKey = `budggt_assets_liquid${storagePrefix}`;
+  const fixedKey = `budggt_assets_fixed${storagePrefix}`;
+  const scopeKey = `${liquidKey}_${dataResetVersion}`;
+
+  const [liquidState, setLiquidState] = useState<{ scope: string; items: AssetItem[] } | null>(null);
+  const [fixedState, setFixedState] = useState<{ scope: string; items: AssetItem[] } | null>(null);
+
+  const liquidAssets = useMemo<AssetItem[]>(() => {
+    if (liquidState?.scope === scopeKey) return liquidState.items;
+    if (typeof window === 'undefined') return [];
+    try {
+      const rawL = localStorage.getItem(liquidKey);
+      return rawL ? JSON.parse(rawL) : [];
+    } catch {
+      return [];
+    }
+  }, [liquidState, scopeKey, liquidKey]);
+
+  const fixedAssets = useMemo<AssetItem[]>(() => {
+    if (fixedState?.scope === scopeKey) return fixedState.items;
+    if (typeof window === 'undefined') return [];
+    try {
+      const rawF = localStorage.getItem(fixedKey);
+      return rawF ? JSON.parse(rawF) : [];
+    } catch {
+      return [];
+    }
+  }, [fixedState, scopeKey, fixedKey]);
 
   const hide = settings.hideBalance;
 
   const totalLiquid = liquidAssets.reduce((acc, a) => acc + a.amount, 0);
   const totalFixed = fixedAssets.reduce((acc, a) => acc + a.amount, 0);
   const totalNetWorth = totalBalance + totalLiquid + totalFixed;
+
+  // Dynamic Runway & Wealth Level
+  const avgMonthlyExpense = Math.max(1, dashboardSummary.monthlyExpense || 4000000);
+  const totalRunwayMonths =
+    totalNetWorth > 0 ? Number(((Math.max(0, totalBalance) + totalLiquid) / avgMonthlyExpense).toFixed(1)) : 0;
+
+  const nextTarget =
+    totalNetWorth <= 0
+      ? 10000000
+      : totalNetWorth < 10000000
+      ? 10000000
+      : totalNetWorth < 24000000
+      ? 24000000
+      : totalNetWorth < 100000000
+      ? 100000000
+      : 500000000;
+
+  const levelLabel =
+    totalNetWorth <= 0
+      ? 'Mulai Mencatat'
+      : totalNetWorth < 10000000
+      ? 'Langkah Awal'
+      : totalNetWorth < 24000000
+      ? 'Mulai Bangkit'
+      : totalNetWorth < 100000000
+      ? 'Mapan Finansial'
+      : 'Merdeka Finansial';
+
+  const progressPct =
+    totalNetWorth > 0 ? Math.min(100, Math.round((totalNetWorth / nextTarget) * 100)) : 0;
 
   const handleAddAsset = (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,9 +103,17 @@ export function AssetsTab() {
     };
 
     if (assetType === 'liquid') {
-      setLiquidAssets([...liquidAssets, newAsset]);
+      const updated = [...liquidAssets, newAsset];
+      setLiquidState({ scope: scopeKey, items: updated });
+      try {
+        localStorage.setItem(liquidKey, JSON.stringify(updated));
+      } catch {}
     } else {
-      setFixedAssets([...fixedAssets, newAsset]);
+      const updated = [...fixedAssets, newAsset];
+      setFixedState({ scope: scopeKey, items: updated });
+      try {
+        localStorage.setItem(fixedKey, JSON.stringify(updated));
+      } catch {}
     }
 
     addToast('Aset Ditambahkan', `${assetName} berhasil dicatat.`);
@@ -54,46 +122,67 @@ export function AssetsTab() {
     setAssetAmount('');
   };
 
+  const handleDeleteAsset = (type: 'liquid' | 'fixed', id: string) => {
+    if (type === 'liquid') {
+      const updated = liquidAssets.filter((a) => a.id !== id);
+      setLiquidState({ scope: scopeKey, items: updated });
+      try {
+        localStorage.setItem(liquidKey, JSON.stringify(updated));
+      } catch {}
+    } else {
+      const updated = fixedAssets.filter((a) => a.id !== id);
+      setFixedState({ scope: scopeKey, items: updated });
+      try {
+        localStorage.setItem(fixedKey, JSON.stringify(updated));
+      } catch {}
+    }
+    addToast('Aset Dihapus', 'Catatan aset telah dihapus.', 'info');
+  };
+
   return (
-    <div className="space-y-4 pb-28">
+    <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
-      <div className="flex items-center justify-between pt-2 px-1">
+      <div className="flex items-center justify-between pt-2 lg:pt-0 px-1">
         <div>
-          <h1 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
+          <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
             Aset
           </h1>
-          <p className="text-xs font-semibold text-gray-400 mt-0.5">
+          <p className="text-xs lg:text-sm font-semibold text-gray-400 mt-0.5">
             Tingkatkan kekayaanmu.
           </p>
         </div>
         <button
           type="button"
           onClick={() => setIsAddModalOpen(true)}
-          className="w-10 h-10 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center font-bold shadow-xs cursor-pointer"
+          className="h-10 px-3 lg:px-4 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer"
           title="Tambah Aset"
         >
-          <Plus size={20} strokeWidth={2.6} />
+          <Plus size={18} strokeWidth={2.8} />
+          <span className="hidden lg:inline">Tambah Aset</span>
         </button>
       </div>
 
-      {/* Hero Dark Card */}
-      <div className="bg-[#14161C] rounded-3xl p-5 text-white shadow-xl space-y-4 border border-white/5">
-        <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider block">
-          ESTIMASI KEKAYAAN
-        </span>
-
-        <div className="text-3xl sm:text-4xl font-black tracking-tight tabular-nums text-white">
-          {formatRupiah(totalNetWorth, hide)}
-        </div>
-
-        {/* Runway Pill */}
-        <div className="inline-flex items-center gap-2 bg-[#1C2417] border border-[#2D3F1D] px-3 py-1.5 rounded-2xl">
-          <span className="text-lg">🌱</span>
+      {/* Full-Width Black Hero Card (matching Dashboard & Budget full-width style) */}
+      <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl space-y-5 border border-white/5">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
-            <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">
-              TOTAL RUNWAY
+            <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-widest block">
+              ESTIMASI KEKAYAAN
             </span>
-            <span className="text-xs font-black text-[#D4F826]">5.3 Bulan</span>
+            <div className="text-3xl sm:text-4xl lg:text-[42px] font-black tracking-tight tabular-nums text-white mt-1 leading-none">
+              {formatRupiah(totalNetWorth, hide)}
+            </div>
+          </div>
+
+          {/* Runway Pill */}
+          <div className="inline-flex items-center gap-2.5 bg-[#1C2417] border border-[#2D3F1D] px-4 py-2 rounded-2xl self-start lg:self-center">
+            <span className="text-lg">🌱</span>
+            <div>
+              <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">
+                TOTAL RUNWAY
+              </span>
+              <span className="text-xs font-black text-[#D4F826]">{totalRunwayMonths} Bulan</span>
+            </div>
           </div>
         </div>
 
@@ -104,59 +193,70 @@ export function AssetsTab() {
               <span className="text-[10px] text-gray-400 uppercase block font-medium">
                 LEVEL SAAT INI
               </span>
-              <span className="text-sm font-black text-white">Mulai Bangkit</span>
+              <span className="text-sm font-black text-white">{levelLabel}</span>
             </div>
             <div className="text-right">
               <span className="text-[10px] text-gray-400 uppercase block font-medium">
                 TARGET BERIKUTNYA
               </span>
               <span className="text-xs font-black text-[#D4F826] tabular-nums">
-                {formatRupiah(24000000, hide)}
+                {formatRupiah(nextTarget, hide)}
               </span>
             </div>
           </div>
 
           <div className="flex items-center justify-between text-[11px] text-gray-400 pt-0.5">
             <span>PROGRES KE LEVEL BERIKUTNYA</span>
-            <span className="font-bold text-[#D4F826]">88%</span>
+            <span className="font-bold text-[#D4F826]">{progressPct}%</span>
           </div>
 
           <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
-            <div className="h-full rounded-full bg-[#D4F826]" style={{ width: '88%' }} />
+            <div
+              className="h-full rounded-full bg-[#D4F826] transition-all duration-300"
+              style={{ width: `${progressPct}%` }}
+            />
           </div>
         </div>
 
         {/* 3 Summary Boxes */}
-        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/10 text-center">
-          <div className="bg-white/5 p-2.5 rounded-2xl">
-            <span className="text-[9px] text-gray-400 font-bold block truncate">DOMPET & AKUN</span>
-            <span className="text-xs font-black text-white mt-0.5 block tabular-nums truncate">
+        <div className="grid grid-cols-3 gap-3 pt-3 border-t border-white/10 text-center">
+          <div className="bg-white/5 p-3 rounded-2xl">
+            <span className="text-[9px] lg:text-[10px] text-gray-400 font-bold block truncate">
+              DOMPET & AKUN
+            </span>
+            <span className="text-xs lg:text-sm font-black text-white mt-0.5 block tabular-nums truncate">
               {formatRupiah(totalBalance, hide)}
             </span>
           </div>
 
-          <div className="bg-white/5 p-2.5 rounded-2xl">
-            <span className="text-[9px] text-gray-400 font-bold block truncate">ASET LIKUID</span>
-            <span className="text-xs font-black text-white mt-0.5 block tabular-nums truncate">
+          <div className="bg-white/5 p-3 rounded-2xl">
+            <span className="text-[9px] lg:text-[10px] text-gray-400 font-bold block truncate">
+              ASET LIKUID
+            </span>
+            <span className="text-xs lg:text-sm font-black text-white mt-0.5 block tabular-nums truncate">
               {formatRupiah(totalLiquid, hide)}
             </span>
           </div>
 
-          <div className="bg-white/5 p-2.5 rounded-2xl">
-            <span className="text-[9px] text-gray-400 font-bold block truncate">ASET TETAP</span>
-            <span className="text-xs font-black text-white mt-0.5 block tabular-nums truncate">
+          <div className="bg-white/5 p-3 rounded-2xl">
+            <span className="text-[9px] lg:text-[10px] text-gray-400 font-bold block truncate">
+              ASET TETAP
+            </span>
+            <span className="text-xs lg:text-sm font-black text-white mt-0.5 block tabular-nums truncate">
               {formatRupiah(totalFixed, hide)}
             </span>
           </div>
         </div>
       </div>
 
-      {/* 1. Dompet & Akun Section */}
-      <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
-        <div className="flex items-center gap-2">
-          <Landmark size={18} className="text-[#84CC16]" />
-          <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">Dompet & Akun</h3>
-        </div>
+      {/* Asset Lists Section below the Full-Width Black Card */}
+      <div className="space-y-4 lg:space-y-5">
+        {/* 1. Dompet & Akun Section */}
+        <div className="bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
+            <div className="flex items-center gap-2">
+              <Landmark size={18} className="text-[#84CC16]" />
+              <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">Dompet & Akun</h3>
+            </div>
 
         <div className="space-y-2">
           {walletsWithBalance.map((w) => (
@@ -216,12 +316,22 @@ export function AssetsTab() {
             {liquidAssets.map((a) => (
               <div
                 key={a.id}
-                className="flex items-center justify-between p-2 rounded-xl bg-gray-50 dark:bg-gray-800/40 text-xs"
+                className="flex items-center justify-between p-2.5 rounded-xl bg-gray-50 dark:bg-gray-800/40 text-xs"
               >
                 <span className="font-bold text-gray-800 dark:text-gray-200">{a.name}</span>
-                <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
-                  {formatRupiah(a.amount, hide)}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
+                    {formatRupiah(a.amount, hide)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteAsset('liquid', a.id)}
+                    className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"
+                    title="Hapus Aset"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -256,12 +366,22 @@ export function AssetsTab() {
             {fixedAssets.map((a) => (
               <div
                 key={a.id}
-                className="flex items-center justify-between p-2 rounded-xl bg-gray-50 dark:bg-gray-800/40 text-xs"
+                className="flex items-center justify-between p-2.5 rounded-xl bg-gray-50 dark:bg-gray-800/40 text-xs"
               >
                 <span className="font-bold text-gray-800 dark:text-gray-200">{a.name}</span>
-                <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
-                  {formatRupiah(a.amount, hide)}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
+                    {formatRupiah(a.amount, hide)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteAsset('fixed', a.id)}
+                    className="p-1 text-gray-400 hover:text-red-500 cursor-pointer"
+                    title="Hapus Aset"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -277,6 +397,7 @@ export function AssetsTab() {
             Aset Likuid adalah aset yang gampang dicairkan menjadi uang tunai (seperti reksadana pasar uang atau emas). Aset Tetap adalah aset jangka panjang (seperti tanah, rumah, atau kendaraan).
           </p>
         </div>
+      </div>
       </div>
 
       {/* Modal: Tambah Aset */}

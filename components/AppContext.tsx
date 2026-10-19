@@ -19,7 +19,9 @@ import {
   WalletWithBalance,
 } from '@/lib/types';
 import {
-  clearAllData,
+   clearAllData,
+  getInitialBudgets,
+  getInitialSampleTransactions,
   loadStoredBudgetConfig,
   loadStoredBudgets,
   loadStoredCategories,
@@ -36,8 +38,33 @@ import {
   saveStoredTransactions,
   saveStoredWallets,
 } from '@/lib/storage';
-import { DEFAULT_UPCOMING_BILLS } from '@/lib/constants';
+import {
+  DEFAULT_UPCOMING_BILLS,
+  DEFAULT_BUDGET_CONFIG,
+  EMPTY_BUDGET_CONFIG,
+  DEFAULT_WALLETS,
+  DEFAULT_CATEGORIES,
+  DEFAULT_GOALS,
+  DEFAULT_SETTINGS,
+} from '@/lib/constants';
 import { exportTransactionsToCSV } from '@/lib/formatters';
+import { auth, googleProvider, testConnection } from '@/lib/firebase';
+import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
+import {
+  syncUserProfile,
+  fetchUserWallets,
+  saveUserWallet,
+  deleteUserWallet,
+  fetchUserTransactions,
+  saveUserTransaction,
+  deleteUserTransaction,
+  fetchUserGoals,
+  saveUserGoal,
+  deleteUserGoal,
+  fetchUserBudgetConfig,
+  saveUserBudgetConfig,
+  resetUserFirestoreData,
+} from '@/lib/firestoreService';
 
 export type TabType =
   | 'dashboard'
@@ -53,7 +80,9 @@ export type TabType =
   | 'ai-advisor'
   | 'reports'
   | 'tutorial'
-  | 'analytics';
+  | 'analytics'
+  | 'subscriptions'
+  | 'health-score';
 
 export interface ToastMessage {
   id: string;
@@ -169,6 +198,16 @@ interface AppContextType {
   removeToast: (id: string) => void;
   exportToCSV: () => void;
   resetAllAppData: () => void;
+
+  // Auth & Multi-User Support
+  user: User | null;
+  authLoading: boolean;
+  isLoginModalOpen: boolean;
+  setIsLoginModalOpen: (open: boolean) => void;
+  openLoginModal: () => void;
+  signInWithGoogle: () => Promise<void>;
+  signOutUser: () => Promise<void>;
+  dataResetVersion: number;
 }
 
 const AppContext = createContext<AppContextType | null>(null);
@@ -176,6 +215,7 @@ const AppContext = createContext<AppContextType | null>(null);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeTab, setActiveTabState] = useState<TabType>('dashboard');
   const [previousTab, setPreviousTab] = useState<TabType>('dashboard');
+  const [dataResetVersion, setDataResetVersion] = useState<number>(0);
 
   const setActiveTab = (tab: TabType) => {
     setPreviousTab(activeTab);
@@ -189,15 +229,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setActiveTabState(previousTab || 'dashboard');
   };
 
-  // Core Data States
-  const [wallets, setWallets] = useState<Wallet[]>(() => loadStoredWallets());
-  const [categories, setCategories] = useState<Category[]>(() => loadStoredCategories());
-  const [transactions, setTransactions] = useState<Transaction[]>(() => loadStoredTransactions());
-  const [budgets, setBudgets] = useState<Budget[]>(() => loadStoredBudgets());
-  const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(() => loadStoredBudgetConfig());
-  const [goals, setGoals] = useState<Goal[]>(() => loadStoredGoals());
-  const [upcomingBills] = useState<UpcomingBill[]>(DEFAULT_UPCOMING_BILLS);
-  const [settings, setSettings] = useState<AppSettings>(() => loadStoredSettings());
+  // Core Data States (initialized with deterministic defaults for SSR parity, hydrated in useEffect)
+  const [wallets, setWallets] = useState<Wallet[]>(DEFAULT_WALLETS);
+  const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
+  const [transactions, setTransactions] = useState<Transaction[]>(() => getInitialSampleTransactions());
+  const [budgets, setBudgets] = useState<Budget[]>(() => getInitialBudgets());
+  const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(DEFAULT_BUDGET_CONFIG);
+  const [goals, setGoals] = useState<Goal[]>(DEFAULT_GOALS);
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   // Active Date & Reference Period (Defaults to '2026-03-25' matching demo app reference)
   const [activeDate, setActiveDate] = useState<string>('2026-03-25');
@@ -220,9 +259,108 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isAddSubcategoryModalOpen, setIsAddSubcategoryModalOpen] = useState(false);
   const [editingSubcategoryGroup, setEditingSubcategoryGroup] = useState<BudgetGroup>('kebutuhan');
 
+  // Auth & Multi-User State
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+
+  const openLoginModal = () => setIsLoginModalOpen(true);
+
+  // Sign In with Google
+  const signInWithGoogle = async () => {
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      if (result.user) {
+        addToast(
+          'Login Berhasil',
+          `Selamat datang, ${result.user.displayName || 'Pengguna'}! Akun Anda aktif.`,
+          'success'
+        );
+      }
+    } catch (err: any) {
+      console.error('Google sign in error:', err);
+      addToast('Gagal Masuk', err?.message || 'Tidak dapat menyelesaikan login Google.', 'error');
+      throw err;
+    }
+  };
+
+  // Sign Out
+  const signOutUser = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      // Revert to local initial storage
+      setWallets(loadStoredWallets());
+      setTransactions(loadStoredTransactions());
+      setGoals(loadStoredGoals());
+      setBudgetConfig(loadStoredBudgetConfig());
+      setDataResetVersion((v) => v + 1);
+      addToast('Berhasil Keluar', 'Anda sekarang berada dalam Mode Tamu.', 'info');
+    } catch (err: any) {
+      console.error('Sign out error:', err);
+      addToast('Gagal Keluar', 'Terjadi kesalahan saat logout.', 'error');
+      throw err;
+    }
+  };
+
   // Security / App Lock
-  const [isLocked, setIsLocked] = useState(() => loadStoredSettings().pinEnabled);
+  const [isLocked, setIsLocked] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  // Hydrate local storage data on client mount
+  useEffect(() => {
+    const storedSettings = loadStoredSettings();
+    setWallets(loadStoredWallets());
+    setCategories(loadStoredCategories());
+    setTransactions(loadStoredTransactions());
+    setBudgets(loadStoredBudgets());
+    setBudgetConfig(loadStoredBudgetConfig());
+    setGoals(loadStoredGoals());
+    setSettings(storedSettings);
+    setIsLocked(Boolean(storedSettings.pinEnabled));
+  }, []);
+
+  // Firebase auth & data synchronization
+  useEffect(() => {
+    testConnection().catch((err) => console.warn('Firebase test connection:', err));
+
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setAuthLoading(true);
+        try {
+          await syncUserProfile(currentUser);
+          const [loadedWallets, loadedTx, loadedGoals, loadedBudget] = await Promise.all([
+            fetchUserWallets(currentUser.uid),
+            fetchUserTransactions(currentUser.uid),
+            fetchUserGoals(currentUser.uid),
+            fetchUserBudgetConfig(currentUser.uid),
+          ]);
+          if (loadedWallets && loadedWallets.length > 0) {
+            setWallets(loadedWallets);
+          }
+          setTransactions(loadedTx || []);
+          setGoals(loadedGoals || []);
+          setBudgetConfig(loadedBudget || EMPTY_BUDGET_CONFIG);
+          setSettings((prev) => ({
+            ...prev,
+            userName: currentUser.displayName || prev.userName,
+            userEmail: currentUser.email || prev.userEmail,
+            hideBalance: false,
+          }));
+          setDataResetVersion((v) => v + 1);
+        } catch (err) {
+          console.error('Error loading user data from Firestore:', err);
+        } finally {
+          setAuthLoading(false);
+        }
+      } else {
+        setAuthLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const applyThemeToDOM = (mode: ThemeMode, accent?: AccentColor) => {
     if (typeof document === 'undefined') return;
@@ -356,22 +494,52 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return { totalIncome: inc, totalExpense: exp, todayIncome: todayInc, todayExpense: todayExp };
   }, [transactions, activeYear, activeMonth, activeDay]);
 
+  // Dynamic upcoming bills derived from negative credit/paylater wallets and scheduled budget subcategories
+  const upcomingBills = useMemo<UpcomingBill[]>(() => {
+    const bills: UpcomingBill[] = [];
+    walletsWithBalance.forEach((w) => {
+      if ((w.type === 'credit' || w.type === 'paylater') && w.balance < 0) {
+        bills.push({
+          id: `bill-wallet-${w.id}`,
+          name: w.name,
+          dueDate: w.type === 'credit' ? '10 Apr' : '14 Apr',
+          amount: Math.abs(w.balance),
+          iconEmoji: w.type === 'credit' ? '💳' : '⏰',
+          category: w.type === 'credit' ? 'Kartu Kredit' : 'Paylater',
+        });
+      }
+    });
+    if (bills.length === 0 && budgetConfig?.subcategories) {
+      budgetConfig.subcategories.forEach((sub) => {
+        if (sub.dueDateDay && sub.allocatedAmount > 0) {
+          bills.push({
+            id: `bill-sub-${sub.id}`,
+            name: sub.name,
+            dueDate: `${String(sub.dueDateDay).padStart(2, '0')} Apr`,
+            amount: sub.allocatedAmount,
+            iconEmoji: sub.emoji || '📅',
+            category: sub.group.toUpperCase(),
+          });
+        }
+      });
+    }
+    return bills;
+  }, [walletsWithBalance, budgetConfig]);
+
   // Dashboard summary metrics
   const dashboardSummary = useMemo<DashboardSummary>(() => {
     const daysInMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
 
-    const estIncome = budgetConfig.estimatedIncome || 5000000;
-    // Spending budget limit: Kebutuhan (50%) + Keinginan (30%) = 80% of income = 4,000,000
+    const estIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
+    // Spending budget limit: Kebutuhan (50%) + Keinginan (30%) = 80% of income
     const monthlySpendingLimit = Math.round(
-      (estIncome * ((budgetConfig.needsPercent || 50) + (budgetConfig.wantsPercent || 30))) / 100
+      (estIncome * ((budgetConfig?.needsPercent || 50) + (budgetConfig?.wantsPercent || 30))) / 100
     );
 
-    // Daily budget allowance for each day in the month: 4,000,000 / 31 = 129,032
-    const dailyBudgetQuota = Math.round(monthlySpendingLimit / daysInMonth);
+    // Daily budget allowance for each day in the month
+    const dailyBudgetQuota = estIncome > 0 ? Math.round(monthlySpendingLimit / daysInMonth) : 0;
 
     // Remaining daily budget for today = Daily Quota - Today's Expenses
-    // On Day 25 with Kopi Tuku (Rp 25.000): 129,032 - 25,000 = exactly Rp 104.032!
-    // When user adds another expense today, it decreases 1:1 directly!
     const dailyBudgetRemaining = Math.max(0, dailyBudgetQuota - todayExpense);
 
     // Liquid assets: Bank + E-wallet + Cash
@@ -380,7 +548,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .reduce((acc, w) => acc + Math.max(0, w.balance), 0);
 
     const avgMonthlyExpense = Math.max(1, totalExpense || 4000000);
-    const runwayMonths = Number((liquidTotal / avgMonthlyExpense).toFixed(1));
+    const runwayMonths = liquidTotal > 0 ? Number((liquidTotal / avgMonthlyExpense).toFixed(1)) : 0;
 
     return {
       totalBalance,
@@ -391,13 +559,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       budgetLimit: monthlySpendingLimit,
       budgetSpent: totalExpense,
       recentTransactions: transactionDetails.slice(0, 5),
-      hasMonthlyBudget: true,
+      hasMonthlyBudget: estIncome > 0,
       budgetCount: budgetConfig.subcategories.length,
       dailyBudgetQuota,
       dailyBudgetRemaining,
       todayIncome,
       todayExpense,
-      emergencyFundRunwayMonths: Math.max(1, runwayMonths),
+      emergencyFundRunwayMonths: runwayMonths,
       liquidAssetsTotal: liquidTotal,
     };
   }, [
@@ -424,29 +592,61 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     setTransactions((prev) => {
       const updated = [newTx, ...prev];
-      saveStoredTransactions(updated);
+      if (!user?.uid) {
+        saveStoredTransactions(updated);
+      }
       return updated;
     });
+
+    if (user?.uid) {
+      saveUserTransaction(user.uid, newTx).catch((err) =>
+        console.error('Error saving transaction to Firestore:', err)
+      );
+    }
+
     addToast('Transaksi Ditambahkan', `${data.note || 'Transaksi baru'} berhasil dicatat.`);
   };
 
   const updateTransaction = (id: string, data: Partial<Transaction>) => {
+    let targetTx: Transaction | undefined;
     setTransactions((prev) => {
-      const updated = prev.map((t) =>
-        t.id === id ? { ...t, ...data, updatedAt: new Date().toISOString() } : t
-      );
-      saveStoredTransactions(updated);
+      const updated = prev.map((t) => {
+        if (t.id === id) {
+          targetTx = { ...t, ...data, updatedAt: new Date().toISOString() };
+          return targetTx;
+        }
+        return t;
+      });
+      if (!user?.uid) {
+        saveStoredTransactions(updated);
+      }
       return updated;
     });
+
+    if (user?.uid && targetTx) {
+      saveUserTransaction(user.uid, targetTx).catch((err) =>
+        console.error('Error updating transaction in Firestore:', err)
+      );
+    }
+
     addToast('Transaksi Diperbarui', 'Perubahan transaksi berhasil disimpan.');
   };
 
   const deleteTransaction = (id: string) => {
     setTransactions((prev) => {
       const updated = prev.filter((t) => t.id !== id);
-      saveStoredTransactions(updated);
+      if (!user?.uid) {
+        saveStoredTransactions(updated);
+      }
       return updated;
     });
+
+    if (user?.uid) {
+      deleteUserTransaction(user.uid, id).catch((err) =>
+        console.error('Error deleting transaction from Firestore:', err)
+      );
+    }
+
     addToast('Transaksi Dihapus', 'Data transaksi telah dihapus.', 'info');
   };
 
@@ -461,16 +661,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     const updated = [...wallets, newW];
     setWallets(updated);
-    saveStoredWallets(updated);
+    if (!user?.uid) {
+      saveStoredWallets(updated);
+    } else {
+      saveUserWallet(user.uid, newW).catch((err) =>
+        console.error('Error saving wallet to Firestore:', err)
+      );
+    }
     addToast('Dompet Ditambahkan', `Dompet ${data.name} berhasil dibuat.`);
   };
 
   const updateWallet = (id: string, data: Partial<Wallet>) => {
-    const updated = wallets.map((w) =>
-      w.id === id ? { ...w, ...data, updatedAt: new Date().toISOString() } : w
-    );
+    let targetW: Wallet | undefined;
+    const updated = wallets.map((w) => {
+      if (w.id === id) {
+        targetW = { ...w, ...data, updatedAt: new Date().toISOString() };
+        return targetW;
+      }
+      return w;
+    });
     setWallets(updated);
-    saveStoredWallets(updated);
+    if (!user?.uid) {
+      saveStoredWallets(updated);
+    } else if (targetW) {
+      saveUserWallet(user.uid, targetW).catch((err) =>
+        console.error('Error updating wallet in Firestore:', err)
+      );
+    }
     addToast('Dompet Diperbarui', 'Informasi dompet berhasil diubah.');
   };
 
@@ -481,7 +698,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     const updated = wallets.filter((w) => w.id !== id);
     setWallets(updated);
-    saveStoredWallets(updated);
+    if (!user?.uid) {
+      saveStoredWallets(updated);
+    } else {
+      deleteUserWallet(user.uid, id).catch((err) =>
+        console.error('Error deleting wallet from Firestore:', err)
+      );
+    }
     addToast('Dompet Dihapus', 'Dompet berhasil dihapus.', 'info');
     return true;
   };
@@ -499,21 +722,46 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     const updated = [...goals, newG];
     setGoals(updated);
-    saveStoredGoals(updated);
+    if (!user?.uid) {
+      saveStoredGoals(updated);
+    } else {
+      saveUserGoal(user.uid, newG).catch((err) =>
+        console.error('Error saving goal to Firestore:', err)
+      );
+    }
     addToast('Target Goal Dibuat', `Target ${data.name} berhasil ditambahkan.`);
   };
 
   const updateGoal = (id: string, data: Partial<Goal>) => {
-    const updated = goals.map((g) => (g.id === id ? { ...g, ...data } : g));
+    let targetG: Goal | undefined;
+    const updated = goals.map((g) => {
+      if (g.id === id) {
+        targetG = { ...g, ...data };
+        return targetG;
+      }
+      return g;
+    });
     setGoals(updated);
-    saveStoredGoals(updated);
+    if (!user?.uid) {
+      saveStoredGoals(updated);
+    } else if (targetG) {
+      saveUserGoal(user.uid, targetG).catch((err) =>
+        console.error('Error updating goal in Firestore:', err)
+      );
+    }
     addToast('Goal Diperbarui', 'Perubahan target berhasil disimpan.');
   };
 
   const deleteGoal = (id: string) => {
     const updated = goals.filter((g) => g.id !== id);
     setGoals(updated);
-    saveStoredGoals(updated);
+    if (!user?.uid) {
+      saveStoredGoals(updated);
+    } else {
+      deleteUserGoal(user.uid, id).catch((err) =>
+        console.error('Error deleting goal from Firestore:', err)
+      );
+    }
     addToast('Goal Dihapus', 'Target goal telah dihapus.', 'info');
   };
 
@@ -529,7 +777,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateBudgetConfig = (data: Partial<BudgetConfig>) => {
     const updated = { ...budgetConfig, ...data };
     setBudgetConfig(updated);
-    saveStoredBudgetConfig(updated);
+    if (!user?.uid) {
+      saveStoredBudgetConfig(updated);
+    } else {
+      saveUserBudgetConfig(user.uid, updated).catch((err) =>
+        console.error('Error saving budget config to Firestore:', err)
+      );
+    }
     addToast('Alokasi Disimpan', 'Alokasi anggaran 50/30/20 berhasil diperbarui.');
   };
 
@@ -543,7 +797,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       subcategories: [...budgetConfig.subcategories, newSub],
     };
     setBudgetConfig(updated);
-    saveStoredBudgetConfig(updated);
+    if (!user?.uid) {
+      saveStoredBudgetConfig(updated);
+    } else {
+      saveUserBudgetConfig(user.uid, updated).catch((err) =>
+        console.error('Error saving budget config to Firestore:', err)
+      );
+    }
     addToast('Subkategori Ditambahkan', `${item.name} berhasil ditambahkan ke ${item.group}.`);
   };
 
@@ -551,7 +811,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const updatedSub = budgetConfig.subcategories.map((s) => (s.id === id ? { ...s, ...data } : s));
     const updated = { ...budgetConfig, subcategories: updatedSub };
     setBudgetConfig(updated);
-    saveStoredBudgetConfig(updated);
+    if (!user?.uid) {
+      saveStoredBudgetConfig(updated);
+    } else {
+      saveUserBudgetConfig(user.uid, updated).catch((err) =>
+        console.error('Error saving budget config to Firestore:', err)
+      );
+    }
     addToast('Subkategori Diperbarui', 'Alokasi subkategori berhasil disimpan.');
   };
 
@@ -559,7 +825,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const updatedSub = budgetConfig.subcategories.filter((s) => s.id !== id);
     const updated = { ...budgetConfig, subcategories: updatedSub };
     setBudgetConfig(updated);
-    saveStoredBudgetConfig(updated);
+    if (!user?.uid) {
+      saveStoredBudgetConfig(updated);
+    } else {
+      saveUserBudgetConfig(user.uid, updated).catch((err) =>
+        console.error('Error saving budget config to Firestore:', err)
+      );
+    }
     addToast('Subkategori Dihapus', 'Subkategori telah dihapus.', 'info');
   };
 
@@ -588,9 +860,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     setTransactions((prev) => {
       const updated = [tx, ...prev];
-      saveStoredTransactions(updated);
+      if (!user?.uid) {
+        saveStoredTransactions(updated);
+      }
       return updated;
     });
+
+    if (user?.uid) {
+      saveUserTransaction(user.uid, tx).catch((err) =>
+        console.error('Error saving transfer transaction to Firestore:', err)
+      );
+    }
+
     addToast('Transfer Berhasil', `Rp ${amount.toLocaleString('id-ID')} dipindahkan.`);
   };
 
@@ -736,18 +1017,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addToast('Ekspor Berhasil', 'File CSV berhasil diunduh.');
   };
 
-  const resetAllAppData = () => {
-    clearAllData();
-    resetStorageToZero();
-    setWallets(loadStoredWallets());
-    setCategories(loadStoredCategories());
-    setTransactions(loadStoredTransactions());
-    setBudgets(loadStoredBudgets());
-    setBudgetConfig(loadStoredBudgetConfig());
-    setGoals(loadStoredGoals());
-    setSettings(loadStoredSettings());
-    setIsLocked(false);
-    addToast('Data Direset', 'Semua data telah dikembalikan ke kondisi awal Dompt.');
+  const resetAllAppData = async () => {
+    try {
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('budggt_assets_liquid', JSON.stringify([]));
+          localStorage.setItem('budggt_assets_fixed', JSON.stringify([]));
+          localStorage.setItem('budggt_debts', JSON.stringify([]));
+          localStorage.setItem('budggt_investments', JSON.stringify([]));
+          localStorage.setItem('budggt_subscriptions', JSON.stringify([]));
+          if (user?.uid) {
+            localStorage.setItem(`budggt_assets_liquid_${user.uid}`, JSON.stringify([]));
+            localStorage.setItem(`budggt_assets_fixed_${user.uid}`, JSON.stringify([]));
+            localStorage.setItem(`budggt_debts_${user.uid}`, JSON.stringify([]));
+            localStorage.setItem(`budggt_investments_${user.uid}`, JSON.stringify([]));
+            localStorage.setItem(`budggt_subscriptions_${user.uid}`, JSON.stringify([]));
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (user?.uid) {
+        addToast('Mereset Data...', 'Sedang membersihkan catatan di cloud Firestore...', 'info');
+        const cleanWallets = await resetUserFirestoreData(user.uid);
+        if (cleanWallets && cleanWallets.length > 0) {
+          setWallets(cleanWallets);
+        }
+        setTransactions([]);
+        setGoals([]);
+        setBudgetConfig(EMPTY_BUDGET_CONFIG);
+        setSettings((prev) => ({ ...prev, hideBalance: false }));
+        setDataResetVersion((v) => v + 1);
+        addToast('Data Cloud Direset', 'Semua catatan di akun cloud Anda berhasil dikosongkan ke 0.', 'success');
+      } else {
+        clearAllData();
+        resetStorageToZero();
+        const cleanW = loadStoredWallets();
+        setWallets(cleanW);
+        setCategories(loadStoredCategories());
+        setTransactions([]);
+        setBudgets([]);
+        setBudgetConfig(EMPTY_BUDGET_CONFIG);
+        setGoals([]);
+        setSettings(loadStoredSettings());
+        setIsLocked(false);
+        setDataResetVersion((v) => v + 1);
+        addToast('Data Direset', 'Semua data telah dikosongkan menjadi 0.');
+      }
+    } catch (err: any) {
+      console.error('Error resetting app data:', err);
+      addToast('Gagal Reset', 'Terjadi kendala saat mereset data.', 'error');
+    }
   };
 
   return (
@@ -842,6 +1162,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         removeToast,
         exportToCSV,
         resetAllAppData,
+        user,
+        authLoading,
+        isLoginModalOpen,
+        setIsLoginModalOpen,
+        openLoginModal,
+        signInWithGoogle,
+        signOutUser,
+        dataResetVersion,
       }}
     >
       {children}

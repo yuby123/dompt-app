@@ -1,104 +1,96 @@
 'use client';
 
-import React, { useSyncExternalStore } from 'react';
+import React from 'react';
 import { AppProvider, useApp } from '@/components/AppContext';
 import { Header } from '@/components/Header';
 import { Navigation } from '@/components/Navigation';
+import { DesktopSidebar } from '@/components/DesktopSidebar';
 import { DashboardTab } from '@/components/tabs/DashboardTab';
-import { TransactionsTab } from '@/components/tabs/TransactionsTab';
-import { AnalyticsTab } from '@/components/tabs/AnalyticsTab';
 import { WalletsTab } from '@/components/tabs/WalletsTab';
+import { TransactionsTab } from '@/components/tabs/TransactionsTab';
 import { SettingsTab } from '@/components/tabs/SettingsTab';
 import { BudgetTab } from '@/components/tabs/BudgetTab';
 import { GoalsTab } from '@/components/tabs/GoalsTab';
 import { AssetsTab } from '@/components/tabs/AssetsTab';
-import { AiAdvisorTab } from '@/components/tabs/AiAdvisorTab';
-import { TutorialTab } from '@/components/tabs/TutorialTab';
 import { DebtTab } from '@/components/tabs/DebtTab';
 import { InvestTab } from '@/components/tabs/InvestTab';
+import { AiAdvisorTab } from '@/components/tabs/AiAdvisorTab';
 import { ReportsTab } from '@/components/tabs/ReportsTab';
-
+import { TutorialTab } from '@/components/tabs/TutorialTab';
+import { AnalyticsTab } from '@/components/tabs/AnalyticsTab';
+import { SubscriptionsTab } from '@/components/tabs/SubscriptionsTab';
+import { HealthScoreTab } from '@/components/tabs/HealthScoreTab';
 import { AddTransactionModal } from '@/components/AddTransactionModal';
-import { TransferModal } from '@/components/TransferModal';
+import { ScanReceiptModal } from '@/components/ScanReceiptModal';
 import { WalletModal } from '@/components/WalletModal';
 import { AppLockModal } from '@/components/AppLockModal';
-import { ScanReceiptModal } from '@/components/ScanReceiptModal';
-import { ClipboardScreenshotDetector } from '@/components/ClipboardScreenshotDetector';
 import { ToastContainer } from '@/components/ToastContainer';
+import { AuthModal } from '@/components/AuthModal';
+import { ClipboardScreenshotDetector } from '@/components/ClipboardScreenshotDetector';
+import { motion, AnimatePresence } from 'motion/react';
 
-const emptySubscribe = () => () => {};
-
-function useMounted() {
-  return useSyncExternalStore(
-    emptySubscribe,
-    () => true,
-    () => false
-  );
-}
-
-function MainAppShell() {
+function MainAppContent() {
   const { activeTab } = useApp();
 
   return (
-    <div className="min-h-screen bg-[#F6F7F9] dark:bg-[#0E1015] text-[#111827] dark:text-[#F9FAFB] flex flex-col justify-between selection:bg-[#D4F826] selection:text-black transition-colors duration-200">
-      {/* Auto-responsive phone canvas: Portrait fits phone, Landscape widens smoothly without 2-column split */}
-      <div className="w-full portrait:max-w-md landscape:w-full landscape:max-w-3xl md:max-w-2xl mx-auto flex-1 flex flex-col relative min-h-screen px-3 sm:px-6 safe-area-left safe-area-right transition-all duration-300">
+    <div className="min-h-screen bg-[#F5F6F8] dark:bg-[#0B0C10] text-gray-900 dark:text-gray-100 transition-colors selection:bg-[#D4F826] selection:text-black lg:flex">
+      {/* Desktop Left Sidebar (visible on lg+ website view) */}
+      <DesktopSidebar />
+
+      {/* Main Content Container: Mobile Frame (<lg) vs Wide Desktop Canvas (lg+) */}
+      <div className="max-w-md mx-auto min-h-screen flex flex-col px-3 sm:px-4 relative lg:max-w-none lg:mx-0 lg:flex-1 lg:px-8 xl:px-10 lg:py-6 lg:overflow-x-hidden">
+        {/* Top Navbar (mobile only) */}
         <Header />
 
-        <main className="flex-1 pt-1 pb-24">
-          {activeTab === 'dashboard' && <DashboardTab />}
-          {activeTab === 'wallets' && <WalletsTab />}
-          {activeTab === 'transactions' && <TransactionsTab />}
-          {activeTab === 'settings' && <SettingsTab />}
-          {activeTab === 'budget' && <BudgetTab />}
-          {activeTab === 'scanner' && <DashboardTab />}
-          {activeTab === 'goals' && <GoalsTab />}
-          {activeTab === 'assets' && <AssetsTab />}
-          {activeTab === 'debt' && <DebtTab />}
-          {activeTab === 'invest' && <InvestTab />}
-          {activeTab === 'ai-advisor' && <AiAdvisorTab />}
-          {activeTab === 'reports' && <ReportsTab />}
-          {activeTab === 'tutorial' && <TutorialTab />}
-          {activeTab === 'analytics' && <AnalyticsTab />}
+        {/* Dynamic Tab View */}
+        <main className="flex-1 pt-1 lg:pt-0 lg:max-w-[1200px] lg:w-full lg:mx-auto">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.16 }}
+            >
+              {activeTab === 'dashboard' && <DashboardTab />}
+              {activeTab === 'wallets' && <WalletsTab />}
+              {activeTab === 'transactions' && <TransactionsTab />}
+              {activeTab === 'settings' && <SettingsTab />}
+              {activeTab === 'budget' && <BudgetTab />}
+              {activeTab === 'goals' && <GoalsTab />}
+              {activeTab === 'assets' && <AssetsTab />}
+              {activeTab === 'debt' && <DebtTab />}
+              {activeTab === 'invest' && <InvestTab />}
+              {activeTab === 'ai-advisor' && <AiAdvisorTab />}
+              {activeTab === 'reports' && <ReportsTab />}
+              {activeTab === 'tutorial' && <TutorialTab />}
+              {activeTab === 'analytics' && <AnalyticsTab />}
+              {activeTab === 'subscriptions' && <SubscriptionsTab />}
+              {activeTab === 'health-score' && <HealthScoreTab />}
+            </motion.div>
+          </AnimatePresence>
         </main>
 
+        {/* Bottom Floating Pill Navigation (mobile only) */}
         <Navigation />
-
-        {/* Modals & Dialogs */}
-        <AddTransactionModal />
-        <ScanReceiptModal />
-        <ClipboardScreenshotDetector />
-        <TransferModal />
-        <WalletModal />
-        <AppLockModal />
-        <ToastContainer />
       </div>
+
+      {/* Modals & Overlays */}
+      <AddTransactionModal />
+      <ScanReceiptModal />
+      <WalletModal />
+      <AuthModal />
+      <AppLockModal />
+      <ToastContainer />
+      <ClipboardScreenshotDetector />
     </div>
   );
 }
 
-export default function Page() {
-  const isMounted = useMounted();
-
-  if (!isMounted) {
-    return (
-      <div className="min-h-screen bg-[#F6F7F9] dark:bg-[#0E1015] flex items-center justify-center p-4">
-        <div className="flex flex-col items-center text-center space-y-3">
-          <div className="w-14 h-14 rounded-2xl bg-[#D4F826] text-black font-black text-2xl flex items-center justify-center shadow-lg animate-pulse">
-            D.
-          </div>
-          <div className="space-y-1">
-            <h2 className="text-lg font-black text-gray-900 dark:text-white">Dompt.</h2>
-            <p className="text-xs text-gray-400 font-medium">Memuat keuangan Anda...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+export default function HomePage() {
   return (
     <AppProvider>
-      <MainAppShell />
+      <MainAppContent />
     </AppProvider>
   );
 }

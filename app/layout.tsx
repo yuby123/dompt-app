@@ -1,5 +1,12 @@
 import type {Metadata, Viewport} from 'next';
+import { Plus_Jakarta_Sans } from 'next/font/google';
 import './globals.css';
+
+const plusJakartaSans = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  display: 'swap',
+});
 
 export const viewport: Viewport = {
   themeColor: '#D4F826',
@@ -66,7 +73,10 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
           }}
         />
       </head>
-      <body suppressHydrationWarning className="h-full bg-[#F6F7F9] dark:bg-[#0E1015] text-[#111827] dark:text-[#F9FAFB] transition-colors duration-200">
+      <body
+        suppressHydrationWarning
+        className={`${plusJakartaSans.className} h-full bg-[#F6F7F9] dark:bg-[#0E1015] text-[#111827] dark:text-[#F9FAFB] transition-colors duration-200`}
+      >
         {children}
       </body>
     </html>

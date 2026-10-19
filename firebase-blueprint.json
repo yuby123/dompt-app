@@ -1,0 +1,120 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile and settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "photoURL": { "type": "string", "maxLength": 512 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "email"]
+    },
+    "Wallet": {
+      "title": "Wallet",
+      "description": "A financial account or wallet belonging to a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "type": { "type": "string", "maxLength": 50 },
+        "icon": { "type": "string", "maxLength": 50 },
+        "color": { "type": "string", "maxLength": 50 },
+        "initialBalance": { "type": "number" },
+        "reservedAmount": { "type": "number" },
+        "isDefault": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "name", "type", "initialBalance"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Income, expense, or transfer transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "walletId": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["income", "expense", "transfer"] },
+        "amount": { "type": "number" },
+        "categoryId": { "type": "string", "maxLength": 100 },
+        "budgetGroup": { "type": "string", "maxLength": 50 },
+        "date": { "type": "string", "maxLength": 30 },
+        "note": { "type": "string", "maxLength": 500 },
+        "transferWalletId": { "type": "string", "maxLength": 128 },
+        "transferFee": { "type": "number" },
+        "imageReceiptUrl": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "walletId", "type", "amount", "categoryId", "date"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "Savings goal of a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 100 },
+        "targetAmount": { "type": "number" },
+        "currentAmount": { "type": "number" },
+        "deadline": { "type": "string", "maxLength": 30 },
+        "emoji": { "type": "string", "maxLength": 20 },
+        "color": { "type": "string", "maxLength": 50 },
+        "walletId": { "type": "string", "maxLength": 128 },
+        "isEmergencyFund": { "type": "boolean" },
+        "monthlyTargetSaving": { "type": "number" },
+        "isLocked": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "title", "targetAmount", "currentAmount"]
+    },
+    "BudgetConfig": {
+      "title": "BudgetConfig",
+      "description": "User monthly budget configuration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "estimatedIncome": { "type": "number" },
+        "needsPercent": { "type": "number" },
+        "wantsPercent": { "type": "number" },
+        "savingsPercent": { "type": "number" },
+        "subcategoriesJson": { "type": "string", "maxLength": 10000 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "estimatedIncome"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile document containing basic account info"
+    },
+    "/users/{userId}/wallets/{walletId}": {
+      "schema": { "$ref": "#/entities/Wallet" },
+      "description": "User financial accounts/wallets"
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "User financial income, expense, and transfer transactions"
+    },
+    "/users/{userId}/goals/{goalId}": {
+      "schema": { "$ref": "#/entities/Goal" },
+      "description": "User savings targets and goals"
+    },
+    "/users/{userId}/budgetConfig/{configId}": {
+      "schema": { "$ref": "#/entities/BudgetConfig" },
+      "description": "User monthly budget settings"
+    }
+  }
+}

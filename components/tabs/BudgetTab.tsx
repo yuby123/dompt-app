@@ -43,6 +43,7 @@ export function BudgetTab() {
   const [savingsPercent, setSavingsPercent] = useState(budgetConfig.savingsPercent);
 
   const [isAddSubOpen, setIsAddSubOpen] = useState(false);
+  const [editingSubId, setEditingSubId] = useState<string | null>(null);
   const [targetGroup, setTargetGroup] = useState<BudgetGroup>('kebutuhan');
   const [newSubName, setNewSubName] = useState('');
   const [newSubAmount, setNewSubAmount] = useState('');
@@ -52,7 +53,7 @@ export function BudgetTab() {
   const [activeMenuSubId, setActiveMenuSubId] = useState<string | null>(null);
 
   // Group limits
-  const totalIncome = budgetConfig.estimatedIncome || 5000000;
+  const totalIncome = budgetConfig.estimatedIncome ?? 0;
   const needsLimit = Math.round((totalIncome * budgetConfig.needsPercent) / 100);
   const wantsLimit = Math.round((totalIncome * budgetConfig.wantsPercent) / 100);
   const savingsLimit = Math.round((totalIncome * budgetConfig.savingsPercent) / 100);
@@ -114,10 +115,8 @@ export function BudgetTab() {
 
   const handleSaveIncome = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = Number(tempIncomeInput.replace(/\D/g, ''));
-    if (val > 0) {
-      updateBudgetConfig({ estimatedIncome: val });
-    }
+    const val = Number(tempIncomeInput.replace(/\D/g, '')) || 0;
+    updateBudgetConfig({ estimatedIncome: val });
     setIsEditIncomeOpen(false);
   };
 
@@ -137,15 +136,25 @@ export function BudgetTab() {
     const amountVal = Number(newSubAmount.replace(/\D/g, ''));
     if (!newSubName.trim()) return;
 
-    addBudgetSubcategory({
-      name: newSubName.trim(),
-      group: targetGroup,
-      allocatedAmount: amountVal || 100000,
-      emoji: newSubEmoji || '📦',
-      dueDateDay: newSubDueDay ? Number(newSubDueDay) : undefined,
-    });
+    if (editingSubId) {
+      updateBudgetSubcategory(editingSubId, {
+        name: newSubName.trim(),
+        allocatedAmount: amountVal || 0,
+        emoji: newSubEmoji || '📦',
+        dueDateDay: newSubDueDay ? Number(newSubDueDay) : undefined,
+      });
+    } else {
+      addBudgetSubcategory({
+        name: newSubName.trim(),
+        group: targetGroup,
+        allocatedAmount: amountVal || 100000,
+        emoji: newSubEmoji || '📦',
+        dueDateDay: newSubDueDay ? Number(newSubDueDay) : undefined,
+      });
+    }
 
     setIsAddSubOpen(false);
+    setEditingSubId(null);
     setNewSubName('');
     setNewSubAmount('');
     setNewSubEmoji('📦');
@@ -153,69 +162,125 @@ export function BudgetTab() {
   };
 
   const openAddForGroup = (group: BudgetGroup) => {
+    setEditingSubId(null);
     setTargetGroup(group);
+    setNewSubName('');
+    setNewSubAmount('');
+    setNewSubEmoji('📦');
+    setNewSubDueDay('');
+    setIsAddSubOpen(true);
+  };
+
+  const openEditSub = (sub: { id: string; name: string; group: BudgetGroup; allocatedAmount: number; emoji: string; dueDateDay?: number }) => {
+    setEditingSubId(sub.id);
+    setTargetGroup(sub.group);
+    setNewSubName(sub.name);
+    setNewSubAmount(String(sub.allocatedAmount));
+    setNewSubEmoji(sub.emoji || '📦');
+    setNewSubDueDay(sub.dueDateDay ? String(sub.dueDateDay) : '');
+    setActiveMenuSubId(null);
     setIsAddSubOpen(true);
   };
 
   return (
-    <div className="space-y-4 pb-28">
+    <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
-      <div className="pt-2 px-1">
-        <h1 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
+      <div className="pt-2 lg:pt-0 px-1">
+        <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
           Atur Budget
         </h1>
-        <p className="text-xs font-semibold text-gray-400 mt-0.5">
+        <p className="text-xs lg:text-sm font-semibold text-gray-400 mt-0.5">
           Kasih tugas buat setiap Rupiahmu.
         </p>
       </div>
 
-      {/* Hero Card */}
-      <div className="bg-white dark:bg-[#14161C] rounded-3xl p-5 text-gray-900 dark:text-white shadow-xs dark:shadow-xl space-y-4 border border-gray-100 dark:border-white/5">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-black text-lime-600 dark:text-[#D4F826] uppercase tracking-wider flex items-center gap-1.5">
-            <span>PERKIRAAN PEMASUKAN</span>
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setTempIncomeInput(String(totalIncome));
-              setIsEditIncomeOpen(true);
-            }}
-            className="p-1.5 text-gray-400 hover:text-gray-900 dark:hover:text-white rounded-lg transition-colors cursor-pointer"
-            title="Ubah Pemasukan"
-          >
-            <Pencil size={15} />
-          </button>
-        </div>
+      {/* Full-Width Black Hero Card (matching Dashboard full-width style) */}
+      <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl space-y-5 border border-white/5">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+          {/* Left: Perkiraan Pemasukan + Nominal + Badges */}
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-widest">
+                PERKIRAAN PEMASUKAN
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setTempIncomeInput(String(totalIncome));
+                  setIsEditIncomeOpen(true);
+                }}
+                className="p-1 text-gray-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                title="Ubah Pemasukan"
+              >
+                <Pencil size={15} />
+              </button>
+            </div>
 
-        <div className="text-3xl sm:text-4xl font-black tracking-tight tabular-nums text-gray-900 dark:text-white">
-          {formatRupiah(totalIncome, hide)}
-        </div>
+            <div className="text-3xl sm:text-4xl lg:text-[42px] font-black tracking-tight tabular-nums text-white leading-none">
+              {formatRupiah(totalIncome, hide)}
+            </div>
 
-        {/* Badges row */}
-        <div className="flex gap-2 text-[10px] font-bold">
-          <span className="bg-gray-100 dark:bg-white/10 px-2.5 py-1 rounded-xl text-gray-600 dark:text-gray-300">
-            BERBASIS PERSENTASE
-          </span>
-          <span className="bg-gray-100 dark:bg-white/10 px-2.5 py-1 rounded-xl text-gray-600 dark:text-gray-300">BULANAN</span>
-        </div>
-
-        {/* Periode Aktif */}
-        <div className="pt-3 border-t border-gray-100 dark:border-white/10 flex items-center justify-between text-xs">
-          <div>
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-              PERIODE AKTIF
-            </span>
-            <span className="font-extrabold text-white mt-0.5 block">
-              01 {curMonthShort} - {daysInCurMonth} {curMonthShort}
-            </span>
+            <div className="flex flex-wrap gap-2 text-[10px] font-bold pt-1">
+              <span className="bg-white/10 px-3 py-1 rounded-xl text-gray-300">
+                BERBASIS PERSENTASE
+              </span>
+              <span className="bg-white/10 px-3 py-1 rounded-xl text-gray-300">
+                BULANAN
+              </span>
+            </div>
           </div>
-          <span className="text-[11px] text-gray-400 font-medium">Tampilkan Arsip</span>
+
+          {/* Right on Desktop: Quick Allocation Summary */}
+          <div className="hidden lg:flex items-center gap-8">
+            <div>
+              <span className="text-[10px] font-extrabold text-violet-400 uppercase tracking-wider block">
+                KEBUTUHAN ({budgetConfig.needsPercent}%)
+              </span>
+              <span className="text-base font-black text-white mt-1 block tabular-nums">
+                {formatRupiah(needsLimit, hide)}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-extrabold text-pink-400 uppercase tracking-wider block">
+                KEINGINAN ({budgetConfig.wantsPercent}%)
+              </span>
+              <span className="text-base font-black text-white mt-1 block tabular-nums">
+                {formatRupiah(wantsLimit, hide)}
+              </span>
+            </div>
+            <div>
+              <span className="text-[10px] font-extrabold text-teal-400 uppercase tracking-wider block">
+                TABUNGAN ({budgetConfig.savingsPercent}%)
+              </span>
+              <span className="text-base font-black text-white mt-1 block tabular-nums">
+                {formatRupiah(savingsLimit, hide)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Bar: Periode Aktif */}
+        <div className="pt-4 border-t border-white/10 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-3">
+            <div>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+                PERIODE AKTIF
+              </span>
+              <span className="font-extrabold text-white mt-0.5 block">
+                01 {curMonthShort} - {daysInCurMonth} {curMonthShort}
+              </span>
+            </div>
+          </div>
+          <span className="text-xs text-gray-400 font-medium hover:text-white cursor-pointer transition-colors">
+            Tampilkan Arsip
+          </span>
         </div>
       </div>
 
-      {/* 1. KEBUTUHAN (Needs) Section */}
-      <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
+      {/* Category Sections (Full-Width Cards below the Black Hero Card) */}
+      <div className="space-y-4 lg:space-y-5">
+        {/* 1. KEBUTUHAN (Needs) Section */}
+        <div className="bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-violet-500" />
@@ -584,6 +649,7 @@ export function BudgetTab() {
           <span>TAMBAH SUBKATEGORI</span>
         </button>
       </div>
+      </div>
 
       {/* Modal: Ubah Pemasukan */}
       <AnimatePresence>
@@ -816,7 +882,7 @@ export function BudgetTab() {
             >
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
-                  Tambah Subkategori ({targetGroup.toUpperCase()})
+                  {editingSubId ? 'Edit Subkategori' : 'Tambah Subkategori'} ({targetGroup.toUpperCase()})
                 </h3>
                 <button
                   type="button"

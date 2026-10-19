@@ -24,6 +24,7 @@ function WalletModalForm() {
     editingWallet ? String(editingWallet.initialBalance) : '0'
   );
   const [color, setColor] = useState(() => editingWallet?.color || '#0F766E');
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,6 +37,7 @@ function WalletModalForm() {
       updateWallet(editingWallet.id, {
         name: name.trim(),
         type,
+        initialBalance: balanceNum,
         color,
         icon: selectedOption?.icon || 'Wallet',
       });
@@ -53,13 +55,14 @@ function WalletModalForm() {
   };
 
   const handleDelete = () => {
-    if (editingWallet) {
-      if (confirm(`Hapus dompet "${editingWallet.name}"?`)) {
-        const deleted = deleteWallet(editingWallet.id);
-        if (deleted) {
-          setIsWalletModalOpen(false);
-        }
-      }
+    if (!editingWallet) return;
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    const deleted = deleteWallet(editingWallet.id);
+    if (deleted) {
+      setIsWalletModalOpen(false);
     }
   };
 
@@ -74,10 +77,15 @@ function WalletModalForm() {
             <button
               type="button"
               onClick={handleDelete}
-              className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full"
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer ${
+                confirmDelete
+                  ? 'bg-red-600 text-white hover:bg-red-700'
+                  : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30'
+              }`}
               title="Hapus dompet"
             >
-              <Trash2 size={18} />
+              <Trash2 size={16} />
+              {confirmDelete && <span>Yakin Hapus?</span>}
             </button>
           )}
           <button
@@ -126,19 +134,16 @@ function WalletModalForm() {
           </div>
         </div>
 
-        {!editingWallet && (
-          <div>
-            <label className="text-xs font-semibold text-gray-500 block mb-1">Saldo Awal (Rp)</label>
-            <input
-              type="number"
-              placeholder="0"
-              value={initialBalance}
-              onChange={(e) => setInitialBalance(e.target.value)}
-              min="0"
-              className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-base font-bold text-teal-700 dark:text-teal-400 focus:ring-2 focus:ring-teal-500"
-            />
-          </div>
-        )}
+        <div>
+          <label className="text-xs font-semibold text-gray-500 block mb-1">Saldo Awal (Rp)</label>
+          <input
+            type="number"
+            placeholder="0"
+            value={initialBalance}
+            onChange={(e) => setInitialBalance(e.target.value)}
+            className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-base font-bold text-teal-700 dark:text-teal-400 focus:ring-2 focus:ring-teal-500"
+          />
+        </div>
 
         <div>
           <label className="text-xs font-semibold text-gray-500 block mb-1.5">Pilihan Warna Label</label>

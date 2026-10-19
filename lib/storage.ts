@@ -5,6 +5,7 @@ import {
   DEFAULT_GOALS,
   DEFAULT_SETTINGS,
   DEFAULT_WALLETS,
+  EMPTY_BUDGET_CONFIG,
 } from './constants';
 
 const STORAGE_KEYS = {
@@ -19,8 +20,10 @@ const STORAGE_KEYS = {
 
 export function getInitialSampleTransactions(): Transaction[] {
   const makeDate = (day: number, hour: number, min: number) => {
-    const d = new Date(2026, 2, day, hour, min, 0, 0); // Month 2 is March 2026
-    return d.toISOString();
+    const dd = String(day).padStart(2, '0');
+    const hh = String(hour).padStart(2, '0');
+    const mm = String(min).padStart(2, '0');
+    return `2026-03-${dd}T${hh}:${mm}:00`;
   };
 
   return [
@@ -339,17 +342,14 @@ export function getInitialSampleTransactions(): Transaction[] {
 }
 
 export function getInitialBudgets(): Budget[] {
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
   return [
     {
       id: 'budget-total-current',
       categoryId: null,
-      month: currentMonth,
+      month: '2026-03',
       limitAmount: 4000000,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: '2026-03-01T00:00:00',
+      updatedAt: '2026-03-01T00:00:00',
     },
   ];
 }
@@ -412,7 +412,7 @@ export function loadStoredTransactions(): Transaction[] {
       return initial;
     }
     const parsed: Transaction[] = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length < 20 || !parsed.some((t) => t.id === 'tx-20')) {
+    if (!Array.isArray(parsed)) {
       const initial = getInitialSampleTransactions();
       saveStoredTransactions(initial);
       return initial;
@@ -534,17 +534,58 @@ export function clearAllData(): void {
   if (typeof window === 'undefined') return;
   try {
     Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
+    localStorage.removeItem('budggt_assets_liquid');
+    localStorage.removeItem('budggt_assets_fixed');
+    localStorage.removeItem('budggt_debts');
+    localStorage.removeItem('budggt_investments');
   } catch (err) {
     console.error('Failed to clear storage:', err);
   }
 }
 
 export function resetStorageToZero(): void {
-  saveStoredWallets(DEFAULT_WALLETS);
+  const now = new Date().toISOString();
+  const cleanWallets: Wallet[] = [
+    {
+      id: 'wallet-cash-main',
+      name: 'Dompet Tunai',
+      type: 'cash',
+      initialBalance: 0,
+      reservedAmount: 0,
+      color: '#16A34A',
+      icon: 'Banknote',
+      isVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'wallet-bank-main',
+      name: 'Rekening Bank',
+      type: 'bank',
+      initialBalance: 0,
+      reservedAmount: 0,
+      color: '#005E9E',
+      icon: 'Landmark',
+      isVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+  saveStoredWallets(cleanWallets);
   saveStoredCategories(DEFAULT_CATEGORIES);
-  saveStoredTransactions(getInitialSampleTransactions());
-  saveStoredBudgets(getInitialBudgets());
-  saveStoredBudgetConfig(DEFAULT_BUDGET_CONFIG);
-  saveStoredGoals(DEFAULT_GOALS);
-  saveStoredSettings(DEFAULT_SETTINGS);
+  saveStoredTransactions([]);
+  saveStoredBudgets([]);
+  saveStoredBudgetConfig(EMPTY_BUDGET_CONFIG);
+  saveStoredGoals([]);
+  saveStoredSettings({ ...DEFAULT_SETTINGS, hideBalance: false });
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem('budggt_assets_liquid', JSON.stringify([]));
+      localStorage.setItem('budggt_assets_fixed', JSON.stringify([]));
+      localStorage.setItem('budggt_debts', JSON.stringify([]));
+      localStorage.setItem('budggt_investments', JSON.stringify([]));
+    } catch {
+      // ignore
+    }
+  }
 }

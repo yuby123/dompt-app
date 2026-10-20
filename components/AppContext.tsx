@@ -202,7 +202,7 @@ interface AppContextType {
   verifyPinCode: (pin: string) => boolean;
 
   // CRUD Operations
-  addTransaction: (data: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  addTransaction: (data: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }) => string;
   updateTransaction: (id: string, data: Partial<Transaction>) => void;
   deleteTransaction: (id: string) => void;
 
@@ -427,15 +427,50 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const finalBudget = loadedBudget || EMPTY_BUDGET_CONFIG;
       setBudgetConfig(finalBudget);
       saveStoredBudgetConfig(finalBudget, cloudUid);
-      setSubscriptions(loadStoredSubscriptions(cloudUid));
+      const rawSubs = loadStoredSubscriptions(cloudUid);
+      const cleanedSubs = rawSubs.filter((rec) => {
+        if (rec.type !== 'expense') return true;
+        if (!finalBudget.subcategories || finalBudget.subcategories.length === 0) {
+          return !rec.subcategoryId;
+        }
+        const rName = rec.name.toLowerCase().trim();
+        return finalBudget.subcategories.some(
+          (s) =>
+            s.id === rec.subcategoryId ||
+            s.subscriptionId === rec.id ||
+            s.name.toLowerCase().trim() === rName
+        );
+      });
+      if (cleanedSubs.length !== rawSubs.length) {
+        saveStoredSubscriptions(cleanedSubs, cloudUid);
+      }
+      setSubscriptions(cleanedSubs);
     } catch (err) {
       console.warn('Fallback to cached account data while syncing Firestore:', err);
       setWallets(loadStoredWallets(cloudUid));
       setTransactions(loadStoredTransactions(cloudUid));
       setGoals(loadStoredGoals(cloudUid));
       setDebts(loadStoredDebts(cloudUid));
-      setBudgetConfig(loadStoredBudgetConfig(cloudUid));
-      setSubscriptions(loadStoredSubscriptions(cloudUid));
+      const localBudget = loadStoredBudgetConfig(cloudUid);
+      setBudgetConfig(localBudget);
+      const rawSubs = loadStoredSubscriptions(cloudUid);
+      const cleanedSubs = rawSubs.filter((rec) => {
+        if (rec.type !== 'expense') return true;
+        if (!localBudget.subcategories || localBudget.subcategories.length === 0) {
+          return !rec.subcategoryId;
+        }
+        const rName = rec.name.toLowerCase().trim();
+        return localBudget.subcategories.some(
+          (s) =>
+            s.id === rec.subcategoryId ||
+            s.subscriptionId === rec.id ||
+            s.name.toLowerCase().trim() === rName
+        );
+      });
+      if (cleanedSubs.length !== rawSubs.length) {
+        saveStoredSubscriptions(cleanedSubs, cloudUid);
+      }
+      setSubscriptions(cleanedSubs);
     }
 
     setDataResetVersion((v) => v + 1);
@@ -655,10 +690,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setCategories(loadStoredCategories());
       setTransactions(loadStoredTransactions(scope));
       setBudgets(loadStoredBudgets(scope));
-      setBudgetConfig(loadStoredBudgetConfig(scope));
+      const initialBudget = loadStoredBudgetConfig(scope);
+      setBudgetConfig(initialBudget);
       setGoals(loadStoredGoals(scope));
       setDebts(loadStoredDebts(scope));
-      setSubscriptions(loadStoredSubscriptions(scope));
+      const initialRawSubs = loadStoredSubscriptions(scope);
+      const initialCleanedSubs = initialRawSubs.filter((rec) => {
+        if (rec.type !== 'expense') return true;
+        if (!initialBudget.subcategories || initialBudget.subcategories.length === 0) {
+          return !rec.subcategoryId;
+        }
+        const rName = rec.name.toLowerCase().trim();
+        return initialBudget.subcategories.some(
+          (s) =>
+            s.id === rec.subcategoryId ||
+            s.subscriptionId === rec.id ||
+            s.name.toLowerCase().trim() === rName
+        );
+      });
+      if (initialCleanedSubs.length !== initialRawSubs.length) {
+        saveStoredSubscriptions(initialCleanedSubs, scope);
+      }
+      setSubscriptions(initialCleanedSubs);
       setSettings(
         activeLocal
           ? {
@@ -726,8 +779,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           const finalDebts = loadedDebts || [];
           setDebts(finalDebts);
           saveStoredDebts(finalDebts, currentUser.uid);
-          setBudgetConfig(loadedBudget || EMPTY_BUDGET_CONFIG);
-          setSubscriptions(loadStoredSubscriptions(currentUser.uid));
+          const finalLoadedBudget = loadedBudget || EMPTY_BUDGET_CONFIG;
+          setBudgetConfig(finalLoadedBudget);
+          const rawAuthSubs = loadStoredSubscriptions(currentUser.uid);
+          const cleanedAuthSubs = rawAuthSubs.filter((rec) => {
+            if (rec.type !== 'expense') return true;
+            if (!finalLoadedBudget.subcategories || finalLoadedBudget.subcategories.length === 0) {
+              return !rec.subcategoryId;
+            }
+            const rName = rec.name.toLowerCase().trim();
+            return finalLoadedBudget.subcategories.some(
+              (s) =>
+                s.id === rec.subcategoryId ||
+                s.subscriptionId === rec.id ||
+                s.name.toLowerCase().trim() === rName
+            );
+          });
+          if (cleanedAuthSubs.length !== rawAuthSubs.length) {
+            saveStoredSubscriptions(cleanedAuthSubs, currentUser.uid);
+          }
+          setSubscriptions(cleanedAuthSubs);
           setSettings((prev) => ({
             ...prev,
             userName: currentUser.displayName || prev.userName,
@@ -815,11 +886,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       });
 
-      const reserved = wallet.reservedAmount || 0;
+      const goalsReserved = goals
+        .filter((g) => g.walletId === wallet.id && g.currentAmount > 0)
+        .reduce((acc, g) => acc + g.currentAmount, 0);
+      const reserved = goalsReserved > 0 ? goalsReserved : wallet.reservedAmount || 0;
       const available = Math.max(0, balance - reserved);
 
       return {
         ...wallet,
+        reservedAmount: reserved,
         balance,
         expenseThisMonth,
         incomeThisMonth,
@@ -827,7 +902,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         availableBalance: available,
       };
     });
-  }, [wallets, transactions, activeYear, activeMonth]);
+  }, [wallets, transactions, goals, activeYear, activeMonth]);
 
   // Total balance
   const totalBalance = useMemo(() => {
@@ -953,18 +1028,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       subscriptions,
     });
 
-    // Liquid assets: Bank + E-wallet + Cash
+    // Liquid assets: Bank + E-wallet + Cash + Savings
     const liquidTotal = walletsWithBalance
-      .filter((w) => w.type === 'bank' || w.type === 'ewallet' || w.type === 'cash')
+      .filter((w) => w.type === 'bank' || w.type === 'ewallet' || w.type === 'cash' || w.type === 'savings')
       .reduce((acc, w) => acc + Math.max(0, w.balance), 0);
 
-    // Standard monthly expense baseline for emergency runway calculation:
-    // Uses monthly spending budget limit if set, or the greater of actual expenses or standard baseline (Rp 3.000.000)
-    const baselineMonthlyExpense = Math.max(
+    // Monthly expense baseline for emergency runway calculation:
+    // Uses actual spending budget limit or actual monthly expenses if > 0; only falls back to Rp 3.000.000 if neither is set.
+    const actualOrBudgetedExpense = Math.max(
       breakdown.monthlySpendingLimit > 0 ? breakdown.monthlySpendingLimit : 0,
-      totalExpense,
-      3000000
+      totalExpense
     );
+    const baselineMonthlyExpense = actualOrBudgetedExpense > 0 ? actualOrBudgetedExpense : 3000000;
     const runwayMonths = liquidTotal > 0 ? Number((liquidTotal / baselineMonthlyExpense).toFixed(1)) : 0;
     const estIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
 
@@ -1014,10 +1089,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   ]);
 
   // CRUD: Transaction
-  const addTransaction = (data: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'>) => {
+  const addTransaction = (data: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): string => {
+    const generatedId = data.id || `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const newTx: Transaction = {
       ...data,
-      id: `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      id: generatedId,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1034,6 +1110,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     addToast('Transaksi Ditambahkan', `${data.note || 'Transaksi baru'} berhasil dicatat.`);
+    return generatedId;
   };
 
   const updateTransaction = (id: string, data: Partial<Transaction>) => {
@@ -1306,22 +1383,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     // Create real cashflow transaction
     if (selectedWallet) {
-      const txId = `tx-${Date.now()}`;
-      createdTxId = txId;
+      const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
       if (debt.type === 'payable') {
-        // Paying off our debt -> Expense from selected wallet
-        addTransaction({
+        // Paying off our debt -> Fixed Expense from selected wallet (does NOT cut daily variable budget)
+        createdTxId = addTransaction({
+          id: txId,
           type: 'expense',
           amount: amount,
           walletId: selectedWallet.id,
           date: paymentDate,
           note: `Bayar Cicilan Utang: ${debt.name} (${options?.note || debt.contactName})`,
           budgetGroup: 'kebutuhan',
+          expenseNature: 'fixed',
           categoryId: 'cat-tagihan',
         });
       } else {
         // Someone paying back our receivable -> Income to selected wallet
-        addTransaction({
+        createdTxId = addTransaction({
+          id: txId,
           type: 'income',
           amount: amount,
           walletId: selectedWallet.id,
@@ -1477,6 +1556,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteBudgetSubcategory = (id: string) => {
+    const targetSub = budgetConfig.subcategories.find((s) => s.id === id);
+    const targetNameLower = targetSub ? targetSub.name.toLowerCase().trim() : '';
+
     const updatedSub = budgetConfig.subcategories.filter((s) => s.id !== id);
     const updated = { ...budgetConfig, subcategories: updatedSub };
     setBudgetConfig(updated);
@@ -1486,14 +1568,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         console.warn('Error saving budget config to Firestore:', err)
       );
     }
-    // Unlink any subscription referencing this deleted subcategory
-    const nextSubs = subscriptions.map((rec) =>
-      rec.subcategoryId === id ? { ...rec, subcategoryId: undefined } : rec
-    );
-    setSubscriptions(nextSubs);
-    saveStoredSubscriptions(nextSubs, localScopeUid);
 
-    addToast('Subkategori Dihapus', 'Subkategori telah dihapus.', 'info');
+    // Also delete any subscription linked to this deleted subcategory so it never stays as a ghost bill
+    const nextSubs = subscriptions.filter((rec) => {
+      if (rec.subcategoryId === id) return false;
+      if (targetSub?.subscriptionId && rec.id === targetSub.subscriptionId) return false;
+      if (targetNameLower && rec.type === 'expense' && rec.name.toLowerCase().trim() === targetNameLower) {
+        return false;
+      }
+      return true;
+    });
+    if (nextSubs.length !== subscriptions.length) {
+      setSubscriptions(nextSubs);
+      saveStoredSubscriptions(nextSubs, localScopeUid);
+    }
+
+    addToast('Subkategori Dihapus', 'Subkategori & jadwal tagihan terkait telah dihapus.', 'info');
   };
 
   // CRUD: Subscriptions & Recurring Transactions (Two-way integrated with BudgetConfig)

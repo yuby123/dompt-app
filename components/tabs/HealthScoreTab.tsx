@@ -24,6 +24,7 @@ export function HealthScoreTab() {
     dashboardSummary,
     budgetConfig,
     goals,
+    debts,
     settings,
     setActiveTab,
   } = useApp();
@@ -39,14 +40,20 @@ export function HealthScoreTab() {
     const budgetLimit = dashboardSummary.budgetLimit || 0;
     const runwayMonths = dashboardSummary.emergencyFundRunwayMonths || 0;
 
-    // Liquid balance vs Credit/Paylater debt
+    // Liquid balance vs Credit/Paylater + Active Payable Debts
     const liquidAssets = walletsWithBalance
       .filter((w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance > 0)
       .reduce((acc, w) => acc + w.balance, 0);
 
-    const creditDebt = walletsWithBalance
+    const creditWalletDebt = walletsWithBalance
       .filter((w) => (w.type === 'credit' || w.type === 'paylater') && w.balance < 0)
       .reduce((acc, w) => acc + Math.abs(w.balance), 0);
+
+    const activePayableDebt = (debts || [])
+      .filter((d) => d.type === 'payable' && d.status === 'active')
+      .reduce((acc, d) => acc + Math.max(0, d.remainingAmount ?? d.totalAmount), 0);
+
+    const creditDebt = creditWalletDebt + activePayableDebt;
 
     const isZeroState =
       liquidAssets === 0 &&
@@ -128,8 +135,8 @@ export function HealthScoreTab() {
     let debtRatioPct = 0;
     let debtScore = 20;
     if (creditDebt > 0) {
-      const denominator = Math.max(liquidAssets, monthlyIncome, 1);
-      debtRatioPct = Math.round((creditDebt / denominator) * 100);
+      const denominator = Math.max(liquidAssets, monthlyIncome);
+      debtRatioPct = denominator > 0 ? Math.round((creditDebt / denominator) * 100) : 100;
       if (debtRatioPct <= 15) {
         debtScore = 17;
       } else if (debtRatioPct <= 30) {
@@ -187,6 +194,7 @@ export function HealthScoreTab() {
     dashboardSummary,
     budgetConfig,
     goals.length,
+    debts,
   ]);
 
   const pillars = [

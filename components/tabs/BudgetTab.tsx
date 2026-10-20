@@ -84,13 +84,15 @@ export function BudgetTab() {
   const wantsSubs = budgetConfig.subcategories.filter((s) => s.group === 'keinginan');
   const savingsSubs = budgetConfig.subcategories.filter((s) => s.group === 'tabungan');
 
-  // Subcategories & active subscriptions recognized as fixed monthly obligations (Wi-Fi, Netflix, Listrik, etc.)
+  // Subcategories recognized as fixed monthly obligations (Wi-Fi, Netflix, Listrik, etc.)
+  // Single source of truth: only subcategories currently in budgetConfig.subcategories (Kebutuhan & Keinginan)
   const fixedSubcategories = useMemo(() => {
     const expenseSubs = (subscriptions || []).filter((s) => s.type === 'expense');
-    const coveredRecIds = new Set<string>();
     const list: { id: string; name: string; allocatedAmount: number }[] = [];
 
     budgetConfig.subcategories.forEach((sub) => {
+      if (sub.group === 'tabungan') return;
+
       const subNameLower = sub.name.toLowerCase().trim();
       const linkedRec = expenseSubs.find(
         (rec) =>
@@ -99,7 +101,6 @@ export function BudgetTab() {
           rec.name.toLowerCase().trim() === subNameLower
       );
       if (linkedRec) {
-        coveredRecIds.add(linkedRec.id);
         if (!linkedRec.isActive) return;
       } else if (sub.isSubscriptionActive === false) {
         return;
@@ -117,16 +118,6 @@ export function BudgetTab() {
           id: sub.id,
           name: sub.name,
           allocatedAmount: sub.allocatedAmount,
-        });
-      }
-    });
-
-    expenseSubs.forEach((rec) => {
-      if (rec.isActive && !coveredRecIds.has(rec.id)) {
-        list.push({
-          id: rec.id,
-          name: rec.name,
-          allocatedAmount: getMonthlySubscriptionAmount(rec.amount, rec.frequency),
         });
       }
     });

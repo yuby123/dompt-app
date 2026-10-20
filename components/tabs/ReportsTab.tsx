@@ -102,6 +102,7 @@ export function ReportsTab() {
     const catGroupMap = new Map(categories.map((c) => [c.id, c.budgetGroup]));
     const catInfoMap = new Map(categories.map((c) => [c.id, c]));
     const catTotals = new Map<string, number>();
+    const walletTypeMap = new Map(wallets.map((w) => [w.id, w.type]));
 
     transactions.forEach((tx) => {
       const d = new Date(tx.date);
@@ -109,18 +110,35 @@ export function ReportsTab() {
         if (tx.type === 'income') {
           inc += tx.amount;
         } else if (tx.type === 'expense') {
-          exp += tx.amount;
           const grp =
             tx.budgetGroup ||
             (tx.categoryId ? catGroupMap.get(tx.categoryId) : 'kebutuhan');
-          if (grp === 'keinginan') wSpent += tx.amount;
-          else if (grp === 'tabungan') sSpent += tx.amount;
-          else nSpent += tx.amount;
+
+          if (
+            grp === 'tabungan' ||
+            tx.categoryId === 'cat-tabungan' ||
+            tx.categoryId === 'cat-investasi'
+          ) {
+            sSpent += tx.amount;
+          } else {
+            exp += tx.amount;
+            if (grp === 'keinginan') wSpent += tx.amount;
+            else nSpent += tx.amount;
+          }
 
           const cKey = tx.categoryId || 'cat-lainnya';
           catTotals.set(cKey, (catTotals.get(cKey) || 0) + tx.amount);
-        } else if (tx.type === 'transfer' && tx.budgetGroup === 'tabungan') {
-          sSpent += tx.amount;
+        } else if (tx.type === 'transfer') {
+          const targetType = tx.transferWalletId
+            ? walletTypeMap.get(tx.transferWalletId)
+            : undefined;
+          if (
+            tx.budgetGroup === 'tabungan' ||
+            targetType === 'savings' ||
+            targetType === 'investment'
+          ) {
+            sSpent += tx.amount;
+          }
         }
       } else if (d.getFullYear() === pYear && d.getMonth() === pMonth) {
         if (tx.type === 'income') prevInc += tx.amount;
@@ -139,8 +157,10 @@ export function ReportsTab() {
     const sTarget = Math.round((baseIncome * (budgetConfig.savingsPercent || 20)) / 100);
 
     const net = inc - exp;
-    const ratio = inc > 0 ? Math.max(0, Math.round((net / inc) * 100)) : 0;
+    const effectiveSaved = Math.max(sSpent, Math.max(0, net));
+    const ratio = baseIncome > 0 ? Math.max(0, Math.round((effectiveSaved / baseIncome) * 100)) : 0;
 
+    const totalCategorizedExp = exp + sSpent;
     const sortedCats = Array.from(catTotals.entries())
       .map(([catId, amount]) => {
         const cat = catInfoMap.get(catId);
@@ -149,22 +169,27 @@ export function ReportsTab() {
           name: cat?.name || 'Lainnya',
           emoji: cat?.emoji || '💳',
           amount,
-          pct: exp > 0 ? Math.round((amount / exp) * 100) : 0,
+          pct: totalCategorizedExp > 0 ? Math.round((amount / totalCategorizedExp) * 100) : 0,
         };
       })
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
 
-    // Calculate financial health score (0-100)
-    const savingsPts = ratio >= 20 ? 35 : Math.round((ratio / 20) * 35);
+    // Calculate financial health score (0-100) without artificial floor when empty/deficit
+    const hasActivity = inc > 0 || exp > 0 || sSpent > 0 || baseIncome > 0;
+    const savingsPts = ratio >= 20 ? 35 : Math.max(0, Math.round((ratio / 20) * 35));
     const isBudgetCompliant =
-      (nTarget === 0 || nSpent <= nTarget) && (wTarget === 0 || wSpent <= wTarget);
-    const budgetPts = isBudgetCompliant ? 35 : 20;
+      hasActivity &&
+      (nTarget === 0 || nSpent <= nTarget) &&
+      (wTarget === 0 || wSpent <= wTarget);
+    const budgetPts = !hasActivity ? 0 : isBudgetCompliant ? 35 : exp <= nTarget + wTarget ? 22 : 10;
     const runwayPts = Math.min(
       30,
       Math.round((dashboardSummary.emergencyFundRunwayMonths / 6) * 30)
     );
-    const score = Math.min(100, Math.max(45, savingsPts + budgetPts + runwayPts));
+    const score = !hasActivity
+      ? 0
+      : Math.min(100, Math.max(0, savingsPts + budgetPts + runwayPts));
 
     return {
       monthIncome: inc,
@@ -173,7 +198,7 @@ export function ReportsTab() {
       savingsRatio: ratio,
       needsActual: nSpent,
       wantsActual: wSpent,
-      savingsActual: sSpent,
+      savingsActual: effectiveSaved,
       needsTarget: nTarget,
       wantsTarget: wTarget,
       savingsTarget: sTarget,
@@ -186,6 +211,7 @@ export function ReportsTab() {
   }, [
     transactions,
     categories,
+    wallets,
     budgetConfig,
     activeYear,
     activeMonth,

@@ -18,7 +18,7 @@ import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/forma
 type AssetItem = { id: string; name: string; amount: number };
 
 export function AssetsTab() {
-  const { walletsWithBalance, totalBalance, dashboardSummary, settings, addToast, user, dataResetVersion } = useApp();
+  const { walletsWithBalance, totalBalance, dashboardSummary, debts, settings, addToast, user, dataResetVersion } = useApp();
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [assetType, setAssetType] = useState<'liquid' | 'fixed'>('liquid');
@@ -59,12 +59,22 @@ export function AssetsTab() {
 
   const totalLiquid = liquidAssets.reduce((acc, a) => acc + a.amount, 0);
   const totalFixed = fixedAssets.reduce((acc, a) => acc + a.amount, 0);
-  const totalNetWorth = totalBalance + totalLiquid + totalFixed;
+  const totalPayableDebts = (debts || [])
+    .filter((d) => d.type === 'payable' && d.status === 'active')
+    .reduce((acc, d) => acc + Math.max(0, d.remainingAmount ?? d.totalAmount), 0);
 
-  // Dynamic Runway & Wealth Level
-  const avgMonthlyExpense = Math.max(1, dashboardSummary.monthlyExpense || 4000000);
+  // Net Worth = Total Assets (Wallets + Liquid Assets + Fixed Assets) - Active Payable Debts
+  const totalNetWorth = totalBalance + totalLiquid + totalFixed - totalPayableDebts;
+
+  // Dynamic Runway & Wealth Level (aligned with dashboardSummary baseline)
+  const actualOrBudgetExp = Math.max(
+    dashboardSummary.budgetLimit || 0,
+    dashboardSummary.monthlyExpense || 0
+  );
+  const avgMonthlyExpense = actualOrBudgetExp > 0 ? actualOrBudgetExp : 3000000;
+  const totalLiquidPool = Math.max(0, totalBalance) + totalLiquid;
   const totalRunwayMonths =
-    totalNetWorth > 0 ? Number(((Math.max(0, totalBalance) + totalLiquid) / avgMonthlyExpense).toFixed(1)) : 0;
+    totalLiquidPool > 0 ? Number((totalLiquidPool / avgMonthlyExpense).toFixed(1)) : 0;
 
   const nextTarget =
     totalNetWorth <= 0

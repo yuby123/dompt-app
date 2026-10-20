@@ -145,12 +145,14 @@ export function calculateBudgetBreakdown({
 
   // Build lookup of expense subscriptions
   const expenseSubscriptions = subscriptions.filter((s) => s.type === 'expense');
-  const coveredSubscriptionIds = new Set<string>();
 
-  // 2. Identify fixed subcategories from budgetConfig (subcategories with due dates, linked subscriptions, or fixed names)
+  // 2. Identify fixed subcategories from Needs & Wants in budgetConfig (exclude 'tabungan' which has its own 20% bucket)
+  // Single source of truth: only subcategories that exist in budgetConfig.subcategories are counted
   let allocatedFixedFromSubs = 0;
   if (budgetConfig?.subcategories && budgetConfig.subcategories.length > 0) {
     budgetConfig.subcategories.forEach((sub) => {
+      if (sub.group === 'tabungan') return;
+
       const subNameLower = sub.name.toLowerCase().trim();
       const linkedSub = expenseSubscriptions.find(
         (rec) =>
@@ -160,7 +162,6 @@ export function calculateBudgetBreakdown({
       );
 
       if (linkedSub) {
-        coveredSubscriptionIds.add(linkedSub.id);
         // If linked subscription is explicitly paused, skip counting its fixed obligation this month
         if (!linkedSub.isActive) {
           return;
@@ -181,14 +182,7 @@ export function calculateBudgetBreakdown({
     });
   }
 
-  // 2b. Include any active expense subscriptions not yet represented in budgetConfig.subcategories
-  expenseSubscriptions.forEach((rec) => {
-    if (rec.isActive && !coveredSubscriptionIds.has(rec.id)) {
-      allocatedFixedFromSubs += getMonthlySubscriptionAmount(rec.amount, rec.frequency);
-    }
-  });
-
-  // 3. Partition transactions into Variable vs Fixed
+  // 3. Partition transactions into Variable vs Fixed (excluding pure savings transfers/allocations from operational variable expense)
   let monthlyVarExp = 0;
   let monthlyFixExp = 0;
   let todayVarExp = 0;
@@ -229,10 +223,18 @@ export function calculateBudgetBreakdown({
   const dailyBudgetQuota =
     estIncome > 0 && daysInMonth > 0 ? Math.round(monthlyVariableBudget / daysInMonth) : 0;
 
-  // 7. Sisa Budget Harian = Daily Quota - Today's Variable Expenses ONLY!
-  const dailyBudgetRemaining = Math.max(0, dailyBudgetQuota - todayVarExp);
-  const dailyOverbudget = todayVarExp > dailyBudgetQuota;
-  const dailyOverbudgetAmount = Math.max(0, todayVarExp - dailyBudgetQuota);
+  // 7. Sisa Budget Harian = Effective Daily Quota - Today's Variable Expenses ONLY!
+  // Dibatasi juga oleh sisa kuota variabel bulanan agar tidak positif semu saat kuota bulanan sudah habis.
+  const priorDaysVarExp = Math.max(0, monthlyVarExp - todayVarExp);
+  const remainingMonthlyVarBeforeToday = Math.max(0, monthlyVariableBudget - priorDaysVarExp);
+  const effectiveDailyQuota =
+    monthlyVariableBudget > 0
+      ? Math.min(dailyBudgetQuota, remainingMonthlyVarBeforeToday)
+      : dailyBudgetQuota;
+
+  const dailyBudgetRemaining = Math.max(0, effectiveDailyQuota - todayVarExp);
+  const dailyOverbudget = todayVarExp > effectiveDailyQuota && dailyBudgetQuota > 0;
+  const dailyOverbudgetAmount = Math.max(0, todayVarExp - effectiveDailyQuota);
 
   return {
     daysInMonth,

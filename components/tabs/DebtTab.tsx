@@ -126,7 +126,12 @@ export function DebtTab() {
   }, [walletsWithBalance]);
 
   // Debt to Liquid Assets Ratio
-  const debtRatioPct = liquidAssets > 0 ? Math.round((totalPayableRemaining / liquidAssets) * 100) : 0;
+  const debtRatioPct =
+    totalPayableRemaining <= 0
+      ? 0
+      : liquidAssets > 0
+      ? Math.round((totalPayableRemaining / liquidAssets) * 100)
+      : 100;
 
   // Closest upcoming due date
   const nextDueItem = useMemo(() => {

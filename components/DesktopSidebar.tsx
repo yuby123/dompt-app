@@ -17,7 +17,6 @@ import {
   Megaphone,
   Moon,
   Sun,
-  Lock,
   BookOpen,
   CalendarClock,
   Activity,
@@ -76,7 +75,6 @@ export function DesktopSidebar() {
     id: TabType;
     label: string;
     icon: React.ElementType;
-    hasLock?: boolean;
     onClick: () => void;
   }[] = [
     {
@@ -131,14 +129,12 @@ export function DesktopSidebar() {
       id: 'debt',
       label: 'Utang',
       icon: CreditCard,
-      hasLock: true,
       onClick: () => setActiveTab('debt'),
     },
     {
       id: 'invest',
       label: 'Investasi',
       icon: TrendingUp,
-      hasLock: true,
       onClick: () => setActiveTab('invest'),
     },
     {
@@ -250,13 +246,6 @@ export function DesktopSidebar() {
                   />
                   <span>{item.label}</span>
                 </div>
-
-                {item.hasLock && (
-                  <span className="inline-flex items-center gap-1 text-[9px] font-black bg-[#14161C] text-white dark:bg-white/10 dark:text-gray-200 px-2 py-0.5 rounded-full">
-                    <Lock size={8} strokeWidth={3} />
-                    <span>Max</span>
-                  </span>
-                )}
               </button>
             );
           })}

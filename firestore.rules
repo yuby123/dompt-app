@@ -56,7 +56,7 @@ service cloud.firestore {
 
     function isValidTransaction(data) {
       return data.keys().hasAll(['id', 'userId', 'walletId', 'type', 'amount', 'categoryId', 'date'])
-        && data.keys().hasOnly(['id', 'userId', 'walletId', 'type', 'amount', 'categoryId', 'budgetGroup', 'date', 'note', 'tags', 'transferWalletId', 'transferFee', 'imageReceiptUrl', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'walletId', 'type', 'amount', 'categoryId', 'budgetGroup', 'expenseNature', 'date', 'note', 'tags', 'transferWalletId', 'transferFee', 'imageReceiptUrl', 'createdAt', 'updatedAt'])
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.walletId is string && data.walletId.size() <= 128
@@ -64,6 +64,7 @@ service cloud.firestore {
         && data.amount is number
         && data.categoryId is string && data.categoryId.size() <= 100
         && (!('budgetGroup' in data) || (data.budgetGroup is string && data.budgetGroup.size() <= 50))
+        && (!('expenseNature' in data) || data.expenseNature in ['variable', 'fixed'])
         && data.date is string && data.date.size() <= 30
         && (!('note' in data) || (data.note is string && data.note.size() <= 500))
         && (!('transferWalletId' in data) || (data.transferWalletId is string && data.transferWalletId.size() <= 128))
@@ -86,6 +87,26 @@ service cloud.firestore {
         && (!('isEmergencyFund' in data) || data.isEmergencyFund is bool)
         && (!('monthlyTargetSaving' in data) || data.monthlyTargetSaving is number)
         && (!('isLocked' in data) || data.isLocked is bool);
+    }
+
+    function isValidDebt(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'type', 'totalAmount', 'remainingAmount', 'dueDate', 'contactName', 'status'])
+        && data.keys().hasOnly(['id', 'userId', 'name', 'type', 'totalAmount', 'remainingAmount', 'dueDate', 'contactName', 'startDate', 'walletId', 'category', 'interestRate', 'status', 'note', 'paymentsJson', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && data.type in ['payable', 'receivable']
+        && data.totalAmount is number
+        && data.remainingAmount is number
+        && data.dueDate is string && data.dueDate.size() <= 50
+        && data.contactName is string && data.contactName.size() <= 100
+        && data.status in ['active', 'paid']
+        && (!('startDate' in data) || (data.startDate is string && data.startDate.size() <= 50))
+        && (!('walletId' in data) || (data.walletId is string && data.walletId.size() <= 128))
+        && (!('category' in data) || (data.category is string && data.category.size() <= 50))
+        && (!('interestRate' in data) || data.interestRate is number)
+        && (!('note' in data) || (data.note is string && data.note.size() <= 500))
+        && (!('paymentsJson' in data) || (data.paymentsJson is string && data.paymentsJson.size() <= 20000));
     }
 
     function isValidBudgetConfig(data) {
@@ -171,6 +192,21 @@ service cloud.firestore {
           && isValidBudgetConfig(incoming())
           && incoming().userId == existing().userId;
         allow delete: if isOwner(userId) && isValidId(configId);
+      }
+
+      // Debts sub-collection
+      match /debts/{debtId} {
+        allow get: if isOwner(userId) && isValidId(debtId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidId(debtId)
+          && isValidDebt(incoming())
+          && incoming().userId == userId;
+        allow update: if isOwner(userId)
+          && isValidId(debtId)
+          && isValidDebt(incoming())
+          && incoming().userId == existing().userId;
+        allow delete: if isOwner(userId) && isValidId(debtId);
       }
     }
   }

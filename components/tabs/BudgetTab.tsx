@@ -11,15 +11,21 @@ import {
   AlertTriangle,
   Calendar,
   Trash2,
+  Smile,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
+import { EmojiPickerModal } from '../EmojiPickerModal';
 import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
 import { BudgetGroup } from '@/lib/types';
+import { FIXED_CATEGORY_IDS, FIXED_EXPENSE_KEYWORDS_REGEX, getMonthlySubscriptionAmount } from '@/lib/budgetUtils';
 
 export function BudgetTab() {
   const {
     budgetConfig,
+    dashboardSummary,
+    subscriptions,
+    setActiveTab,
     updateBudgetConfig,
     addBudgetSubcategory,
     deleteBudgetSubcategory,
@@ -49,8 +55,19 @@ export function BudgetTab() {
   const [newSubAmount, setNewSubAmount] = useState('');
   const [newSubEmoji, setNewSubEmoji] = useState('📦');
   const [newSubDueDay, setNewSubDueDay] = useState('');
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
 
   const [activeMenuSubId, setActiveMenuSubId] = useState<string | null>(null);
+
+  const quickEmojiSuggestions = useMemo(() => {
+    if (targetGroup === 'kebutuhan') {
+      return ['⚡', '📶', '🛒', '🍔', '🚗', '🛵', '⛽', '🏠', '💧', '💊', '🏥', '🧴', '🍞', '📦'];
+    }
+    if (targetGroup === 'keinginan') {
+      return ['🎬', '🍿', '☕', '🎮', '🛍️', '👗', '👟', '🍕', '🎧', '📱', '💻', '✈️', '💄', '🍔'];
+    }
+    return ['💰', '🪙', '🏦', '📈', '🏅', '🎯', '💵', '🔒', '💎', '🏡', '🥇', '📊', '🧾', '🏧'];
+  }, [targetGroup]);
 
   // Group limits
   const totalIncome = budgetConfig.estimatedIncome ?? 0;
@@ -66,6 +83,56 @@ export function BudgetTab() {
   const needsSubs = budgetConfig.subcategories.filter((s) => s.group === 'kebutuhan');
   const wantsSubs = budgetConfig.subcategories.filter((s) => s.group === 'keinginan');
   const savingsSubs = budgetConfig.subcategories.filter((s) => s.group === 'tabungan');
+
+  // Subcategories & active subscriptions recognized as fixed monthly obligations (Wi-Fi, Netflix, Listrik, etc.)
+  const fixedSubcategories = useMemo(() => {
+    const expenseSubs = (subscriptions || []).filter((s) => s.type === 'expense');
+    const coveredRecIds = new Set<string>();
+    const list: { id: string; name: string; allocatedAmount: number }[] = [];
+
+    budgetConfig.subcategories.forEach((sub) => {
+      const subNameLower = sub.name.toLowerCase().trim();
+      const linkedRec = expenseSubs.find(
+        (rec) =>
+          rec.id === sub.subscriptionId ||
+          rec.subcategoryId === sub.id ||
+          rec.name.toLowerCase().trim() === subNameLower
+      );
+      if (linkedRec) {
+        coveredRecIds.add(linkedRec.id);
+        if (!linkedRec.isActive) return;
+      } else if (sub.isSubscriptionActive === false) {
+        return;
+      }
+
+      const isFixed =
+        Boolean(sub.dueDateDay) ||
+        Boolean(sub.subscriptionId) ||
+        Boolean(linkedRec) ||
+        FIXED_CATEGORY_IDS.has(sub.id.replace('sub-', 'cat-')) ||
+        FIXED_EXPENSE_KEYWORDS_REGEX.test(sub.name);
+
+      if (isFixed) {
+        list.push({
+          id: sub.id,
+          name: sub.name,
+          allocatedAmount: sub.allocatedAmount,
+        });
+      }
+    });
+
+    expenseSubs.forEach((rec) => {
+      if (rec.isActive && !coveredRecIds.has(rec.id)) {
+        list.push({
+          id: rec.id,
+          name: rec.name,
+          allocatedAmount: getMonthlySubscriptionAmount(rec.amount, rec.frequency),
+        });
+      }
+    });
+
+    return list;
+  }, [budgetConfig.subcategories, subscriptions]);
 
   // Dynamic subcategory spent amounts calculated from transactions this month
   const { subSpentMap, unallocatedGroupSpent } = useMemo(() => {
@@ -245,7 +312,7 @@ export function BudgetTab() {
     setTargetGroup(group);
     setNewSubName('');
     setNewSubAmount('');
-    setNewSubEmoji('📦');
+    setNewSubEmoji(group === 'kebutuhan' ? '⚡' : group === 'keinginan' ? '🎬' : '💰');
     setNewSubDueDay('');
     setIsAddSubOpen(true);
   };
@@ -338,6 +405,54 @@ export function BudgetTab() {
           </div>
         </div>
 
+        {/* Pos Anggaran: Tagihan Bulanan (Fixed) vs Pengeluaran Harian (Variable) */}
+        {budgetConfig.estimatedIncome > 0 && (
+          <div className="pt-4 border-t border-white/10 grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
+            <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex flex-col justify-between gap-1.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">📅</span>
+                  <span className="text-[10px] font-black text-sky-400 uppercase tracking-wider">
+                    POS TAGIHAN BULANAN (FIXED)
+                  </span>
+                </div>
+                <div className="text-sm text-gray-100 font-black tabular-nums">
+                  {formatRupiah(dashboardSummary.monthlyFixedBudget, hide)}
+                </div>
+              </div>
+              <div className="text-[11px] text-gray-400 font-medium pl-7">
+                {fixedSubcategories.length > 0 ? (
+                  <span>
+                    Dari alokasi: {fixedSubcategories.map((s) => `${s.name} (${formatRupiah(s.allocatedAmount, hide)})`).join(' + ')}
+                  </span>
+                ) : (
+                  <span>Belum ada alokasi tagihan berjadwal</span>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex flex-col justify-between gap-1.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">🥪</span>
+                  <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider">
+                    POS PENGELUARAN HARIAN (OPERASIONAL)
+                  </span>
+                </div>
+                <div className="text-sm text-gray-100 font-black tabular-nums">
+                  {formatRupiah(dashboardSummary.monthlyVariableBudget, hide)}
+                  <span className="text-[10px] text-gray-400 font-normal ml-1">
+                    (~{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari)
+                  </span>
+                </div>
+              </div>
+              <div className="text-[11px] text-gray-400 font-medium pl-7">
+                Makan, jajan, transportasi (dasar perhitungan budget harian)
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Bottom Bar: Periode Aktif */}
         <div className="pt-4 border-t border-white/10 flex items-center justify-between text-xs">
           <div className="flex items-center gap-3">
@@ -394,11 +509,25 @@ export function BudgetTab() {
             return (
               <div key={sub.id} className="space-y-1.5 relative">
                 <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
                     <span className="text-lg">{sub.emoji}</span>
                     <span className="font-extrabold text-gray-900 dark:text-white truncate">
                       {sub.name}
                     </span>
+                    {(sub.subscriptionId || sub.dueDateDay) && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('subscriptions')}
+                        className="px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 text-[9px] font-black uppercase cursor-pointer hover:bg-sky-500/20"
+                        title="Terhubung dengan Jadwal Langganan & Tagihan Bulanan"
+                      >
+                        {sub.isSubscriptionActive === false
+                          ? 'Dijeda'
+                          : sub.dueDateDay
+                          ? `🔁 Rutin Tgl ${sub.dueDateDay}`
+                          : '🔁 Langganan'}
+                      </button>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
@@ -508,11 +637,25 @@ export function BudgetTab() {
             return (
               <div key={sub.id} className="space-y-1.5 relative">
                 <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
                     <span className="text-lg">{sub.emoji}</span>
                     <span className="font-extrabold text-gray-900 dark:text-white truncate">
                       {sub.name}
                     </span>
+                    {(sub.subscriptionId || sub.dueDateDay) && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('subscriptions')}
+                        className="px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 text-[9px] font-black uppercase cursor-pointer hover:bg-sky-500/20"
+                        title="Terhubung dengan Jadwal Langganan & Tagihan Bulanan"
+                      >
+                        {sub.isSubscriptionActive === false
+                          ? 'Dijeda'
+                          : sub.dueDateDay
+                          ? `🔁 Rutin Tgl ${sub.dueDateDay}`
+                          : '🔁 Langganan'}
+                      </button>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
@@ -942,7 +1085,7 @@ export function BudgetTab() {
 
               <form onSubmit={handleCreateSubcategory} className="space-y-3.5">
                 <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">
+                  <label className="text-xs font-bold text-gray-500 dark:text-gray-400 block mb-1">
                     Nama Subkategori
                   </label>
                   <div className="flex gap-2">
@@ -954,14 +1097,47 @@ export function BudgetTab() {
                       required
                       className="flex-1 p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
-                    <input
-                      type="text"
-                      value={newSubEmoji}
-                      onChange={(e) => setNewSubEmoji(e.target.value)}
-                      maxLength={2}
-                      className="w-12 p-3 text-center bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-base focus:outline-none"
-                      title="Emoji Icon"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setIsEmojiPickerOpen(true)}
+                      className="w-14 h-12 flex flex-col items-center justify-center rounded-2xl bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border-2 border-dashed border-gray-300 dark:border-gray-600 hover:border-[#D4F826] transition-all cursor-pointer group shrink-0 active:scale-95"
+                      title="Pilih Icon / Emoticon"
+                    >
+                      <span className="text-xl group-hover:scale-110 transition-transform leading-none">{newSubEmoji || '📦'}</span>
+                      <span className="text-[9px] font-black text-gray-500 dark:text-gray-400 leading-none mt-0.5">Icon</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick Icon Selector */}
+                <div className="space-y-1.5 pt-0.5">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-gray-500 dark:text-gray-400">
+                    <span>Pilihan Icon:</span>
+                    <button
+                      type="button"
+                      onClick={() => setIsEmojiPickerOpen(true)}
+                      className="text-[11px] font-black text-lime-600 dark:text-[#D4F826] hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Smile size={13} />
+                      <span>Banyak Pilihan</span>
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {quickEmojiSuggestions.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => setNewSubEmoji(emoji)}
+                        className={`w-8 h-8 rounded-xl flex items-center justify-center text-base transition-all cursor-pointer ${
+                          newSubEmoji === emoji
+                            ? 'bg-[#D4F826] text-black shadow-xs scale-110 ring-2 ring-black dark:ring-white font-black'
+                            : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 hover:scale-105'
+                        }`}
+                        title={`Pilih ${emoji}`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
@@ -1015,6 +1191,15 @@ export function BudgetTab() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Full Emoji Picker Modal with Categories & Search */}
+      <EmojiPickerModal
+        isOpen={isEmojiPickerOpen}
+        onClose={() => setIsEmojiPickerOpen(false)}
+        selectedEmoji={newSubEmoji}
+        onSelect={(emoji) => setNewSubEmoji(emoji)}
+        title="Pilih Icon Subkategori"
+      />
     </div>
   );
 }

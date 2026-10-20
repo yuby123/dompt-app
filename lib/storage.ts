@@ -1,7 +1,8 @@
-import { AppSettings, Budget, BudgetConfig, Category, Goal, Transaction, Wallet } from './types';
+import { AppSettings, Budget, BudgetConfig, Category, Debt, Goal, RecurringItem, Transaction, Wallet } from './types';
 import {
   DEFAULT_BUDGET_CONFIG,
   DEFAULT_CATEGORIES,
+  DEFAULT_DEBTS,
   DEFAULT_GOALS,
   DEFAULT_SETTINGS,
   DEFAULT_WALLETS,
@@ -15,6 +16,8 @@ const STORAGE_KEYS = {
   BUDGETS: 'budggt_budgets',
   BUDGET_CONFIG: 'budggt_budget_config',
   GOALS: 'budggt_goals',
+  DEBTS: 'budggt_debts',
+  SUBSCRIPTIONS: 'budggt_subscriptions',
   SETTINGS: 'budggt_settings',
 };
 
@@ -766,6 +769,58 @@ export function saveStoredGoals(goals: Goal[], scopeUid?: string): void {
     localStorage.setItem(key, JSON.stringify(goals));
   } catch (err) {
     console.error('Failed to save goals:', err);
+  }
+}
+
+export function loadStoredDebts(scopeUid?: string): Debt[] {
+  if (typeof window === 'undefined') return scopeUid ? [] : DEFAULT_DEBTS;
+  try {
+    const key = getScopedKey(STORAGE_KEYS.DEBTS, scopeUid);
+    const raw = localStorage.getItem(key);
+    if (!raw) {
+      const initial = scopeUid ? [] : DEFAULT_DEBTS;
+      saveStoredDebts(initial, scopeUid);
+      return initial;
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : (scopeUid ? [] : DEFAULT_DEBTS);
+  } catch (err) {
+    console.error('Failed to load debts:', err);
+    return scopeUid ? [] : DEFAULT_DEBTS;
+  }
+}
+
+export function saveStoredDebts(debts: Debt[], scopeUid?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = getScopedKey(STORAGE_KEYS.DEBTS, scopeUid);
+    localStorage.setItem(key, JSON.stringify(debts));
+  } catch (err) {
+    console.error('Failed to save debts:', err);
+  }
+}
+
+export function loadStoredSubscriptions(scopeUid?: string): RecurringItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const key = getScopedKey(STORAGE_KEYS.SUBSCRIPTIONS, scopeUid);
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error('Failed to load subscriptions:', err);
+    return [];
+  }
+}
+
+export function saveStoredSubscriptions(items: RecurringItem[], scopeUid?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = getScopedKey(STORAGE_KEYS.SUBSCRIPTIONS, scopeUid);
+    localStorage.setItem(key, JSON.stringify(items));
+  } catch (err) {
+    console.error('Failed to save subscriptions:', err);
   }
 }
 

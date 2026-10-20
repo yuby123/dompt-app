@@ -9,7 +9,10 @@ import {
   BudgetGroup,
   Category,
   DashboardSummary,
+  Debt,
+  DebtPayment,
   Goal,
+  RecurringItem,
   ThemeMode,
   Transaction,
   TransactionDetail,
@@ -30,8 +33,10 @@ import {
   loadStoredBudgetConfig,
   loadStoredBudgets,
   loadStoredCategories,
+  loadStoredDebts,
   loadStoredGoals,
   loadStoredSettings,
+  loadStoredSubscriptions,
   loadStoredTransactions,
   loadStoredWallets,
   LocalAccountProfile,
@@ -42,8 +47,10 @@ import {
   saveStoredBudgetConfig,
   saveStoredBudgets,
   saveStoredCategories,
+  saveStoredDebts,
   saveStoredGoals,
   saveStoredSettings,
+  saveStoredSubscriptions,
   saveStoredTransactions,
   saveStoredWallets,
 } from '@/lib/storage';
@@ -53,10 +60,12 @@ import {
   EMPTY_BUDGET_CONFIG,
   DEFAULT_WALLETS,
   DEFAULT_CATEGORIES,
+  DEFAULT_DEBTS,
   DEFAULT_GOALS,
   DEFAULT_SETTINGS,
 } from '@/lib/constants';
-import { exportTransactionsToCSV } from '@/lib/formatters';
+import { exportTransactionsToCSV, formatRupiah } from '@/lib/formatters';
+import { calculateBudgetBreakdown, getMonthlySubscriptionAmount, isFixedExpense } from '@/lib/budgetUtils';
 import {
   auth,
   googleProvider,
@@ -86,6 +95,9 @@ import {
   deleteUserGoal,
   fetchUserBudgetConfig,
   saveUserBudgetConfig,
+  fetchUserDebts,
+  saveUserDebt,
+  deleteUserDebt,
   resetUserFirestoreData,
 } from '@/lib/firestoreService';
 
@@ -125,6 +137,8 @@ interface AppContextType {
   budgets: Budget[];
   budgetConfig: BudgetConfig;
   goals: Goal[];
+  debts: Debt[];
+  subscriptions: RecurringItem[];
   upcomingBills: UpcomingBill[];
   settings: AppSettings;
   walletsWithBalance: WalletWithBalance[];
@@ -202,10 +216,23 @@ interface AppContextType {
   deleteGoal: (id: string) => void;
   toggleLockGoal: (id: string) => void;
 
+  addDebt: (data: Omit<Debt, 'id' | 'createdAt' | 'updatedAt'>, options?: { disburseWalletId?: string }) => void;
+  updateDebt: (id: string, data: Partial<Debt>) => void;
+  deleteDebt: (id: string) => void;
+  payDebtInstallment: (debtId: string, amount: number, options?: { walletId?: string; date?: string; note?: string }) => void;
+  settleDebt: (debtId: string, options?: { walletId?: string; date?: string; note?: string }) => void;
+
   updateBudgetConfig: (config: Partial<BudgetConfig>) => void;
   addBudgetSubcategory: (item: { name: string; group: BudgetGroup; allocatedAmount: number; emoji: string; dueDateDay?: number }) => void;
-  updateBudgetSubcategory: (id: string, data: { name?: string; allocatedAmount?: number; emoji?: string; dueDateDay?: number }) => void;
+  updateBudgetSubcategory: (id: string, data: { name?: string; group?: BudgetGroup; allocatedAmount?: number; emoji?: string; dueDateDay?: number }) => void;
   deleteBudgetSubcategory: (id: string) => void;
+
+  addSubscription: (item: Omit<RecurringItem, 'id'>) => void;
+  updateSubscription: (id: string, data: Partial<RecurringItem>) => void;
+  deleteSubscription: (id: string) => void;
+  toggleSubscriptionActive: (id: string) => void;
+  recordSubscriptionPayment: (id: string) => void;
+  syncSubscriptionsToBudget: () => void;
 
   transferFunds: (fromWalletId: string, toWalletId: string, amount: number, note?: string, date?: string) => void;
   updateSettings: (data: Partial<AppSettings>) => void;
@@ -268,6 +295,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [budgets, setBudgets] = useState<Budget[]>(() => getInitialBudgets());
   const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(DEFAULT_BUDGET_CONFIG);
   const [goals, setGoals] = useState<Goal[]>(DEFAULT_GOALS);
+  const [debts, setDebts] = useState<Debt[]>(DEFAULT_DEBTS);
+  const [subscriptions, setSubscriptions] = useState<RecurringItem[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   // Active Date & Reference Period (Defaults to current real date & month)
@@ -353,11 +382,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setActiveDate(getTodayDateStr());
 
     try {
-      const [loadedWallets, loadedTx, loadedGoals, loadedBudget] = await Promise.all([
+      const [loadedWallets, loadedTx, loadedGoals, loadedBudget, loadedDebts] = await Promise.all([
         fetchUserWallets(cloudUid),
         fetchUserTransactions(cloudUid),
         fetchUserGoals(cloudUid),
         fetchUserBudgetConfig(cloudUid),
+        fetchUserDebts(cloudUid),
       ]);
 
       // Check if user had local data under legacy uid (e.g. user_...) that needs one-time upload to Firestore
@@ -390,15 +420,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setGoals(finalGoals);
       saveStoredGoals(finalGoals, cloudUid);
 
+      const finalDebts = loadedDebts || [];
+      setDebts(finalDebts);
+      saveStoredDebts(finalDebts, cloudUid);
+
       const finalBudget = loadedBudget || EMPTY_BUDGET_CONFIG;
       setBudgetConfig(finalBudget);
       saveStoredBudgetConfig(finalBudget, cloudUid);
+      setSubscriptions(loadStoredSubscriptions(cloudUid));
     } catch (err) {
       console.warn('Fallback to cached account data while syncing Firestore:', err);
       setWallets(loadStoredWallets(cloudUid));
       setTransactions(loadStoredTransactions(cloudUid));
       setGoals(loadStoredGoals(cloudUid));
+      setDebts(loadStoredDebts(cloudUid));
       setBudgetConfig(loadStoredBudgetConfig(cloudUid));
+      setSubscriptions(loadStoredSubscriptions(cloudUid));
     }
 
     setDataResetVersion((v) => v + 1);
@@ -620,6 +657,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setBudgets(loadStoredBudgets(scope));
       setBudgetConfig(loadStoredBudgetConfig(scope));
       setGoals(loadStoredGoals(scope));
+      setDebts(loadStoredDebts(scope));
+      setSubscriptions(loadStoredSubscriptions(scope));
       setSettings(
         activeLocal
           ? {
@@ -672,18 +711,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthLoading(true);
         try {
           await syncUserProfile(currentUser);
-          const [loadedWallets, loadedTx, loadedGoals, loadedBudget] = await Promise.all([
+          const [loadedWallets, loadedTx, loadedGoals, loadedBudget, loadedDebts] = await Promise.all([
             fetchUserWallets(currentUser.uid),
             fetchUserTransactions(currentUser.uid),
             fetchUserGoals(currentUser.uid),
             fetchUserBudgetConfig(currentUser.uid),
+            fetchUserDebts(currentUser.uid),
           ]);
           if (loadedWallets && loadedWallets.length > 0) {
             setWallets(loadedWallets);
           }
           setTransactions(loadedTx || []);
           setGoals(loadedGoals || []);
+          const finalDebts = loadedDebts || [];
+          setDebts(finalDebts);
+          saveStoredDebts(finalDebts, currentUser.uid);
           setBudgetConfig(loadedBudget || EMPTY_BUDGET_CONFIG);
+          setSubscriptions(loadStoredSubscriptions(currentUser.uid));
           setSettings((prev) => ({
             ...prev,
             userName: currentUser.displayName || prev.userName,
@@ -835,17 +879,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return { totalIncome: inc, totalExpense: exp, todayIncome: todayInc, todayExpense: todayExp };
   }, [transactions, activeYear, activeMonth, activeDay]);
 
-  // Dynamic upcoming bills derived from negative credit/paylater wallets and scheduled budget subcategories
+  // Dynamic upcoming bills derived from negative credit/paylater wallets, active subscriptions, and scheduled budget subcategories
   const upcomingBills = useMemo<UpcomingBill[]>(() => {
     const bills: UpcomingBill[] = [];
+    const seenNames = new Set<string>();
     const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
     const curMonthShort = shortMonths[activeMonth] || 'Jan';
     const nextMonthShort = shortMonths[(activeMonth + 1) % 12] || 'Feb';
+    const currentPeriodKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
 
     walletsWithBalance.forEach((w) => {
       if ((w.type === 'credit' || w.type === 'paylater') && w.balance < 0) {
         const dueDay = w.type === 'credit' ? 10 : 14;
         const mLabel = activeDay > dueDay ? nextMonthShort : curMonthShort;
+        seenNames.add(w.name.toLowerCase().trim());
         bills.push({
           id: `bill-wallet-${w.id}`,
           name: w.name,
@@ -856,9 +903,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
     });
-    if (bills.length === 0 && budgetConfig?.subcategories) {
+
+    subscriptions.forEach((item) => {
+      if (!item.isActive || item.type !== 'expense') return;
+      if (item.lastRecordedPeriod === currentPeriodKey) return;
+      const mLabel = activeDay > item.billingDay ? nextMonthShort : curMonthShort;
+      seenNames.add(item.name.toLowerCase().trim());
+      bills.push({
+        id: `bill-rec-${item.id}`,
+        name: item.name,
+        dueDate: `${String(item.billingDay).padStart(2, '0')} ${mLabel}`,
+        amount: item.amount,
+        iconEmoji: item.emoji || '🔁',
+        category: (item.budgetGroup || 'KEBUTUHAN').toUpperCase(),
+      });
+    });
+
+    if (budgetConfig?.subcategories) {
       budgetConfig.subcategories.forEach((sub) => {
-        if (sub.dueDateDay && sub.allocatedAmount > 0) {
+        if (sub.dueDateDay && sub.allocatedAmount > 0 && sub.isSubscriptionActive !== false) {
+          const cleanName = sub.name.toLowerCase().trim();
+          if (seenNames.has(cleanName)) return;
+          seenNames.add(cleanName);
           const mLabel = activeDay > sub.dueDateDay ? nextMonthShort : curMonthShort;
           bills.push({
             id: `bill-sub-${sub.id}`,
@@ -872,23 +938,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     }
     return bills;
-  }, [walletsWithBalance, budgetConfig, activeMonth, activeDay]);
+  }, [walletsWithBalance, subscriptions, budgetConfig, activeYear, activeMonth, activeDay]);
 
   // Dashboard summary metrics
   const dashboardSummary = useMemo<DashboardSummary>(() => {
-    const daysInMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
-
-    const estIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
-    // Spending budget limit: Kebutuhan (50%) + Keinginan (30%) = 80% of income
-    const monthlySpendingLimit = Math.round(
-      (estIncome * ((budgetConfig?.needsPercent || 50) + (budgetConfig?.wantsPercent || 30))) / 100
-    );
-
-    // Daily budget allowance for each day in the month
-    const dailyBudgetQuota = estIncome > 0 ? Math.round(monthlySpendingLimit / daysInMonth) : 0;
-
-    // Remaining daily budget for today = Daily Quota - Today's Expenses
-    const dailyBudgetRemaining = Math.max(0, dailyBudgetQuota - todayExpense);
+    const categoryMap = new Map<string, Category>(categories.map((c) => [c.id, c]));
+    const breakdown = calculateBudgetBreakdown({
+      budgetConfig,
+      transactions,
+      categoryMap,
+      activeYear,
+      activeMonth,
+      activeDay,
+      subscriptions,
+    });
 
     // Liquid assets: Bank + E-wallet + Cash
     const liquidTotal = walletsWithBalance
@@ -898,11 +961,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // Standard monthly expense baseline for emergency runway calculation:
     // Uses monthly spending budget limit if set, or the greater of actual expenses or standard baseline (Rp 3.000.000)
     const baselineMonthlyExpense = Math.max(
-      monthlySpendingLimit > 0 ? monthlySpendingLimit : 0,
+      breakdown.monthlySpendingLimit > 0 ? breakdown.monthlySpendingLimit : 0,
       totalExpense,
       3000000
     );
     const runwayMonths = liquidTotal > 0 ? Number((liquidTotal / baselineMonthlyExpense).toFixed(1)) : 0;
+    const estIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
 
     return {
       totalBalance,
@@ -910,19 +974,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       monthlyExpense: totalExpense,
       netCashflow: totalIncome - totalExpense,
       walletCount: wallets.length,
-      budgetLimit: monthlySpendingLimit,
+      budgetLimit: breakdown.monthlySpendingLimit,
       budgetSpent: totalExpense,
       recentTransactions: transactionDetails.slice(0, 5),
       hasMonthlyBudget: estIncome > 0,
       budgetCount: budgetConfig.subcategories.length,
-      dailyBudgetQuota,
-      dailyBudgetRemaining,
+      dailyBudgetQuota: breakdown.dailyBudgetQuota,
+      dailyBudgetRemaining: breakdown.dailyBudgetRemaining,
       todayIncome,
       todayExpense,
       emergencyFundRunwayMonths: runwayMonths,
       liquidAssetsTotal: liquidTotal,
+      // Pos Anggaran Terpisah: Tagihan Bulanan (Fixed) vs Pengeluaran Harian (Variable)
+      monthlyFixedBudget: breakdown.monthlyFixedBudget,
+      monthlyVariableBudget: breakdown.monthlyVariableBudget,
+      monthlyFixedExpense: breakdown.monthlyFixedExpense,
+      monthlyVariableExpense: breakdown.monthlyVariableExpense,
+      todayVariableExpense: breakdown.todayVariableExpense,
+      todayFixedExpense: breakdown.todayFixedExpense,
+      dailyOverbudget: breakdown.dailyOverbudget,
+      dailyOverbudgetAmount: breakdown.dailyOverbudgetAmount,
     };
   }, [
+    budgetConfig,
+    transactions,
+    categories,
+    activeYear,
+    activeMonth,
+    activeDay,
+    subscriptions,
     walletsWithBalance,
     totalBalance,
     totalIncome,
@@ -930,10 +1010,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     todayIncome,
     todayExpense,
     wallets.length,
-    budgetConfig,
     transactionDetails,
-    activeYear,
-    activeMonth,
   ]);
 
   // CRUD: Transaction
@@ -1115,6 +1192,203 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addToast(isLocked ? 'Goal Dikunci' : 'Kunci Goal Dibuka', isLocked ? 'Saldo target diamankan dari pengeluaran.' : 'Saldo target dapat diakses kembali.');
   };
 
+  // CRUD: Debts & Cicilan
+  const addDebt = (
+    debtData: Omit<Debt, 'id' | 'createdAt' | 'updatedAt'>,
+    options?: { disburseWalletId?: string }
+  ) => {
+    const id = `debt-${Date.now()}`;
+    const now = new Date().toISOString();
+    const initialRem = debtData.remainingAmount !== undefined ? debtData.remainingAmount : debtData.totalAmount;
+    const newDebt: Debt = {
+      ...debtData,
+      id,
+      remainingAmount: initialRem,
+      status: initialRem <= 0 ? 'paid' : (debtData.status || 'active'),
+      payments: debtData.payments || [],
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const nextDebts = [newDebt, ...debts];
+    setDebts(nextDebts);
+    saveStoredDebts(nextDebts, localScopeUid);
+    if (isCloudUser && user?.uid) {
+      saveUserDebt(user.uid, newDebt).catch((err) =>
+        console.warn('Error saving debt to Firestore:', err)
+      );
+    }
+
+    // Cashflow integration: if user chose to disburse or release money from/to a wallet
+    if (options?.disburseWalletId) {
+      const selectedWallet = wallets.find((w) => w.id === options.disburseWalletId);
+      if (selectedWallet) {
+        if (newDebt.type === 'payable') {
+          // User borrows money -> money received into wallet (income)
+          addTransaction({
+            type: 'income',
+            amount: newDebt.totalAmount,
+            walletId: selectedWallet.id,
+            date: newDebt.startDate || new Date().toISOString().slice(0, 10),
+            note: `Pencairan Utang: ${newDebt.name} (${newDebt.contactName})`,
+            categoryId: 'cat-gaji',
+          });
+        } else {
+          // User lends money to someone -> money leaves wallet (expense)
+          addTransaction({
+            type: 'expense',
+            amount: newDebt.totalAmount,
+            walletId: selectedWallet.id,
+            date: newDebt.startDate || new Date().toISOString().slice(0, 10),
+            note: `Pinjaman Keluar / Piutang: ${newDebt.name} (${newDebt.contactName})`,
+            budgetGroup: 'kebutuhan',
+            categoryId: 'cat-tagihan',
+          });
+        }
+      }
+    }
+
+    addToast(
+      newDebt.type === 'payable' ? 'Utang Berhasil Dicatat' : 'Piutang Berhasil Dicatat',
+      `${newDebt.name} sebesar ${formatRupiah(newDebt.totalAmount)} telah disimpan.`
+    );
+  };
+
+  const updateDebt = (id: string, data: Partial<Debt>) => {
+    const nextDebts = debts.map((d) => {
+      if (d.id !== id) return d;
+      const updatedItem: Debt = {
+        ...d,
+        ...data,
+        updatedAt: new Date().toISOString(),
+      };
+      if (updatedItem.remainingAmount <= 0) {
+        updatedItem.status = 'paid';
+        updatedItem.remainingAmount = 0;
+      }
+      return updatedItem;
+    });
+    setDebts(nextDebts);
+    saveStoredDebts(nextDebts, localScopeUid);
+    const itemToSync = nextDebts.find((d) => d.id === id);
+    if (isCloudUser && user?.uid && itemToSync) {
+      saveUserDebt(user.uid, itemToSync).catch((err) =>
+        console.warn('Error updating debt in Firestore:', err)
+      );
+    }
+    addToast('Perubahan Disimpan', 'Data utang/piutang berhasil diperbarui.');
+  };
+
+  const deleteDebt = (id: string) => {
+    const nextDebts = debts.filter((d) => d.id !== id);
+    setDebts(nextDebts);
+    saveStoredDebts(nextDebts, localScopeUid);
+    if (isCloudUser && user?.uid) {
+      deleteUserDebt(user.uid, id).catch((err) =>
+        console.warn('Error deleting debt from Firestore:', err)
+      );
+    }
+    addToast('Catatan Dihapus', 'Data utang/piutang telah dihapus.', 'info');
+  };
+
+  const payDebtInstallment = (
+    debtId: string,
+    amount: number,
+    options?: { walletId?: string; date?: string; note?: string }
+  ) => {
+    const debt = debts.find((d) => d.id === debtId);
+    if (!debt || amount <= 0) return;
+
+    const paymentDate = options?.date || new Date().toISOString().slice(0, 10);
+    const selectedWallet = options?.walletId ? wallets.find((w) => w.id === options.walletId) : undefined;
+
+    let createdTxId: string | undefined = undefined;
+
+    // Create real cashflow transaction
+    if (selectedWallet) {
+      const txId = `tx-${Date.now()}`;
+      createdTxId = txId;
+      if (debt.type === 'payable') {
+        // Paying off our debt -> Expense from selected wallet
+        addTransaction({
+          type: 'expense',
+          amount: amount,
+          walletId: selectedWallet.id,
+          date: paymentDate,
+          note: `Bayar Cicilan Utang: ${debt.name} (${options?.note || debt.contactName})`,
+          budgetGroup: 'kebutuhan',
+          categoryId: 'cat-tagihan',
+        });
+      } else {
+        // Someone paying back our receivable -> Income to selected wallet
+        addTransaction({
+          type: 'income',
+          amount: amount,
+          walletId: selectedWallet.id,
+          date: paymentDate,
+          note: `Pelunasan/Cicilan Piutang: ${debt.name} (${debt.contactName})`,
+          categoryId: 'cat-gaji',
+        });
+      }
+    }
+
+    const newPayment: DebtPayment = {
+      id: `pay-${Date.now()}`,
+      debtId,
+      amount,
+      date: paymentDate,
+      walletId: selectedWallet?.id,
+      walletName: selectedWallet?.name,
+      note: options?.note || (debt.type === 'payable' ? 'Pembayaran Cicilan' : 'Penerimaan Cicilan'),
+      transactionId: createdTxId,
+    };
+
+    const newRemaining = Math.max(0, debt.remainingAmount - amount);
+    const newStatus = newRemaining <= 0 ? 'paid' : debt.status;
+
+    const nextDebts = debts.map((d) => {
+      if (d.id !== debtId) return d;
+      return {
+        ...d,
+        remainingAmount: newRemaining,
+        status: newStatus,
+        payments: [...(d.payments || []), newPayment],
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    setDebts(nextDebts);
+    saveStoredDebts(nextDebts, localScopeUid);
+    const updatedDebt = nextDebts.find((d) => d.id === debtId);
+    if (isCloudUser && user?.uid && updatedDebt) {
+      saveUserDebt(user.uid, updatedDebt).catch((err) =>
+        console.warn('Error saving debt payment to Firestore:', err)
+      );
+    }
+
+    if (newRemaining <= 0) {
+      addToast('🎉 Lunas Sempurna!', `Selamat! ${debt.name} telah lunas seluruhnya.`);
+    } else {
+      addToast(
+        'Pembayaran Dicatat',
+        `Berhasil mencatat pembayaran sebesar ${formatRupiah(amount)}. Sisa: ${formatRupiah(newRemaining)}.`
+      );
+    }
+  };
+
+  const settleDebt = (
+    debtId: string,
+    options?: { walletId?: string; date?: string; note?: string }
+  ) => {
+    const debt = debts.find((d) => d.id === debtId);
+    if (!debt) return;
+    payDebtInstallment(debtId, debt.remainingAmount, {
+      walletId: options?.walletId,
+      date: options?.date,
+      note: options?.note || 'Pelunasan Penuh',
+    });
+  };
+
   // CRUD: BudgetConfig
   const updateBudgetConfig = (data: Partial<BudgetConfig>) => {
     const updated = { ...budgetConfig, ...data };
@@ -1147,8 +1421,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addToast('Subkategori Ditambahkan', `${item.name} berhasil ditambahkan ke ${item.group}.`);
   };
 
-  const updateBudgetSubcategory = (id: string, data: { name?: string; allocatedAmount?: number; emoji?: string; dueDateDay?: number }) => {
-    const updatedSub = budgetConfig.subcategories.map((s) => (s.id === id ? { ...s, ...data } : s));
+  const updateBudgetSubcategory = (
+    id: string,
+    data: { name?: string; group?: BudgetGroup; allocatedAmount?: number; emoji?: string; dueDateDay?: number }
+  ) => {
+    let targetSubName = '';
+    const updatedSub = budgetConfig.subcategories.map((s) => {
+      if (s.id === id) {
+        targetSubName = s.name.toLowerCase().trim();
+        return { ...s, ...data };
+      }
+      return s;
+    });
     const updated = { ...budgetConfig, subcategories: updatedSub };
     setBudgetConfig(updated);
     saveStoredBudgetConfig(updated, localScopeUid);
@@ -1157,6 +1441,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         console.warn('Error saving budget config to Firestore:', err)
       );
     }
+
+    // Two-way sync: if a subscription is linked to this subcategory, keep its details in sync
+    const hasLinkedSub = subscriptions.some(
+      (rec) =>
+        rec.subcategoryId === id ||
+        (targetSubName && rec.name.toLowerCase().trim() === targetSubName)
+    );
+    if (hasLinkedSub) {
+      const nextSubs = subscriptions.map((rec) => {
+        if (
+          rec.subcategoryId === id ||
+          (targetSubName && rec.name.toLowerCase().trim() === targetSubName)
+        ) {
+          return {
+            ...rec,
+            subcategoryId: id,
+            name: data.name !== undefined ? data.name : rec.name,
+            emoji: data.emoji !== undefined ? data.emoji : rec.emoji,
+            budgetGroup: data.group !== undefined ? data.group : rec.budgetGroup,
+            billingDay: data.dueDateDay !== undefined ? data.dueDateDay : rec.billingDay,
+            amount:
+              data.allocatedAmount !== undefined && rec.frequency === 'monthly'
+                ? data.allocatedAmount
+                : rec.amount,
+          };
+        }
+        return rec;
+      });
+      setSubscriptions(nextSubs);
+      saveStoredSubscriptions(nextSubs, localScopeUid);
+    }
+
     addToast('Subkategori Diperbarui', 'Alokasi subkategori berhasil disimpan.');
   };
 
@@ -1170,7 +1486,413 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         console.warn('Error saving budget config to Firestore:', err)
       );
     }
+    // Unlink any subscription referencing this deleted subcategory
+    const nextSubs = subscriptions.map((rec) =>
+      rec.subcategoryId === id ? { ...rec, subcategoryId: undefined } : rec
+    );
+    setSubscriptions(nextSubs);
+    saveStoredSubscriptions(nextSubs, localScopeUid);
+
     addToast('Subkategori Dihapus', 'Subkategori telah dihapus.', 'info');
+  };
+
+  // CRUD: Subscriptions & Recurring Transactions (Two-way integrated with BudgetConfig)
+  const addSubscription = (itemData: Omit<RecurringItem, 'id'>) => {
+    const newId = `sub-rec-${Date.now()}`;
+    const cleanName = itemData.name.trim();
+    const cleanNameLower = cleanName.toLowerCase();
+
+    let updatedSubcategories = [...(budgetConfig.subcategories || [])];
+    let linkedSubcategoryId = itemData.subcategoryId;
+    const determinedGroup: BudgetGroup =
+      itemData.budgetGroup ||
+      (itemData.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
+
+    if (itemData.type === 'expense') {
+      const monthlyAmt = getMonthlySubscriptionAmount(itemData.amount, itemData.frequency);
+      const existingSub =
+        (linkedSubcategoryId && updatedSubcategories.find((s) => s.id === linkedSubcategoryId)) ||
+        updatedSubcategories.find((s) => {
+          const sName = s.name.toLowerCase().trim();
+          return sName === cleanNameLower || s.subscriptionId === newId;
+        });
+
+      if (existingSub) {
+        linkedSubcategoryId = existingSub.id;
+        updatedSubcategories = updatedSubcategories.map((s) =>
+          s.id === existingSub.id
+            ? {
+                ...s,
+                name: cleanName,
+                emoji: itemData.emoji || s.emoji,
+                group: determinedGroup,
+                allocatedAmount: monthlyAmt,
+                dueDateDay: itemData.billingDay,
+                subscriptionId: newId,
+                isSubscriptionActive: itemData.isActive,
+              }
+            : s
+        );
+      } else {
+        const newSubId = `sub-${Date.now()}`;
+        linkedSubcategoryId = newSubId;
+        updatedSubcategories.push({
+          id: newSubId,
+          name: cleanName,
+          group: determinedGroup,
+          allocatedAmount: monthlyAmt,
+          emoji: itemData.emoji || '🔁',
+          dueDateDay: itemData.billingDay,
+          subscriptionId: newId,
+          isSubscriptionActive: itemData.isActive,
+        });
+      }
+
+      const nextBudgetConfig: BudgetConfig = {
+        ...budgetConfig,
+        subcategories: updatedSubcategories,
+      };
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (isCloudUser && user?.uid) {
+        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
+          console.warn('Error saving budget config to Firestore:', err)
+        );
+      }
+    } else if (itemData.type === 'income' && budgetConfig.estimatedIncome === 0) {
+      const monthlyInc = getMonthlySubscriptionAmount(itemData.amount, itemData.frequency);
+      const nextBudgetConfig: BudgetConfig = {
+        ...budgetConfig,
+        estimatedIncome: monthlyInc,
+      };
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (isCloudUser && user?.uid) {
+        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
+          console.warn('Error saving budget config to Firestore:', err)
+        );
+      }
+    }
+
+    const newItem: RecurringItem = {
+      ...itemData,
+      id: newId,
+      name: cleanName,
+      subcategoryId: linkedSubcategoryId,
+      budgetGroup: itemData.type === 'expense' ? determinedGroup : undefined,
+    };
+
+    const nextSubs = [...subscriptions, newItem];
+    setSubscriptions(nextSubs);
+    saveStoredSubscriptions(nextSubs, localScopeUid);
+    addToast(
+      'Jadwal & Budget Disimpan',
+      itemData.type === 'expense'
+        ? `${newItem.name} ditambahkan & otomatis terhubung ke Pos Tagihan Bulanan (${determinedGroup.toUpperCase()}).`
+        : `${newItem.name} berhasil ditambahkan ke jadwal pemasukan rutin.`
+    );
+  };
+
+  const updateSubscription = (id: string, data: Partial<RecurringItem>) => {
+    const existingItem = subscriptions.find((i) => i.id === id);
+    if (!existingItem) return;
+
+    const merged: RecurringItem = {
+      ...existingItem,
+      ...data,
+      name: (data.name !== undefined ? data.name : existingItem.name).trim(),
+    };
+
+    const determinedGroup: BudgetGroup =
+      merged.budgetGroup ||
+      (merged.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
+
+    let updatedSubcategories = [...(budgetConfig.subcategories || [])];
+    let linkedSubcategoryId = merged.subcategoryId;
+
+    if (merged.type === 'expense') {
+      const monthlyAmt = getMonthlySubscriptionAmount(merged.amount, merged.frequency);
+      const prevNameLower = existingItem.name.toLowerCase().trim();
+      const newNameLower = merged.name.toLowerCase().trim();
+
+      const matchedSub =
+        (linkedSubcategoryId && updatedSubcategories.find((s) => s.id === linkedSubcategoryId)) ||
+        updatedSubcategories.find(
+          (s) =>
+            s.subscriptionId === id ||
+            s.name.toLowerCase().trim() === prevNameLower ||
+            s.name.toLowerCase().trim() === newNameLower
+        );
+
+      if (matchedSub) {
+        linkedSubcategoryId = matchedSub.id;
+        updatedSubcategories = updatedSubcategories.map((s) =>
+          s.id === matchedSub.id
+            ? {
+                ...s,
+                name: merged.name,
+                emoji: merged.emoji || s.emoji,
+                group: determinedGroup,
+                allocatedAmount: monthlyAmt,
+                dueDateDay: merged.billingDay,
+                subscriptionId: id,
+                isSubscriptionActive: merged.isActive,
+              }
+            : s
+        );
+      } else {
+        const newSubId = `sub-${Date.now()}`;
+        linkedSubcategoryId = newSubId;
+        updatedSubcategories.push({
+          id: newSubId,
+          name: merged.name,
+          group: determinedGroup,
+          allocatedAmount: monthlyAmt,
+          emoji: merged.emoji || '🔁',
+          dueDateDay: merged.billingDay,
+          subscriptionId: id,
+          isSubscriptionActive: merged.isActive,
+        });
+      }
+
+      const nextBudgetConfig: BudgetConfig = {
+        ...budgetConfig,
+        subcategories: updatedSubcategories,
+      };
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (isCloudUser && user?.uid) {
+        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
+          console.warn('Error saving budget config to Firestore:', err)
+        );
+      }
+    } else if (existingItem.type === 'expense' && merged.type === 'income') {
+      // Switched from expense to income -> remove old expense subcategory if linked
+      updatedSubcategories = updatedSubcategories.filter(
+        (s) => s.id !== existingItem.subcategoryId && s.subscriptionId !== id
+      );
+      linkedSubcategoryId = undefined;
+      const nextBudgetConfig: BudgetConfig = {
+        ...budgetConfig,
+        subcategories: updatedSubcategories,
+      };
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (isCloudUser && user?.uid) {
+        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
+          console.warn('Error saving budget config to Firestore:', err)
+        );
+      }
+    }
+
+    const finalUpdatedItem: RecurringItem = {
+      ...merged,
+      subcategoryId: linkedSubcategoryId,
+      budgetGroup: merged.type === 'expense' ? determinedGroup : undefined,
+    };
+
+    const nextSubs = subscriptions.map((i) => (i.id === id ? finalUpdatedItem : i));
+    setSubscriptions(nextSubs);
+    saveStoredSubscriptions(nextSubs, localScopeUid);
+    addToast(
+      'Jadwal Diperbarui',
+      `${finalUpdatedItem.name} & alokasi budget terkait berhasil diperbarui.`
+    );
+  };
+
+  const toggleSubscriptionActive = (id: string) => {
+    const target = subscriptions.find((i) => i.id === id);
+    if (!target) return;
+    const nextActive = !target.isActive;
+    const nextSubs = subscriptions.map((i) =>
+      i.id === id ? { ...i, isActive: nextActive } : i
+    );
+    setSubscriptions(nextSubs);
+    saveStoredSubscriptions(nextSubs, localScopeUid);
+
+    if (target.type === 'expense') {
+      const targetNameLower = target.name.toLowerCase().trim();
+      const updatedSubcategories = budgetConfig.subcategories.map((s) => {
+        if (
+          s.id === target.subcategoryId ||
+          s.subscriptionId === id ||
+          s.name.toLowerCase().trim() === targetNameLower
+        ) {
+          return { ...s, isSubscriptionActive: nextActive };
+        }
+        return s;
+      });
+      const nextBudgetConfig: BudgetConfig = {
+        ...budgetConfig,
+        subcategories: updatedSubcategories,
+      };
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (isCloudUser && user?.uid) {
+        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
+          console.warn('Error saving budget config to Firestore:', err)
+        );
+      }
+    }
+
+    addToast(
+      nextActive ? 'Jadwal Diaktifkan' : 'Jadwal Dijeda',
+      nextActive
+        ? `${target.name} aktif & kembali dihitung dalam Pos Tagihan Bulanan.`
+        : `${target.name} dijeda & dikeluarkan sementara dari beban tagihan bulanan.`,
+      'info'
+    );
+  };
+
+  const deleteSubscription = (id: string) => {
+    const target = subscriptions.find((i) => i.id === id);
+    const nextSubs = subscriptions.filter((i) => i.id !== id);
+    setSubscriptions(nextSubs);
+    saveStoredSubscriptions(nextSubs, localScopeUid);
+
+    if (target && target.type === 'expense') {
+      const targetNameLower = target.name.toLowerCase().trim();
+      const updatedSubcategories = budgetConfig.subcategories.filter(
+        (s) =>
+          s.id !== target.subcategoryId &&
+          s.subscriptionId !== id &&
+          s.name.toLowerCase().trim() !== targetNameLower
+      );
+      if (updatedSubcategories.length !== budgetConfig.subcategories.length) {
+        const nextBudgetConfig: BudgetConfig = {
+          ...budgetConfig,
+          subcategories: updatedSubcategories,
+        };
+        setBudgetConfig(nextBudgetConfig);
+        saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+        if (isCloudUser && user?.uid) {
+          saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
+            console.warn('Error saving budget config to Firestore:', err)
+          );
+        }
+      }
+    }
+
+    addToast('Jadwal Dihapus', 'Langganan & alokasi subkategori budget terkait telah dihapus.', 'info');
+  };
+
+  const recordSubscriptionPayment = (id: string) => {
+    const item = subscriptions.find((i) => i.id === id);
+    if (!item) return;
+
+    const currentPeriodKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
+    const dateStr = new Date(activeYear, activeMonth, activeDay, 9, 0, 0).toISOString();
+
+    const cleanItemName = item.name.toLowerCase().trim();
+    const matchedSub =
+      (item.subcategoryId && budgetConfig?.subcategories?.find((s) => s.id === item.subcategoryId)) ||
+      budgetConfig?.subcategories?.find((s) => {
+        const sName = s.name.toLowerCase().trim();
+        return (
+          s.subscriptionId === item.id ||
+          cleanItemName === sName ||
+          cleanItemName.includes(sName) ||
+          sName.includes(cleanItemName)
+        );
+      });
+
+    const determinedBudgetGroup: BudgetGroup =
+      matchedSub?.group ||
+      item.budgetGroup ||
+      (item.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
+
+    addTransaction({
+      walletId: item.walletId || wallets[0]?.id || 'wallet-bca',
+      categoryId: item.categoryId || (matchedSub ? matchedSub.id.replace('sub-', 'cat-') : 'cat-tagihan'),
+      budgetGroup: item.type === 'expense' ? determinedBudgetGroup : undefined,
+      expenseNature: item.type === 'expense' ? 'fixed' : undefined,
+      type: item.type,
+      amount: item.amount,
+      note: `${item.name} (Otomatis Rutin)`,
+      date: dateStr,
+    });
+
+    const nextSubs = subscriptions.map((i) =>
+      i.id === item.id ? { ...i, lastRecordedPeriod: currentPeriodKey } : i
+    );
+    setSubscriptions(nextSubs);
+    saveStoredSubscriptions(nextSubs, localScopeUid);
+    addToast(
+      'Pembayaran Dicatat',
+      item.type === 'expense'
+        ? `${item.name} masuk ke Pos Tagihan Bulanan (${determinedBudgetGroup.toUpperCase()}) tanpa memotong Budget Harian.`
+        : `${item.name} berhasil dicatat sebagai pemasukan rutin.`,
+      'success'
+    );
+  };
+
+  const syncSubscriptionsToBudget = () => {
+    let updatedSubcategories = [...(budgetConfig.subcategories || [])];
+    let changed = false;
+
+    const nextSubs = subscriptions.map((item) => {
+      if (item.type !== 'expense') return item;
+      const monthlyAmt = getMonthlySubscriptionAmount(item.amount, item.frequency);
+      const itemNameLower = item.name.toLowerCase().trim();
+      const determinedGroup: BudgetGroup =
+        item.budgetGroup ||
+        (item.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
+
+      const matchedSub =
+        (item.subcategoryId && updatedSubcategories.find((s) => s.id === item.subcategoryId)) ||
+        updatedSubcategories.find(
+          (s) => s.subscriptionId === item.id || s.name.toLowerCase().trim() === itemNameLower
+        );
+
+      if (matchedSub) {
+        changed = true;
+        updatedSubcategories = updatedSubcategories.map((s) =>
+          s.id === matchedSub.id
+            ? {
+                ...s,
+                allocatedAmount: monthlyAmt,
+                dueDateDay: item.billingDay,
+                emoji: item.emoji || s.emoji,
+                group: determinedGroup,
+                subscriptionId: item.id,
+                isSubscriptionActive: item.isActive,
+              }
+            : s
+        );
+        return { ...item, subcategoryId: matchedSub.id, budgetGroup: determinedGroup };
+      } else {
+        changed = true;
+        const newSubId = `sub-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        updatedSubcategories.push({
+          id: newSubId,
+          name: item.name,
+          group: determinedGroup,
+          allocatedAmount: monthlyAmt,
+          emoji: item.emoji || '🔁',
+          dueDateDay: item.billingDay,
+          subscriptionId: item.id,
+          isSubscriptionActive: item.isActive,
+        });
+        return { ...item, subcategoryId: newSubId, budgetGroup: determinedGroup };
+      }
+    });
+
+    if (changed) {
+      setSubscriptions(nextSubs);
+      saveStoredSubscriptions(nextSubs, localScopeUid);
+      const nextBudgetConfig: BudgetConfig = {
+        ...budgetConfig,
+        subcategories: updatedSubcategories,
+      };
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (isCloudUser && user?.uid) {
+        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
+          console.warn('Error saving budget config to Firestore:', err)
+        );
+      }
+      addToast('Sinkronisasi Berhasil', 'Semua jadwal langganan kini terhubung ke Pos Alokasi Budget.');
+    }
   };
 
   // Transfer funds
@@ -1376,6 +2098,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         setTransactions([]);
         setGoals([]);
+        setDebts([]);
+        setSubscriptions([]);
         setBudgetConfig(EMPTY_BUDGET_CONFIG);
         setSettings((prev) => ({ ...prev, hideBalance: false }));
         setDataResetVersion((v) => v + 1);
@@ -1390,6 +2114,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setBudgets([]);
         setBudgetConfig(EMPTY_BUDGET_CONFIG);
         setGoals([]);
+        setDebts([]);
+        setSubscriptions([]);
         if (!localScopeUid) {
           setSettings(loadStoredSettings());
         } else {
@@ -1418,6 +2144,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         budgets,
         budgetConfig,
         goals,
+        debts,
+        subscriptions,
         upcomingBills,
         settings,
         walletsWithBalance,
@@ -1481,10 +2209,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updateGoal,
         deleteGoal,
         toggleLockGoal,
+        addDebt,
+        updateDebt,
+        deleteDebt,
+        payDebtInstallment,
+        settleDebt,
         updateBudgetConfig,
         addBudgetSubcategory,
         updateBudgetSubcategory,
         deleteBudgetSubcategory,
+        addSubscription,
+        updateSubscription,
+        deleteSubscription,
+        toggleSubscriptionActive,
+        recordSubscriptionPayment,
+        syncSubscriptionsToBudget,
         transferFunds,
         updateSettings,
         toggleHideBalance,

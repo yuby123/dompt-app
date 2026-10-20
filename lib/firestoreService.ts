@@ -9,9 +9,16 @@ import {
   query,
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
-import { db, handleFirestoreError, isFirestoreOfflineError, OperationType } from './firebase';
-import { BudgetConfig, Goal, Transaction, Wallet } from './types';
+import { auth, db, handleFirestoreError, isFirestoreOfflineError, OperationType } from './firebase';
+import { BudgetConfig, Debt, Goal, Transaction, Wallet } from './types';
 import { EMPTY_BUDGET_CONFIG } from './constants';
+import {
+  loadStoredBudgetConfig,
+  loadStoredDebts,
+  loadStoredGoals,
+  loadStoredTransactions,
+  loadStoredWallets,
+} from './storage';
 
 export interface UserProfileData {
   uid: string;
@@ -378,6 +385,7 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
         ? null
         : d.categoryId,
     budgetGroup: d.budgetGroup,
+    expenseNature: d.expenseNature || undefined,
     walletId: d.walletId,
     transferWalletId: d.transferWalletId || null,
     date: d.date,
@@ -415,6 +423,7 @@ export async function saveUserTransaction(userId: string, tx: Transaction): Prom
     createdAt: tx.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     ...(tx.budgetGroup ? { budgetGroup: tx.budgetGroup } : {}),
+    ...(tx.expenseNature ? { expenseNature: tx.expenseNature } : {}),
     ...(tx.note ? { note: tx.note.substring(0, 500) } : {}),
     ...(tx.transferWalletId ? { transferWalletId: tx.transferWalletId } : {}),
     ...(tx.receiptImageUrl ? { imageReceiptUrl: tx.receiptImageUrl.substring(0, 500) } : {}),
@@ -425,6 +434,7 @@ export async function saveUserTransaction(userId: string, tx: Transaction): Prom
     const payload: Record<string, any> = {
       ...restPayload,
       budgetGroup: tx.budgetGroup ? tx.budgetGroup : deleteField(),
+      expenseNature: tx.expenseNature ? tx.expenseNature : deleteField(),
       note: tx.note ? tx.note.substring(0, 500) : deleteField(),
       transferWalletId: tx.transferWalletId ? tx.transferWalletId : deleteField(),
       imageReceiptUrl: tx.receiptImageUrl ? tx.receiptImageUrl.substring(0, 500) : deleteField(),
@@ -605,6 +615,103 @@ export async function saveUserBudgetConfig(userId: string, config: BudgetConfig)
   }
 }
 
+// Debts & Cicilan
+export async function fetchUserDebts(userId: string): Promise<Debt[]> {
+  const path = `users/${userId}/debts`;
+  const mapDebtDoc = (d: any): Debt => {
+    let payments = [];
+    if (d.paymentsJson) {
+      try {
+        payments = JSON.parse(d.paymentsJson);
+      } catch {}
+    } else if (Array.isArray(d.payments)) {
+      payments = d.payments;
+    }
+
+    return {
+      id: d.id,
+      name: d.name || 'Utang / Tagihan',
+      type: d.type === 'receivable' ? 'receivable' : 'payable',
+      contactName: d.contactName || 'Pihak Terkait',
+      totalAmount: Number(d.totalAmount) || 0,
+      remainingAmount: Number(d.remainingAmount) !== undefined ? Number(d.remainingAmount) : (Number(d.totalAmount) || 0),
+      dueDate: d.dueDate || '',
+      startDate: d.startDate || '',
+      walletId: d.walletId || undefined,
+      category: d.category || 'cicilan',
+      interestRate: Number(d.interestRate) || 0,
+      status: d.status === 'paid' || Number(d.remainingAmount) <= 0 ? 'paid' : 'active',
+      note: d.note || '',
+      payments,
+      createdAt: d.createdAt || new Date().toISOString(),
+      updatedAt: d.updatedAt || new Date().toISOString(),
+    };
+  };
+
+  try {
+    const colRef = collection(db, 'users', userId, 'debts');
+    const snap = await getDocs(query(colRef));
+    return snap.docs.map((docSnap) => mapDebtDoc(docSnap.data()));
+  } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const listRes = await cloudRestApi('list', path);
+      if (listRes?.ok && Array.isArray(listRes.docs)) {
+        return listRes.docs.map(mapDebtDoc);
+      }
+    }
+    handleFirestoreError(error, OperationType.GET, path);
+    return [];
+  }
+}
+
+export async function saveUserDebt(userId: string, debt: Debt): Promise<void> {
+  const path = `users/${userId}/debts/${debt.id}`;
+  const restPayload: Record<string, any> = {
+    id: debt.id,
+    userId,
+    name: debt.name,
+    type: debt.type,
+    contactName: debt.contactName || 'Pihak Terkait',
+    totalAmount: Number(debt.totalAmount) || 0,
+    remainingAmount: Number(debt.remainingAmount) || 0,
+    dueDate: debt.dueDate || '',
+    status: debt.status,
+    paymentsJson: JSON.stringify(debt.payments || []).substring(0, 20000),
+    createdAt: debt.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...(debt.startDate ? { startDate: debt.startDate } : {}),
+    ...(debt.walletId ? { walletId: debt.walletId } : {}),
+    ...(debt.category ? { category: debt.category } : {}),
+    ...(debt.interestRate ? { interestRate: Number(debt.interestRate) } : {}),
+    ...(debt.note ? { note: debt.note.substring(0, 500) } : {}),
+  };
+
+  try {
+    const docRef = doc(db, 'users', userId, 'debts', debt.id);
+    await setDoc(docRef, restPayload, { merge: true });
+  } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const setRes = await cloudRestApi('set', path, restPayload, true);
+      if (setRes?.ok) return;
+    }
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteUserDebt(userId: string, debtId: string): Promise<void> {
+  const path = `users/${userId}/debts/${debtId}`;
+  try {
+    const docRef = doc(db, 'users', userId, 'debts', debtId);
+    await deleteDoc(docRef);
+  } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const delRes = await cloudRestApi('delete', path);
+      if (delRes?.ok) return;
+    }
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
 // Reset all user data in Firestore
 export async function resetUserFirestoreData(userId: string): Promise<Wallet[]> {
   try {
@@ -619,6 +726,13 @@ export async function resetUserFirestoreData(userId: string): Promise<Wallet[]> 
     const goalCol = collection(db, 'users', userId, 'goals');
     const goalSnap = await getDocs(query(goalCol));
     for (const d of goalSnap.docs) {
+      await deleteDoc(d.ref);
+    }
+
+    // 2.5 Delete all debts
+    const debtCol = collection(db, 'users', userId, 'debts');
+    const debtSnap = await getDocs(query(debtCol));
+    for (const d of debtSnap.docs) {
       await deleteDoc(d.ref);
     }
 

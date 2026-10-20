@@ -10,7 +10,7 @@ import {
   TrendingUp,
   Sparkles,
   FileText,
-  Lock,
+  Eye,
   EyeOff,
   AlertCircle,
   Pencil,
@@ -252,8 +252,8 @@ export function DashboardTab() {
     { id: 'goals', label: 'Goals', icon: Target, action: () => setActiveTab('goals') },
     { id: 'aset', label: 'Aset', icon: Landmark, action: () => setActiveTab('assets') },
     { id: 'subscriptions', label: 'Langganan', icon: CalendarClock, action: () => setActiveTab('subscriptions') },
-    { id: 'utang', label: 'Utang', icon: CreditCard, hasLock: true, action: () => setActiveTab('debt') },
-    { id: 'investasi', label: 'Investasi', icon: TrendingUp, hasLock: true, action: () => setActiveTab('invest') },
+    { id: 'utang', label: 'Utang', icon: CreditCard, action: () => setActiveTab('debt') },
+    { id: 'investasi', label: 'Investasi', icon: TrendingUp, action: () => setActiveTab('invest') },
     { id: 'health-score', label: 'Skor Sehat', icon: Activity, action: () => setActiveTab('health-score') },
     { id: 'ai-advisor', label: 'AI Advisor', icon: Sparkles, action: () => setActiveTab('ai-advisor') },
     { id: 'laporan', label: 'Laporan', icon: FileText, action: () => setActiveTab('reports') },
@@ -363,7 +363,7 @@ export function DashboardTab() {
               className="lg:hidden p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
               title={hide ? 'Tampilkan' : 'Sembunyikan'}
             >
-              {hide ? <Lock size={16} /> : <EyeOff size={16} />}
+              {hide ? <Eye size={16} /> : <EyeOff size={16} />}
             </button>
           </div>
 
@@ -380,17 +380,27 @@ export function DashboardTab() {
                   className="hidden lg:inline-flex p-1.5 text-gray-500 hover:text-gray-300 transition-colors cursor-pointer rounded-lg"
                   title={hide ? 'Tampilkan Saldo' : 'Sembunyikan Saldo'}
                 >
-                  {hide ? <Lock size={18} /> : <EyeOff size={18} />}
+                  {hide ? <Eye size={18} /> : <EyeOff size={18} />}
                 </button>
               </div>
-              <p className="text-xs text-gray-400 mt-2.5 font-medium flex items-center gap-1.5">
-                <span>👆</span>
-                <span>
-                  {dashboardSummary.dailyBudgetQuota > 0
-                    ? 'budget harian yang tersisa'
-                    : 'budget harian belum diatur'}
-                </span>
-              </p>
+              <div className="flex flex-col gap-1 mt-2.5">
+                <p className="text-xs text-gray-400 font-medium flex items-center gap-1.5">
+                  <span>👆</span>
+                  <span>
+                    {dashboardSummary.dailyBudgetQuota > 0
+                      ? dashboardSummary.dailyOverbudget
+                        ? `Melebihi kuota harian (${formatRupiah(dashboardSummary.dailyOverbudgetAmount, false)})`
+                        : `sisa budget harian operasional (kuota: ${formatRupiah(dashboardSummary.dailyBudgetQuota, false)}/hari)`
+                      : 'budget harian belum diatur'}
+                  </span>
+                </p>
+                {dashboardSummary.todayFixedExpense > 0 && !hide && (
+                  <p className="text-[11px] font-semibold text-sky-400/90 flex items-center gap-1">
+                    <span>📅</span>
+                    <span>Tagihan rutin hari ini {formatRupiah(dashboardSummary.todayFixedExpense, false)} diambil dari pos terpisah</span>
+                  </p>
+                )}
+              </div>
             </div>
 
             {/* Pemasukan vs Pengeluaran on Right Side */}
@@ -411,14 +421,21 @@ export function DashboardTab() {
                 <div className="text-sm sm:text-base lg:text-lg font-black text-[#F472B6] mt-1 tabular-nums">
                   {hide ? 'Rp ••••••' : formatRupiah(todayExpense, false)}
                 </div>
+                {dashboardSummary.todayFixedExpense > 0 && !hide && (
+                  <span className="text-[9px] text-gray-400 block mt-0.5">
+                    Harian: {formatRupiah(dashboardSummary.todayVariableExpense, false)}
+                  </span>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Full-width bottom progress line matching screenshot */}
+          {/* Full-width bottom progress line */}
           <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mt-3 lg:mt-4">
             <div
-              className="h-full bg-[#D4F826] rounded-full transition-all duration-500"
+              className={`h-full rounded-full transition-all duration-500 ${
+                dashboardSummary.dailyOverbudget ? 'bg-[#F472B6]' : 'bg-[#D4F826]'
+              }`}
               style={{ width: `${dailyProgressPct}%` }}
             />
           </div>
@@ -450,12 +467,6 @@ export function DashboardTab() {
                 >
                   <div className="w-12 h-12 sm:w-13 sm:h-13 rounded-2xl bg-gray-50 dark:bg-gray-800/80 border border-gray-100 dark:border-gray-700/60 flex items-center justify-center text-gray-800 dark:text-gray-200 group-hover:scale-105 group-hover:border-[#D4F826] transition-all relative">
                     <Icon size={20} strokeWidth={2} />
-                    {item.hasLock && (
-                      <span className="absolute -top-1.5 -right-1.5 text-[8px] font-black bg-black text-white dark:bg-white dark:text-black px-1.5 py-0.5 rounded-full flex items-center gap-0.5 shadow-xs">
-                        <Lock size={7} strokeWidth={3} />
-                        <span>Max</span>
-                      </span>
-                    )}
                   </div>
                   <span className="text-[10px] sm:text-[11px] font-bold text-gray-700 dark:text-gray-300 truncate max-w-full">
                     {item.label}

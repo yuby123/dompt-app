@@ -1,4 +1,48 @@
-import { AppSettings, BudgetConfig, Category, Goal, UpcomingBill, Wallet } from './types';
+import { AppSettings, BudgetConfig, Category, Debt, Goal, UpcomingBill, Wallet } from './types';
+
+export const DEFAULT_DEBTS: Debt[] = [
+  {
+    id: 'debt-cicilan-gadget',
+    name: 'Cicilan Gadget Kerja',
+    type: 'payable',
+    contactName: 'BCA Smartcash / Paylater',
+    totalAmount: 6000000,
+    remainingAmount: 2000000,
+    dueDate: '2026-05-10',
+    startDate: '2026-01-10',
+    category: 'cicilan',
+    status: 'active',
+    note: 'Cicilan 6 bulan, tersisa 2 bulan lagi',
+    payments: [
+      {
+        id: 'pay-sample-1',
+        debtId: 'debt-cicilan-gadget',
+        amount: 4000000,
+        date: '2026-04-10',
+        walletName: 'BCA',
+        note: 'Pembayaran bulan 1 sampai 4',
+      },
+    ],
+    createdAt: '2026-01-10T00:00:00',
+    updatedAt: '2026-04-10T00:00:00',
+  },
+  {
+    id: 'debt-piutang-rekan',
+    name: 'Talangan Tiket Kereta Liburan',
+    type: 'receivable',
+    contactName: 'Dimas Prasetyo',
+    totalAmount: 750000,
+    remainingAmount: 750000,
+    dueDate: '2026-05-02',
+    startDate: '2026-04-12',
+    category: 'personal',
+    status: 'active',
+    note: 'Janji transfer setelah gajian awal bulan',
+    payments: [],
+    createdAt: '2026-04-12T00:00:00',
+    updatedAt: '2026-04-12T00:00:00',
+  },
+];
 
 export const DEFAULT_WALLETS: Wallet[] = [
   {
@@ -197,23 +241,23 @@ export const DEFAULT_UPCOMING_BILLS: UpcomingBill[] = [
 ];
 
 export const DEFAULT_CATEGORIES: Category[] = [
-  { id: 'cat-makan', name: 'Makan', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', iconKey: 'Utensils', emoji: '🍽️', colorValue: '#DC2626', isDefault: true },
-  { id: 'cat-jajan', name: 'Jajan', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', iconKey: 'Coffee', emoji: '☕', colorValue: '#EC4899', isDefault: true },
-  { id: 'cat-belanja', name: 'Belanja Online', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', iconKey: 'ShoppingCart', emoji: '🛍️', colorValue: '#8B5CF6', isDefault: true },
-  { id: 'cat-listrik', name: 'Listrik', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', iconKey: 'Zap', emoji: '⚡', colorValue: '#F97316', isDefault: true },
-  { id: 'cat-transport', name: 'Transportasi', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', iconKey: 'Bus', emoji: '🚌', colorValue: '#2563EB', isDefault: true },
-  { id: 'cat-ortu', name: 'Orang Tua', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', iconKey: 'Heart', emoji: '👱', colorValue: '#EC4899', isDefault: true },
-  { id: 'cat-hangout', name: 'Hangout', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', iconKey: 'Coffee', emoji: '☕', colorValue: '#D97706', isDefault: true },
-  { id: 'cat-gaya-hidup', name: 'Gaya Hidup', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', iconKey: 'Smile', emoji: '💅', colorValue: '#DB2777', isDefault: true },
-  { id: 'cat-air', name: 'Air PAM', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', iconKey: 'Droplets', emoji: '💧', colorValue: '#0284C7', isDefault: true },
-  { id: 'cat-bpjs', name: 'BPJS', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', iconKey: 'Activity', emoji: '🏥', colorValue: '#059669', isDefault: true },
-  { id: 'cat-kuota', name: 'Kuota', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', iconKey: 'Smartphone', emoji: '📱', colorValue: '#4F46E5', isDefault: true },
-  { id: 'cat-sedekah', name: 'Sedekah', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', iconKey: 'Heart', emoji: '🤲', colorValue: '#F59E0B', isDefault: true },
-  { id: 'cat-hobi', name: 'Hobi', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', iconKey: 'Film', emoji: '🎨', colorValue: '#7C3AED', isDefault: true },
-  { id: 'cat-tagihan', name: 'Tagihan & Utilitas', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', iconKey: 'FileText', emoji: '🧾', colorValue: '#0284C7', isDefault: true },
-  { id: 'cat-hiburan', name: 'Hiburan & Langganan', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', iconKey: 'Film', emoji: '🎬', colorValue: '#EC4899', isDefault: true },
-  { id: 'cat-tabungan', name: 'Tabungan', type: 'expense', groupName: 'Tabungan', budgetGroup: 'tabungan', iconKey: 'PiggyBank', emoji: '🏦', colorValue: '#0D9488', isDefault: true },
-  { id: 'cat-investasi', name: 'Investasi', type: 'expense', groupName: 'Tabungan', budgetGroup: 'tabungan', iconKey: 'TrendingUp', emoji: '📈', colorValue: '#10B981', isDefault: true },
+  { id: 'cat-makan', name: 'Makan', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'variable', iconKey: 'Utensils', emoji: '🍽️', colorValue: '#DC2626', isDefault: true },
+  { id: 'cat-jajan', name: 'Jajan', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', expenseNature: 'variable', iconKey: 'Coffee', emoji: '☕', colorValue: '#EC4899', isDefault: true },
+  { id: 'cat-belanja', name: 'Belanja Online', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', expenseNature: 'variable', iconKey: 'ShoppingCart', emoji: '🛍️', colorValue: '#8B5CF6', isDefault: true },
+  { id: 'cat-listrik', name: 'Listrik', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'fixed', iconKey: 'Zap', emoji: '⚡', colorValue: '#F97316', isDefault: true },
+  { id: 'cat-transport', name: 'Transportasi', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'variable', iconKey: 'Bus', emoji: '🚌', colorValue: '#2563EB', isDefault: true },
+  { id: 'cat-ortu', name: 'Orang Tua', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'variable', iconKey: 'Heart', emoji: '👱', colorValue: '#EC4899', isDefault: true },
+  { id: 'cat-hangout', name: 'Hangout', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', expenseNature: 'variable', iconKey: 'Coffee', emoji: '☕', colorValue: '#D97706', isDefault: true },
+  { id: 'cat-gaya-hidup', name: 'Gaya Hidup', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', expenseNature: 'variable', iconKey: 'Smile', emoji: '💅', colorValue: '#DB2777', isDefault: true },
+  { id: 'cat-air', name: 'Air PAM', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'fixed', iconKey: 'Droplets', emoji: '💧', colorValue: '#0284C7', isDefault: true },
+  { id: 'cat-bpjs', name: 'BPJS', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'fixed', iconKey: 'Activity', emoji: '🏥', colorValue: '#059669', isDefault: true },
+  { id: 'cat-kuota', name: 'Kuota', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'fixed', iconKey: 'Smartphone', emoji: '📱', colorValue: '#4F46E5', isDefault: true },
+  { id: 'cat-sedekah', name: 'Sedekah', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'variable', iconKey: 'Heart', emoji: '🤲', colorValue: '#F59E0B', isDefault: true },
+  { id: 'cat-hobi', name: 'Hobi', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', expenseNature: 'variable', iconKey: 'Film', emoji: '🎨', colorValue: '#7C3AED', isDefault: true },
+  { id: 'cat-tagihan', name: 'Tagihan & Utilitas', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'fixed', iconKey: 'FileText', emoji: '🧾', colorValue: '#0284C7', isDefault: true },
+  { id: 'cat-hiburan', name: 'Hiburan & Langganan', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', expenseNature: 'variable', iconKey: 'Film', emoji: '🎬', colorValue: '#EC4899', isDefault: true },
+  { id: 'cat-tabungan', name: 'Tabungan', type: 'expense', groupName: 'Tabungan', budgetGroup: 'tabungan', expenseNature: 'fixed', iconKey: 'PiggyBank', emoji: '🏦', colorValue: '#0D9488', isDefault: true },
+  { id: 'cat-investasi', name: 'Investasi', type: 'expense', groupName: 'Tabungan', budgetGroup: 'tabungan', expenseNature: 'fixed', iconKey: 'TrendingUp', emoji: '📈', colorValue: '#10B981', isDefault: true },
   
   // Income
   { id: 'cat-gaji', name: 'Gaji Pokok', type: 'income', groupName: 'Penghasilan', iconKey: 'Briefcase', emoji: '💼', colorValue: '#16A34A', isDefault: true },

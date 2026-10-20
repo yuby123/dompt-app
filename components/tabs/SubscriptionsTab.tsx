@@ -5,87 +5,56 @@ import {
   CalendarClock,
   Plus,
   CheckCircle2,
-  Clock,
   Trash2,
   X,
   Play,
   Pause,
   ArrowUpRight,
   RefreshCw,
-  Wallet as WalletIcon,
+  Pencil,
+  Link2,
+  ShieldCheck,
+  RotateCcw,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
+import { EmojiPickerModal } from '../EmojiPickerModal';
 import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
-import { BudgetGroup } from '@/lib/types';
+import { BudgetGroup, RecurringItem } from '@/lib/types';
+import { getMonthlySubscriptionAmount } from '@/lib/budgetUtils';
 
-export interface RecurringItem {
-  id: string;
-  name: string;
-  emoji: string;
-  type: 'expense' | 'income';
-  amount: number;
-  frequency: 'monthly' | 'yearly' | 'weekly';
-  billingDay: number;
-  walletId: string;
-  categoryId: string;
-  subcategoryId?: string;
-  budgetGroup?: BudgetGroup;
-  isActive: boolean;
-  lastRecordedPeriod?: string;
-}
+export type { RecurringItem };
 
 export function SubscriptionsTab() {
   const {
     wallets,
     categories,
+    transactions,
     budgetConfig,
+    dashboardSummary,
+    subscriptions: items,
+    addSubscription,
+    updateSubscription,
+    deleteSubscription,
+    toggleSubscriptionActive,
+    recordSubscriptionPayment,
+    syncSubscriptionsToBudget,
+    updateBudgetConfig,
+    setActiveTab,
     settings,
-    addTransaction,
     addToast,
-    user,
     activeYear,
     activeMonth,
     activeDay,
-    dataResetVersion,
   } = useApp();
 
   const hide = settings.hideBalance;
   const currentPeriodKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
 
-  const storageKey = user?.uid
-    ? `budggt_subscriptions_${user.uid}`
-    : 'budggt_subscriptions';
-  const scopeKey = `${storageKey}_${dataResetVersion}`;
-
-  const [subState, setSubState] = useState<{
-    scope: string;
-    items: RecurringItem[];
-  } | null>(null);
-
-  const items = useMemo<RecurringItem[]>(() => {
-    if (subState?.scope === scopeKey) return subState.items;
-    if (typeof window === 'undefined') return [];
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (raw !== null) {
-        return JSON.parse(raw);
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  }, [subState, scopeKey, storageKey]);
-
-  const saveItems = (updated: RecurringItem[]) => {
-    setSubState({ scope: scopeKey, items: updated });
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-    } catch {}
-  };
-
   const [filterType, setFilterType] = useState<'all' | 'expense' | 'income'>('all');
-  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
 
   // Form states
   const [name, setName] = useState('');
@@ -96,16 +65,103 @@ export function SubscriptionsTab() {
   const [billingDay, setBillingDay] = useState('1');
   const [walletId, setWalletId] = useState(wallets[0]?.id || 'wallet-bca');
   const [categoryId, setCategoryId] = useState('cat-tagihan');
+  const [budgetGroup, setBudgetGroup] = useState<BudgetGroup>('kebutuhan');
   const [subcategoryId, setSubcategoryId] = useState('');
+  const [resetRecordedThisMonth, setResetRecordedThisMonth] = useState(false);
 
   const quickPresets = [
-    { name: 'Netflix', emoji: '🎬', type: 'expense' as const, cat: 'cat-hiburan', day: '5' },
-    { name: 'Spotify', emoji: '🎵', type: 'expense' as const, cat: 'cat-hiburan', day: '10' },
-    { name: 'WiFi & Internet', emoji: '🛜', type: 'expense' as const, cat: 'cat-tagihan', day: '20' },
-    { name: 'Listrik PLN', emoji: '⚡', type: 'expense' as const, cat: 'cat-tagihan', day: '15' },
-    { name: 'Sewa Kost / KPR', emoji: '🏠', type: 'expense' as const, cat: 'cat-tagihan', day: '1' },
-    { name: 'Gaji Bulanan', emoji: '💰', type: 'income' as const, cat: 'cat-gaji', day: '25' },
+    { name: 'Netflix', emoji: '🎬', type: 'expense' as const, cat: 'cat-hiburan', group: 'keinginan' as BudgetGroup, day: '5' },
+    { name: 'Spotify', emoji: '🎵', type: 'expense' as const, cat: 'cat-hiburan', group: 'keinginan' as BudgetGroup, day: '10' },
+    { name: 'WiFi & Internet', emoji: '🛜', type: 'expense' as const, cat: 'cat-tagihan', group: 'kebutuhan' as BudgetGroup, day: '20' },
+    { name: 'Listrik PLN', emoji: '⚡', type: 'expense' as const, cat: 'cat-listrik', group: 'kebutuhan' as BudgetGroup, day: '15' },
+    { name: 'Sewa Kost / KPR', emoji: '🏠', type: 'expense' as const, cat: 'cat-tagihan', group: 'kebutuhan' as BudgetGroup, day: '1' },
+    { name: 'BPJS Kesehatan', emoji: '🏥', type: 'expense' as const, cat: 'cat-bpjs', group: 'kebutuhan' as BudgetGroup, day: '10' },
+    { name: 'Gaji Bulanan', emoji: '💰', type: 'income' as const, cat: 'cat-gaji', group: 'kebutuhan' as BudgetGroup, day: '25' },
   ];
+
+  // Map each subscription to its linked BudgetSubcategory & actual transactions spent this month
+  const itemBudgetStatusMap = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        linkedSub?: { id: string; name: string; group: BudgetGroup; allocatedAmount: number };
+        spentThisMonth: number;
+        paidViaTx: boolean;
+      }
+    > = {};
+
+    const monthlyExpenseTxs = transactions.filter((tx) => {
+      if (tx.type !== 'expense') return false;
+      const d = new Date(tx.date);
+      return d.getFullYear() === activeYear && d.getMonth() === activeMonth;
+    });
+
+    items.forEach((item) => {
+      if (item.type !== 'expense') {
+        map[item.id] = { spentThisMonth: 0, paidViaTx: false };
+        return;
+      }
+
+      const itemNameLower = item.name.toLowerCase().trim();
+      const linkedSub =
+        (item.subcategoryId && budgetConfig?.subcategories?.find((s) => s.id === item.subcategoryId)) ||
+        budgetConfig?.subcategories?.find(
+          (s) =>
+            s.subscriptionId === item.id ||
+            s.name.toLowerCase().trim() === itemNameLower ||
+            itemNameLower.includes(s.name.toLowerCase().trim()) ||
+            s.name.toLowerCase().trim().includes(itemNameLower)
+        );
+
+      // Calculate actual spending matching this subscription this month
+      let spent = 0;
+      monthlyExpenseTxs.forEach((tx) => {
+        const cleanNote = (tx.note || '')
+          .toLowerCase()
+          .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)/gi, '')
+          .trim();
+        const rawNote = (tx.note || '').toLowerCase().trim();
+
+        const matchesItemName =
+          itemNameLower.length >= 2 &&
+          (cleanNote === itemNameLower ||
+            rawNote.includes(itemNameLower) ||
+            (cleanNote.length >= 3 && itemNameLower.includes(cleanNote)));
+
+        const matchesSubName =
+          linkedSub &&
+          linkedSub.name.trim().length >= 2 &&
+          (cleanNote === linkedSub.name.toLowerCase().trim() ||
+            rawNote.includes(linkedSub.name.toLowerCase().trim()));
+
+        if (matchesItemName || matchesSubName) {
+          spent += tx.amount;
+        }
+      });
+
+      map[item.id] = {
+        linkedSub: linkedSub
+          ? {
+              id: linkedSub.id,
+              name: linkedSub.name,
+              group: linkedSub.group,
+              allocatedAmount: linkedSub.allocatedAmount,
+            }
+          : undefined,
+        spentThisMonth: spent,
+        paidViaTx: spent >= item.amount && item.amount > 0,
+      };
+    });
+
+    return map;
+  }, [items, budgetConfig.subcategories, transactions, activeYear, activeMonth]);
+
+  // Count unlinked active expense subscriptions
+  const unlinkedExpenseCount = useMemo(() => {
+    return items.filter(
+      (i) => i.type === 'expense' && !itemBudgetStatusMap[i.id]?.linkedSub
+    ).length;
+  }, [items, itemBudgetStatusMap]);
 
   // Calculate monthly normalized totals
   const summary = useMemo(() => {
@@ -115,12 +171,7 @@ export function SubscriptionsTab() {
 
     items.forEach((item) => {
       if (!item.isActive) return;
-      const monthlyEquivalent =
-        item.frequency === 'monthly'
-          ? item.amount
-          : item.frequency === 'yearly'
-          ? Math.round(item.amount / 12)
-          : item.amount * 4;
+      const monthlyEquivalent = getMonthlySubscriptionAmount(item.amount, item.frequency);
 
       if (item.type === 'expense') {
         monthlyExpense += monthlyEquivalent;
@@ -128,7 +179,9 @@ export function SubscriptionsTab() {
         monthlyIncome += monthlyEquivalent;
       }
 
-      const isRecordedThisMonth = item.lastRecordedPeriod === currentPeriodKey;
+      const status = itemBudgetStatusMap[item.id];
+      const isRecordedThisMonth =
+        item.lastRecordedPeriod === currentPeriodKey || Boolean(status?.paidViaTx);
       const daysUntil = item.billingDay - activeDay;
       if (!isRecordedThisMonth && daysUntil >= -3 && daysUntil <= 7) {
         dueSoonCount += 1;
@@ -141,7 +194,7 @@ export function SubscriptionsTab() {
       monthlyIncome,
       dueSoonCount,
     };
-  }, [items, activeDay, currentPeriodKey]);
+  }, [items, activeDay, currentPeriodKey, itemBudgetStatusMap]);
 
   const filteredItems = useMemo(() => {
     return items
@@ -152,7 +205,46 @@ export function SubscriptionsTab() {
       .sort((a, b) => a.billingDay - b.billingDay);
   }, [items, filterType]);
 
-  const handleCreate = (e: React.FormEvent) => {
+  const openAddModal = () => {
+    setEditingId(null);
+    setName('');
+    setEmoji('🎬');
+    setTxType('expense');
+    setAmount('');
+    setFrequency('monthly');
+    setBillingDay('1');
+    setWalletId(wallets[0]?.id || 'wallet-bca');
+    setCategoryId('cat-tagihan');
+    setBudgetGroup('kebutuhan');
+    setSubcategoryId('');
+    setResetRecordedThisMonth(false);
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (item: RecurringItem) => {
+    setEditingId(item.id);
+    setName(item.name);
+    setEmoji(item.emoji || (item.type === 'expense' ? '🔁' : '💰'));
+    setTxType(item.type);
+    setAmount(formatNominalInput(item.amount));
+    setFrequency(item.frequency);
+    setBillingDay(String(item.billingDay));
+    setWalletId(item.walletId || wallets[0]?.id || 'wallet-bca');
+    setCategoryId(
+      item.categoryId || (item.type === 'expense' ? 'cat-tagihan' : 'cat-gaji')
+    );
+    const linked = itemBudgetStatusMap[item.id]?.linkedSub;
+    setBudgetGroup(
+      item.budgetGroup ||
+        linked?.group ||
+        (item.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan')
+    );
+    setSubcategoryId(item.subcategoryId || linked?.id || '');
+    setResetRecordedThisMonth(false);
+    setIsModalOpen(true);
+  };
+
+  const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseNominalInput(amount);
     if (!name.trim() || val <= 0) return;
@@ -160,98 +252,70 @@ export function SubscriptionsTab() {
     const dayNum = Math.min(31, Math.max(1, parseInt(billingDay, 10) || 1));
     const cleanItemName = name.trim().toLowerCase();
 
-    // Auto match or link to budget subcategory
-    const autoMatchedSub =
+    // Match or link to budget subcategory
+    const matchedSub =
       (subcategoryId && budgetConfig?.subcategories?.find((s) => s.id === subcategoryId)) ||
       budgetConfig?.subcategories?.find((s) => {
         const sName = s.name.toLowerCase().trim();
-        return cleanItemName === sName || cleanItemName.includes(sName) || sName.includes(cleanItemName);
+        return cleanItemName === sName;
       });
 
     const determinedGroup: BudgetGroup =
-      autoMatchedSub?.group ||
-      (categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
+      txType === 'expense'
+        ? budgetGroup || matchedSub?.group || (categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan')
+        : 'kebutuhan';
 
-    const newItem: RecurringItem = {
-      id: `sub-${Date.now()}`,
-      name: name.trim(),
-      emoji: emoji || (txType === 'expense' ? '🔁' : '💰'),
-      type: txType,
-      amount: val,
-      frequency,
-      billingDay: dayNum,
-      walletId: walletId || wallets[0]?.id || 'wallet-bca',
-      categoryId:
-        categoryId ||
-        (txType === 'expense' ? (determinedGroup === 'keinginan' ? 'cat-hiburan' : 'cat-tagihan') : 'cat-gaji'),
-      subcategoryId: autoMatchedSub?.id || undefined,
-      budgetGroup: txType === 'expense' ? determinedGroup : undefined,
-      isActive: true,
-    };
+    if (editingId) {
+      const existing = items.find((i) => i.id === editingId);
+      updateSubscription(editingId, {
+        name: name.trim(),
+        emoji: emoji || (txType === 'expense' ? '🔁' : '💰'),
+        type: txType,
+        amount: val,
+        frequency,
+        billingDay: dayNum,
+        walletId: walletId || wallets[0]?.id || 'wallet-bca',
+        categoryId:
+          categoryId ||
+          (txType === 'expense'
+            ? determinedGroup === 'keinginan'
+              ? 'cat-hiburan'
+              : 'cat-tagihan'
+            : 'cat-gaji'),
+        subcategoryId: matchedSub?.id || subcategoryId || existing?.subcategoryId,
+        budgetGroup: txType === 'expense' ? determinedGroup : undefined,
+        lastRecordedPeriod: resetRecordedThisMonth
+          ? undefined
+          : existing?.lastRecordedPeriod,
+      });
+    } else {
+      addSubscription({
+        name: name.trim(),
+        emoji: emoji || (txType === 'expense' ? '🔁' : '💰'),
+        type: txType,
+        amount: val,
+        frequency,
+        billingDay: dayNum,
+        walletId: walletId || wallets[0]?.id || 'wallet-bca',
+        categoryId:
+          categoryId ||
+          (txType === 'expense'
+            ? determinedGroup === 'keinginan'
+              ? 'cat-hiburan'
+              : 'cat-tagihan'
+            : 'cat-gaji'),
+        subcategoryId: matchedSub?.id || undefined,
+        budgetGroup: txType === 'expense' ? determinedGroup : undefined,
+        isActive: true,
+      });
+    }
 
-    saveItems([...items, newItem]);
-    addToast(
-      'Jadwal Rutin Disimpan',
-      `${newItem.name} berhasil ditambahkan & terhubung ke alokasi budget.`
-    );
-    setIsAddOpen(false);
+    setIsModalOpen(false);
+    setEditingId(null);
     setName('');
     setAmount('');
     setSubcategoryId('');
-  };
-
-  const handleRecordNow = (item: RecurringItem) => {
-    const dateStr = new Date(activeYear, activeMonth, activeDay, 9, 0, 0).toISOString();
-
-    const cleanItemName = item.name.toLowerCase().trim();
-    const matchedSub =
-      (item.subcategoryId && budgetConfig?.subcategories?.find((s) => s.id === item.subcategoryId)) ||
-      budgetConfig?.subcategories?.find((s) => {
-        const sName = s.name.toLowerCase().trim();
-        return (
-          cleanItemName === sName ||
-          cleanItemName.includes(sName) ||
-          sName.includes(cleanItemName)
-        );
-      });
-
-    const determinedBudgetGroup: BudgetGroup =
-      matchedSub?.group ||
-      item.budgetGroup ||
-      (item.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
-
-    addTransaction({
-      walletId: item.walletId || wallets[0]?.id || 'wallet-bca',
-      categoryId: item.categoryId || (matchedSub ? matchedSub.id.replace('sub-', 'cat-') : 'cat-tagihan'),
-      budgetGroup: item.type === 'expense' ? determinedBudgetGroup : undefined,
-      type: item.type,
-      amount: item.amount,
-      note: `${item.name} (Otomatis Rutin)`,
-      date: dateStr,
-    });
-
-    const updated = items.map((i) =>
-      i.id === item.id ? { ...i, lastRecordedPeriod: currentPeriodKey } : i
-    );
-    saveItems(updated);
-    addToast(
-      'Pembayaran Dicatat',
-      `${item.name} berhasil dicatat & masuk ke alokasi budget ${determinedBudgetGroup.toUpperCase()}.`,
-      'success'
-    );
-  };
-
-  const handleToggleActive = (id: string) => {
-    const updated = items.map((i) =>
-      i.id === id ? { ...i, isActive: !i.isActive } : i
-    );
-    saveItems(updated);
-  };
-
-  const handleDelete = (id: string) => {
-    const updated = items.filter((i) => i.id !== id);
-    saveItems(updated);
-    addToast('Jadwal Dihapus', 'Langganan / jadwal berulang telah dihapus.', 'info');
+    setResetRecordedThisMonth(false);
   };
 
   const freqLabel = (freq: RecurringItem['frequency']) => {
@@ -259,6 +323,11 @@ export function SubscriptionsTab() {
     if (freq === 'yearly') return 'Tahunan';
     return 'Mingguan';
   };
+
+  const editingItem = useMemo(
+    () => (editingId ? items.find((i) => i.id === editingId) || null : null),
+    [editingId, items]
+  );
 
   return (
     <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
@@ -269,12 +338,12 @@ export function SubscriptionsTab() {
             Langganan & Rutin
           </h1>
           <p className="text-xs lg:text-sm font-semibold text-gray-400 mt-0.5">
-            Kelola tagihan otomatis, langganan streaming, dan jadwal gaji bulanan.
+            Terintegrasi otomatis dengan Pos Tagihan Bulanan di Menu Budget (tidak memotong Budget Harian).
           </p>
         </div>
         <button
           type="button"
-          onClick={() => setIsAddOpen(true)}
+          onClick={openAddModal}
           className="h-10 px-3.5 lg:px-4 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95"
           title="Tambah Jadwal Berulang"
         >
@@ -284,10 +353,10 @@ export function SubscriptionsTab() {
       </div>
 
       {/* Full-Width Black Hero Card */}
-      <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl border border-white/5">
+      <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl border border-white/5 space-y-5">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
           <div className="space-y-1.5">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[11px] font-black text-[#D4F826] uppercase tracking-widest flex items-center gap-1.5">
                 <RefreshCw size={12} />
                 <span>BEBAN LANGGANAN & TAGIHAN / BULAN</span>
@@ -315,6 +384,22 @@ export function SubscriptionsTab() {
               <span className="text-sm lg:text-lg font-black text-[#D4F826] tabular-nums mt-0.5 block">
                 +{formatRupiah(summary.monthlyIncome, hide)}
               </span>
+              {summary.monthlyIncome > 0 &&
+                budgetConfig.estimatedIncome !== summary.monthlyIncome && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateBudgetConfig({ estimatedIncome: summary.monthlyIncome });
+                      addToast(
+                        'Pemasukan Budget Diperbarui',
+                        `Perkiraan pemasukan di Menu Budget disamakan ke ${formatRupiah(summary.monthlyIncome)}.`
+                      );
+                    }}
+                    className="mt-1 text-[10px] font-extrabold text-sky-400 hover:text-sky-300 underline cursor-pointer block text-left"
+                  >
+                    Jadikan patokan Menu Budget
+                  </button>
+                )}
             </div>
             <div>
               <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">
@@ -324,6 +409,71 @@ export function SubscriptionsTab() {
                 {summary.dueSoonCount} Jadwal
               </span>
             </div>
+          </div>
+        </div>
+
+        {/* Relasi ke Menu Budget (Fixed vs Variable Protection) */}
+        <div className="pt-4 border-t border-white/10 grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs">
+          <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex items-center justify-between">
+            <div>
+              <span className="text-[10px] font-black text-sky-400 uppercase tracking-wider block">
+                POS TAGIHAN BULANAN (BUDGET)
+              </span>
+              <span className="text-sm font-black text-white tabular-nums mt-0.5 block">
+                {formatRupiah(dashboardSummary.monthlyFixedBudget, hide)}
+              </span>
+              <span className="text-[10px] text-gray-400">
+                Terbayar bulan ini: {formatRupiah(dashboardSummary.monthlyFixedExpense, hide)}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('budget')}
+              className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-[11px] font-bold text-gray-200 flex items-center gap-1 cursor-pointer shrink-0"
+            >
+              <span>Menu Budget</span>
+              <ArrowUpRight size={12} />
+            </button>
+          </div>
+
+          <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex items-center justify-between">
+            <div>
+              <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider block">
+                POS PENGELUARAN HARIAN
+              </span>
+              <span className="text-sm font-black text-white tabular-nums mt-0.5 block">
+                {formatRupiah(dashboardSummary.monthlyVariableBudget, hide)}
+              </span>
+              <span className="text-[10px] text-gray-400">
+                Kuota harian: ~{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
+              </span>
+            </div>
+            <div className="w-8 h-8 rounded-xl bg-[#D4F826]/15 text-[#D4F826] flex items-center justify-center shrink-0">
+              <ShieldCheck size={16} />
+            </div>
+          </div>
+
+          <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex flex-col justify-between">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-black text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                <Link2 size={12} />
+                <span>STATUS RELASI BUDGET</span>
+              </span>
+              {unlinkedExpenseCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={syncSubscriptionsToBudget}
+                  className="px-2 py-0.5 rounded-lg bg-[#D4F826] text-black text-[10px] font-black cursor-pointer"
+                >
+                  Sinkronkan ({unlinkedExpenseCount})
+                </button>
+              ) : (
+                <span className="text-[10px] font-black text-emerald-400">TERHUBUNG</span>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1 leading-snug">
+              Pembayaran langganan otomatis memotong Pos Tagihan Bulanan & tidak mengurangi Sisa Budget Harian.
+            </p>
           </div>
         </div>
       </div>
@@ -361,12 +511,12 @@ export function SubscriptionsTab() {
               Belum Ada Jadwal Berulang
             </h3>
             <p className="text-xs text-gray-400 max-w-xs mx-auto leading-relaxed">
-              Catat langganan streaming (Netflix, Spotify), tagihan bulanan (WiFi, Listrik, Kost), atau jadwal gaji agar bisa dicatat hanya dengan 1 klik setiap bulan.
+              Catat langganan streaming (Netflix, Spotify), tagihan bulanan (WiFi, Listrik, Kost), atau jadwal gaji agar otomatis terhubung dengan alokasi Menu Budget.
             </p>
           </div>
           <button
             type="button"
-            onClick={() => setIsAddOpen(true)}
+            onClick={openAddModal}
             className="px-4 py-2.5 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black cursor-pointer inline-flex items-center gap-1.5"
           >
             <Plus size={15} strokeWidth={2.5} />
@@ -376,11 +526,19 @@ export function SubscriptionsTab() {
       ) : (
         <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-4">
           {filteredItems.map((item) => {
-            const isRecorded = item.lastRecordedPeriod === currentPeriodKey;
+            const status = itemBudgetStatusMap[item.id];
+            const isRecorded =
+              item.lastRecordedPeriod === currentPeriodKey || Boolean(status?.paidViaTx);
             const wallet = wallets.find((w) => w.id === item.walletId);
+            const category = categories.find((c) => c.id === item.categoryId);
             const daysDiff = item.billingDay - activeDay;
             const isDueSoon = !isRecorded && item.isActive && daysDiff >= 0 && daysDiff <= 7;
             const isOverdue = !isRecorded && item.isActive && daysDiff < 0;
+            const monthlyEq = getMonthlySubscriptionAmount(item.amount, item.frequency);
+            const determinedGroup: BudgetGroup =
+              status?.linkedSub?.group ||
+              item.budgetGroup ||
+              (item.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
 
             return (
               <div
@@ -399,17 +557,38 @@ export function SubscriptionsTab() {
                       {item.emoji}
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <h4 className="text-sm font-extrabold text-gray-900 dark:text-white truncate">
                           {item.name}
                         </h4>
+                        {item.type === 'expense' ? (
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase ${
+                              determinedGroup === 'keinginan'
+                                ? 'bg-pink-500/10 text-pink-600 dark:text-pink-400'
+                                : 'bg-violet-500/10 text-violet-600 dark:text-violet-400'
+                            }`}
+                          >
+                            {determinedGroup === 'keinginan' ? 'Keinginan' : 'Kebutuhan'}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                            Pemasukan Rutin
+                          </span>
+                        )}
                       </div>
-                      <div className="flex items-center gap-1.5 text-[11px] text-gray-400 mt-0.5">
+                      <div className="flex items-center gap-1.5 text-[11px] text-gray-400 mt-0.5 flex-wrap">
                         <span>Tgl {item.billingDay}</span>
                         <span>·</span>
                         <span>{freqLabel(item.frequency)}</span>
                         <span>·</span>
                         <span className="truncate">{wallet?.name || 'Dompet'}</span>
+                        {category && (
+                          <>
+                            <span>·</span>
+                            <span className="truncate">{category.name}</span>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -425,6 +604,11 @@ export function SubscriptionsTab() {
                       {item.type === 'income' ? '+' : '-'}
                       {formatRupiah(item.amount, hide)}
                     </span>
+                    {item.frequency !== 'monthly' && (
+                      <span className="text-[10px] text-gray-400 block tabular-nums">
+                        ~{formatRupiah(monthlyEq, hide)}/bln
+                      </span>
+                    )}
                     <span className="text-[10px] font-bold text-gray-400">
                       {isRecorded
                         ? 'Sudah dicatat bulan ini'
@@ -439,13 +623,44 @@ export function SubscriptionsTab() {
                   </div>
                 </div>
 
+                {/* Budget Relation Strip */}
+                {item.type === 'expense' && (
+                  <div className="px-3 py-2 rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 flex items-center justify-between gap-2 text-[11px]">
+                    <div className="flex items-center gap-1.5 min-w-0 text-gray-600 dark:text-gray-300 font-semibold truncate">
+                      <Link2 size={12} className="text-sky-500 shrink-0" />
+                      {status?.linkedSub ? (
+                        <span className="truncate">
+                          Pos Budget: <strong className="text-gray-900 dark:text-white">{status.linkedSub.name}</strong> ({formatRupiah(status.linkedSub.allocatedAmount, hide)}/bln)
+                        </span>
+                      ) : (
+                        <span className="truncate text-amber-600 dark:text-amber-400">
+                          Pos Tagihan Bulanan ({formatRupiah(monthlyEq, hide)}/bln)
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] font-extrabold text-sky-600 dark:text-sky-400 shrink-0 uppercase">
+                      Fixed · Aman Harian
+                    </span>
+                  </div>
+                )}
+
                 {/* Action Footer */}
                 <div className="flex items-center justify-between pt-2.5 border-t border-gray-100 dark:border-gray-800 gap-2">
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => handleToggleActive(item.id)}
-                      className="px-2.5 py-1.5 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                      onClick={() => openEditModal(item)}
+                      className="px-2.5 py-1.5 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                      title="Edit Jadwal & Budget"
+                    >
+                      <Pencil size={12} />
+                      <span>Edit</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleSubscriptionActive(item.id)}
+                      className="px-2.5 py-1.5 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
                       title={item.isActive ? 'Jeda Jadwal' : 'Aktifkan Jadwal'}
                     >
                       {item.isActive ? <Pause size={12} /> : <Play size={12} />}
@@ -454,7 +669,7 @@ export function SubscriptionsTab() {
 
                     <button
                       type="button"
-                      onClick={() => handleDelete(item.id)}
+                      onClick={() => deleteSubscription(item.id)}
                       className="p-1.5 rounded-xl text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
                       title="Hapus Jadwal"
                     >
@@ -471,7 +686,7 @@ export function SubscriptionsTab() {
                     <button
                       type="button"
                       disabled={!item.isActive}
-                      onClick={() => handleRecordNow(item)}
+                      onClick={() => recordSubscriptionPayment(item.id)}
                       className="px-3.5 py-1.5 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] disabled:opacity-40 text-black text-xs font-black flex items-center gap-1 cursor-pointer shadow-xs"
                     >
                       <span>
@@ -487,73 +702,83 @@ export function SubscriptionsTab() {
         </div>
       )}
 
-      {/* Modal Tambah Jadwal Berulang */}
+      {/* Modal Tambah / Edit Jadwal Berulang */}
       <AnimatePresence>
-        {isAddOpen && (
+        {isModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white dark:bg-[#16181D] rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800 max-h-[90vh] overflow-y-auto"
+              className="bg-white dark:bg-[#16181D] rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800 max-h-[90vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
-                  Tambah Jadwal Berulang
+                  {editingId ? 'Edit Jadwal & Alokasi Budget' : 'Tambah Jadwal Berulang'}
                 </h3>
                 <button
                   type="button"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    setEditingId(null);
+                  }}
                   className="p-1 text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"
                 >
                   <X size={18} />
                 </button>
               </div>
 
-              {/* Quick Presets */}
-              <div className="space-y-1.5">
-                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
-                  PILIH CEPAT (TEMPLATE):
-                </span>
-                <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
-                  {quickPresets.map((preset) => (
-                    <button
-                      key={preset.name}
-                      type="button"
-                      onClick={() => {
-                        setName(preset.name);
-                        setEmoji(preset.emoji);
-                        setTxType(preset.type);
-                        setCategoryId(preset.cat);
-                        setBillingDay(preset.day);
+              {/* Quick Presets (Only shown when creating new item) */}
+              {!editingId && (
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
+                    PILIH CEPAT (TEMPLATE):
+                  </span>
+                  <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                    {quickPresets.map((preset) => (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        onClick={() => {
+                          setName(preset.name);
+                          setEmoji(preset.emoji);
+                          setTxType(preset.type);
+                          setCategoryId(preset.cat);
+                          setBudgetGroup(preset.group);
+                          setBillingDay(preset.day);
 
-                        const pName = preset.name.toLowerCase();
-                        const foundSub = budgetConfig?.subcategories?.find((s) => {
-                          const sName = s.name.toLowerCase();
-                          return pName.includes(sName) || sName.includes(pName);
-                        });
-                        if (foundSub) {
-                          setSubcategoryId(foundSub.id);
-                          if (!amount && foundSub.allocatedAmount > 0) {
-                            setAmount(formatNominalInput(foundSub.allocatedAmount));
+                          const pName = preset.name.toLowerCase();
+                          const foundSub = budgetConfig?.subcategories?.find((s) => {
+                            const sName = s.name.toLowerCase();
+                            return pName.includes(sName) || sName.includes(pName);
+                          });
+                          if (foundSub) {
+                            setSubcategoryId(foundSub.id);
+                            setBudgetGroup(foundSub.group);
+                            if (!amount && foundSub.allocatedAmount > 0) {
+                              setAmount(formatNominalInput(foundSub.allocatedAmount));
+                            }
                           }
-                        }
-                      }}
-                      className="px-2.5 py-1.5 rounded-xl bg-gray-50 dark:bg-gray-800 hover:bg-[#D4F826]/20 border border-gray-200 dark:border-gray-700 text-xs font-bold text-gray-800 dark:text-gray-200 shrink-0 cursor-pointer flex items-center gap-1"
-                    >
-                      <span>{preset.emoji}</span>
-                      <span>{preset.name}</span>
-                    </button>
-                  ))}
+                        }}
+                        className="px-2.5 py-1.5 rounded-xl bg-gray-50 dark:bg-gray-800 hover:bg-[#D4F826]/20 border border-gray-200 dark:border-gray-700 text-xs font-bold text-gray-800 dark:text-gray-200 shrink-0 cursor-pointer flex items-center gap-1"
+                      >
+                        <span>{preset.emoji}</span>
+                        <span>{preset.name}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <form onSubmit={handleCreate} className="space-y-3">
+              <form onSubmit={handleSave} className="space-y-3">
                 {/* Tipe: Pengeluaran vs Pemasukan */}
                 <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 dark:bg-gray-800 rounded-2xl text-xs font-bold">
                   <button
                     type="button"
-                    onClick={() => setTxType('expense')}
+                    onClick={() => {
+                      setTxType('expense');
+                      if (categoryId === 'cat-gaji') setCategoryId('cat-tagihan');
+                    }}
                     className={`py-2 rounded-xl cursor-pointer transition-colors ${
                       txType === 'expense'
                         ? 'bg-white dark:bg-[#16181D] text-gray-900 dark:text-white font-black shadow-xs'
@@ -564,7 +789,10 @@ export function SubscriptionsTab() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setTxType('income')}
+                    onClick={() => {
+                      setTxType('income');
+                      setCategoryId('cat-gaji');
+                    }}
                     className={`py-2 rounded-xl cursor-pointer transition-colors ${
                       txType === 'income'
                         ? 'bg-white dark:bg-[#16181D] text-emerald-600 dark:text-emerald-400 font-black shadow-xs'
@@ -577,23 +805,24 @@ export function SubscriptionsTab() {
 
                 <div>
                   <label className="text-xs font-bold text-gray-500 block mb-1">
-                    Nama Langganan / Transaksi
+                    Nama Langganan / Transaksi & Ikon
                   </label>
                   <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsEmojiPickerOpen(true)}
+                      className="w-12 p-3 text-center bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-2xl text-lg cursor-pointer shrink-0"
+                      title="Pilih Emoji"
+                    >
+                      {emoji || '🔁'}
+                    </button>
                     <input
                       type="text"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
-                      placeholder="Contoh: Netflix, WiFi, Gaji"
+                      placeholder="Contoh: Netflix, WiFi, Listrik, Gaji"
                       required
                       className="flex-1 p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
-                    />
-                    <input
-                      type="text"
-                      value={emoji}
-                      onChange={(e) => setEmoji(e.target.value)}
-                      maxLength={2}
-                      className="w-12 p-3 text-center bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-base focus:outline-none"
                     />
                   </div>
                 </div>
@@ -607,7 +836,7 @@ export function SubscriptionsTab() {
                     inputMode="numeric"
                     value={amount}
                     onChange={(e) => setAmount(formatNominalInput(e.target.value))}
-                    placeholder="Contoh: 186.000"
+                    placeholder="Contoh: 200.000"
                     required
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
@@ -626,14 +855,14 @@ export function SubscriptionsTab() {
                       className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none"
                     >
                       <option value="monthly">Bulanan</option>
-                      <option value="yearly">Tahunan</option>
-                      <option value="weekly">Mingguan</option>
+                      <option value="yearly">Tahunan (Dibagi 12/bln)</option>
+                      <option value="weekly">Mingguan (Dikali 4/bln)</option>
                     </select>
                   </div>
 
                   <div>
                     <label className="text-xs font-bold text-gray-500 block mb-1">
-                      Tanggal (1-31)
+                      Tanggal Jatuh Tempo (1-31)
                     </label>
                     <input
                       type="number"
@@ -649,7 +878,7 @@ export function SubscriptionsTab() {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-xs font-bold text-gray-500 block mb-1">
-                      Dompet
+                      Dompet Pembayaran
                     </label>
                     <select
                       value={walletId}
@@ -666,11 +895,20 @@ export function SubscriptionsTab() {
 
                   <div>
                     <label className="text-xs font-bold text-gray-500 block mb-1">
-                      Kategori
+                      Kategori Transaksi
                     </label>
                     <select
                       value={categoryId}
-                      onChange={(e) => setCategoryId(e.target.value)}
+                      onChange={(e) => {
+                        const cid = e.target.value;
+                        setCategoryId(cid);
+                        const catObj = categories.find((c) => c.id === cid);
+                        if (catObj?.budgetGroup && catObj.budgetGroup !== 'tabungan') {
+                          setBudgetGroup(catObj.budgetGroup);
+                        } else if (cid === 'cat-hiburan') {
+                          setBudgetGroup('keinginan');
+                        }
+                      }}
                       className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none"
                     >
                       {categories
@@ -684,62 +922,137 @@ export function SubscriptionsTab() {
                   </div>
                 </div>
 
-                {/* Hubungkan ke Alokasi Budget */}
-                {txType === 'expense' && budgetConfig?.subcategories && budgetConfig.subcategories.length > 0 && (
-                  <div>
-                    <label className="text-xs font-bold text-gray-500 block mb-1">
-                      Alokasi Budget (Otomatis Terhubung ke Menu Budget)
-                    </label>
-                    <select
-                      value={subcategoryId}
-                      onChange={(e) => {
-                        const sid = e.target.value;
-                        setSubcategoryId(sid);
-                        if (sid) {
-                          const sub = budgetConfig.subcategories.find((s) => s.id === sid);
-                          if (sub) {
-                            if (!name) setName(sub.name);
-                            if (sub.emoji) setEmoji(sub.emoji);
-                            if (!amount && sub.allocatedAmount > 0) {
-                              setAmount(formatNominalInput(sub.allocatedAmount));
-                            }
-                            if (sub.group === 'keinginan') {
-                              setCategoryId('cat-hiburan');
-                            } else {
-                              setCategoryId('cat-tagihan');
+                {/* Pengaturan Relasi ke Menu Budget */}
+                {txType === 'expense' && (
+                  <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/70 border border-gray-200/80 dark:border-gray-700/80 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+                        <Link2 size={13} className="text-sky-500" />
+                        <span>RELASI ALOKASI MENU BUDGET</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-sky-600 dark:text-sky-400">
+                        Pos Tagihan Bulanan
+                      </span>
+                    </div>
+
+                    {/* Pilih Kelompok Budget: Kebutuhan vs Keinginan */}
+                    <div>
+                      <label className="text-[11px] font-bold text-gray-500 block mb-1">
+                        Kelompok Pos Anggaran (50/30/20)
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setBudgetGroup('kebutuhan')}
+                          className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                            budgetGroup === 'kebutuhan'
+                              ? 'bg-violet-500/15 border-violet-500 text-violet-700 dark:text-violet-300 font-black'
+                              : 'bg-white dark:bg-[#16181D] border-gray-200 dark:border-gray-700 text-gray-500'
+                          }`}
+                        >
+                          Kebutuhan ({budgetConfig.needsPercent}%)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBudgetGroup('keinginan')}
+                          className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                            budgetGroup === 'keinginan'
+                              ? 'bg-pink-500/15 border-pink-500 text-pink-700 dark:text-pink-300 font-black'
+                              : 'bg-white dark:bg-[#16181D] border-gray-200 dark:border-gray-700 text-gray-500'
+                          }`}
+                        >
+                          Keinginan ({budgetConfig.wantsPercent}%)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Pilih Subkategori Budget */}
+                    <div>
+                      <label className="text-[11px] font-bold text-gray-500 block mb-1">
+                        Subkategori di Menu Budget
+                      </label>
+                      <select
+                        value={subcategoryId}
+                        onChange={(e) => {
+                          const sid = e.target.value;
+                          setSubcategoryId(sid);
+                          if (sid) {
+                            const sub = budgetConfig.subcategories.find((s) => s.id === sid);
+                            if (sub) {
+                              if (!name) setName(sub.name);
+                              if (sub.emoji) setEmoji(sub.emoji);
+                              if (!amount && sub.allocatedAmount > 0) {
+                                setAmount(formatNominalInput(sub.allocatedAmount));
+                              }
+                              if (sub.group !== 'tabungan') {
+                                setBudgetGroup(sub.group);
+                              }
                             }
                           }
-                        }
-                      }}
-                      className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                        }}
+                        className="w-full p-2.5 bg-white dark:bg-[#16181D] border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                      >
+                        <option value="">
+                          ✨ Buat / Sinkronkan Subkategori Budget Otomatis
+                        </option>
+                        {budgetConfig?.subcategories && budgetConfig.subcategories.length > 0 && (
+                          <>
+                            <optgroup label="Kebutuhan (Needs)">
+                              {budgetConfig.subcategories
+                                .filter((s) => s.group === 'kebutuhan')
+                                .map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.emoji} {s.name} ({formatRupiah(s.allocatedAmount)})
+                                  </option>
+                                ))}
+                            </optgroup>
+                            <optgroup label="Keinginan (Wants)">
+                              {budgetConfig.subcategories
+                                .filter((s) => s.group === 'keinginan')
+                                .map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.emoji} {s.name} ({formatRupiah(s.allocatedAmount)})
+                                  </option>
+                                ))}
+                            </optgroup>
+                          </>
+                        )}
+                      </select>
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        Nominal bulanan jadwal ini akan otomatis disinkronkan ke subkategori Menu Budget & Pos Tagihan Bulanan.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Option to reset recorded status this month when editing */}
+                {editingItem && editingItem.lastRecordedPeriod === currentPeriodKey && (
+                  <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-2">
+                    <div className="text-[11px] text-amber-700 dark:text-amber-300 font-semibold">
+                      Jadwal ini ditandai sudah dicatat bulan ini.
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setResetRecordedThisMonth(!resetRecordedThisMonth)}
+                      className={`px-2.5 py-1 rounded-xl text-[11px] font-black flex items-center gap-1 cursor-pointer ${
+                        resetRecordedThisMonth
+                          ? 'bg-amber-500 text-black'
+                          : 'bg-white/80 dark:bg-gray-800 text-amber-600 dark:text-amber-400'
+                      }`}
                     >
-                      <option value="">Otomatis Cocokkan Sesuai Nama</option>
-                      <optgroup label="Kebutuhan (Needs)">
-                        {budgetConfig.subcategories
-                          .filter((s) => s.group === 'kebutuhan')
-                          .map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.emoji} {s.name} ({formatRupiah(s.allocatedAmount)})
-                            </option>
-                          ))}
-                      </optgroup>
-                      <optgroup label="Keinginan (Wants)">
-                        {budgetConfig.subcategories
-                          .filter((s) => s.group === 'keinginan')
-                          .map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.emoji} {s.name} ({formatRupiah(s.allocatedAmount)})
-                            </option>
-                          ))}
-                      </optgroup>
-                    </select>
+                      <RotateCcw size={11} />
+                      <span>{resetRecordedThisMonth ? 'Akan Direset' : 'Reset Status'}</span>
+                    </button>
                   </div>
                 )}
 
                 <div className="flex gap-2 pt-2">
                   <button
                     type="button"
-                    onClick={() => setIsAddOpen(false)}
+                    onClick={() => {
+                      setIsModalOpen(false);
+                      setEditingId(null);
+                    }}
                     className="flex-1 py-3 rounded-2xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer"
                   >
                     Batal
@@ -748,7 +1061,7 @@ export function SubscriptionsTab() {
                     type="submit"
                     className="flex-1 py-3 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black cursor-pointer"
                   >
-                    Simpan
+                    {editingId ? 'Simpan Perubahan' : 'Simpan Jadwal'}
                   </button>
                 </div>
               </form>
@@ -756,6 +1069,16 @@ export function SubscriptionsTab() {
           </div>
         )}
       </AnimatePresence>
+
+      <EmojiPickerModal
+        isOpen={isEmojiPickerOpen}
+        onClose={() => setIsEmojiPickerOpen(false)}
+        selectedEmoji={emoji}
+        onSelect={(selected) => {
+          setEmoji(selected);
+          setIsEmojiPickerOpen(false);
+        }}
+      />
     </div>
   );
 }

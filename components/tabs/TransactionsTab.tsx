@@ -145,33 +145,6 @@ export function TransactionsTab() {
         </div>
       </div>
 
-      {/* Quick AI OCR Scan Struk Banner */}
-      <div className="flex items-center justify-between p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-[#D4F826]/15 via-emerald-500/10 to-transparent border border-[#D4F826]/30 dark:border-[#D4F826]/20">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#D4F826] text-black flex items-center justify-center shrink-0 shadow-xs">
-            <Camera size={20} strokeWidth={2.4} />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-black text-gray-900 dark:text-white">Scan Struk / Bukti Transfer</span>
-              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/10 text-gray-800 dark:text-gray-200">AI OCR</span>
-            </div>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-              Foto struk belanja atau upload screenshot bukti transfer untuk catat otomatis.
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => openScanModal()}
-          className="shrink-0 ml-2 px-3.5 py-2 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black font-black text-xs shadow-xs transition-transform active:scale-95 cursor-pointer flex items-center gap-1.5"
-        >
-          <Camera size={14} strokeWidth={2.6} />
-          <span className="hidden sm:inline">Mulai Scan</span>
-          <span className="sm:hidden">Scan</span>
-        </button>
-      </div>
-
       {/* Full-Width Black Summary Card */}
       <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-6 text-white shadow-xl border border-white/5">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">

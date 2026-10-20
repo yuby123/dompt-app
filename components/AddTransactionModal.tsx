@@ -7,6 +7,7 @@ import { useApp } from './AppContext';
 import { TransactionType } from '@/lib/types';
 import { CategoryIcon } from './CategoryIcon';
 import { formatNumberOnly } from '@/lib/formatters';
+import { detectExpenseNature } from '@/lib/budgetUtils';
 
 function AddTransactionForm() {
   const {
@@ -58,6 +59,18 @@ function AddTransactionForm() {
   const [note, setNote] = useState<string>(() => editingTransaction?.transaction.note || '');
   const [activeGroup, setActiveGroup] = useState<string>('Semua');
 
+  const [expenseNature, setExpenseNature] = useState<'variable' | 'fixed'>(() => {
+    if (editingTransaction?.transaction.expenseNature) {
+      return editingTransaction.transaction.expenseNature;
+    }
+    const catId = editingTransaction?.transaction.categoryId || undefined;
+    const catMap = new Map(categories.map((c) => [c.id, c]));
+    return detectExpenseNature(catId, editingTransaction?.transaction.note, catMap);
+  });
+  const [isManualExpenseNature, setIsManualExpenseNature] = useState<boolean>(
+    Boolean(editingTransaction?.transaction.expenseNature)
+  );
+
   useEffect(() => {
     const timer = setTimeout(() => {
       amountInputRef.current?.focus();
@@ -82,7 +95,29 @@ function AddTransactionForm() {
     setActiveGroup('Semua');
     if (newType !== 'transfer') {
       const match = categories.find((c) => c.type === (newType === 'income' ? 'income' : 'expense'));
-      if (match) setSelectedCategoryId(match.id);
+      if (match) {
+        setSelectedCategoryId(match.id);
+        if (!isManualExpenseNature) {
+          const catMap = new Map(categories.map((c) => [c.id, c]));
+          setExpenseNature(detectExpenseNature(match.id, note, catMap));
+        }
+      }
+    }
+  };
+
+  const handleSelectCategory = (catId: string) => {
+    setSelectedCategoryId(catId);
+    if (!isManualExpenseNature) {
+      const catMap = new Map(categories.map((c) => [c.id, c]));
+      setExpenseNature(detectExpenseNature(catId, note, catMap));
+    }
+  };
+
+  const handleNoteChange = (newNote: string) => {
+    setNote(newNote);
+    if (!isManualExpenseNature) {
+      const catMap = new Map(categories.map((c) => [c.id, c]));
+      setExpenseNature(detectExpenseNature(selectedCategoryId, newNote, catMap));
     }
   };
 
@@ -147,6 +182,7 @@ function AddTransactionForm() {
           walletId: selectedWalletId || wallets[0]?.id || '',
           categoryId: selectedCategoryId || null,
           budgetGroup: chosenCat?.budgetGroup,
+          expenseNature: type === 'expense' ? expenseNature : undefined,
           transferWalletId: null,
           date: finalDateIso,
           note: note.trim() || undefined,
@@ -158,6 +194,7 @@ function AddTransactionForm() {
           walletId: selectedWalletId || wallets[0]?.id || '',
           categoryId: selectedCategoryId || null,
           budgetGroup: chosenCat?.budgetGroup,
+          expenseNature: type === 'expense' ? expenseNature : undefined,
           transferWalletId: null,
           date: finalDateIso,
           note: note.trim() || undefined,
@@ -439,7 +476,7 @@ function AddTransactionForm() {
                   <button
                     key={c.id}
                     type="button"
-                    onClick={() => setSelectedCategoryId(c.id)}
+                    onClick={() => handleSelectCategory(c.id)}
                     className={`flex flex-col items-center p-2 rounded-xl text-center transition-all ${
                       isSelected
                         ? 'bg-teal-50 dark:bg-teal-950/40 ring-2 ring-teal-600 text-teal-800 dark:text-teal-200 font-semibold'
@@ -456,6 +493,64 @@ function AddTransactionForm() {
                   </button>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Pos Beban Anggaran (Tagihan Bulanan vs Pengeluaran Harian) */}
+        {type === 'expense' && (
+          <div className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200/80 dark:border-gray-700/60 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                Alokasi Pos Anggaran
+              </span>
+              <span className="text-[10px] font-semibold text-gray-400">
+                {expenseNature === 'fixed' ? '📅 Pos Tagihan Tetap' : '🥪 Pos Operasional Harian'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setExpenseNature('variable');
+                  setIsManualExpenseNature(true);
+                }}
+                className={`flex items-start gap-2 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  expenseNature === 'variable'
+                    ? 'bg-white dark:bg-gray-800 border-teal-500 ring-2 ring-teal-500/20 text-gray-900 dark:text-white shadow-xs'
+                    : 'bg-transparent border-gray-200 dark:border-gray-700/60 text-gray-500 dark:text-gray-400 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
+                }`}
+              >
+                <span className="text-base">🥪</span>
+                <div>
+                  <div className="text-xs font-bold leading-tight">Pengeluaran Harian</div>
+                  <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+                    Makan, jajan, transportasi (potong budget harian)
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setExpenseNature('fixed');
+                  setIsManualExpenseNature(true);
+                }}
+                className={`flex items-start gap-2 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  expenseNature === 'fixed'
+                    ? 'bg-white dark:bg-gray-800 border-blue-500 ring-2 ring-blue-500/20 text-gray-900 dark:text-white shadow-xs'
+                    : 'bg-transparent border-gray-200 dark:border-gray-700/60 text-gray-500 dark:text-gray-400 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
+                }`}
+              >
+                <span className="text-base">📅</span>
+                <div>
+                  <div className="text-xs font-bold leading-tight">Tagihan Bulanan</div>
+                  <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+                    Wi-Fi, listrik, netflix, cicilan (TIDAK potong harian)
+                  </div>
+                </div>
+              </button>
             </div>
           </div>
         )}
@@ -484,7 +579,7 @@ function AddTransactionForm() {
               type="text"
               placeholder="Mis: Sarapan, beli bensin, dll"
               value={note}
-              onChange={(e) => setNote(e.target.value)}
+              onChange={(e) => handleNoteChange(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && currentAmount > 0) {
                   e.preventDefault();

@@ -46,6 +46,7 @@
         "amount": { "type": "number" },
         "categoryId": { "type": "string", "maxLength": 100 },
         "budgetGroup": { "type": "string", "maxLength": 50 },
+        "expenseNature": { "type": "string", "enum": ["variable", "fixed"] },
         "date": { "type": "string", "maxLength": 30 },
         "note": { "type": "string", "maxLength": 500 },
         "transferWalletId": { "type": "string", "maxLength": 128 },
@@ -94,6 +95,31 @@
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "userId", "estimatedIncome"]
+    },
+    "Debt": {
+      "title": "Debt",
+      "description": "User debt and receivable tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "type": { "type": "string", "enum": ["payable", "receivable"] },
+        "contactName": { "type": "string", "maxLength": 100 },
+        "totalAmount": { "type": "number" },
+        "remainingAmount": { "type": "number" },
+        "dueDate": { "type": "string", "maxLength": 50 },
+        "startDate": { "type": "string", "maxLength": 50 },
+        "walletId": { "type": "string", "maxLength": 128 },
+        "category": { "type": "string", "maxLength": 50 },
+        "interestRate": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "paid"] },
+        "note": { "type": "string", "maxLength": 500 },
+        "paymentsJson": { "type": "string", "maxLength": 20000 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "name", "type", "totalAmount", "remainingAmount", "dueDate", "contactName", "status"]
     }
   },
   "firestore": {
@@ -116,6 +142,10 @@
     "/users/{userId}/budgetConfig/{configId}": {
       "schema": { "$ref": "#/entities/BudgetConfig" },
       "description": "User monthly budget settings"
+    },
+    "/users/{userId}/debts/{debtId}": {
+      "schema": { "$ref": "#/entities/Debt" },
+      "description": "User debts and receivables"
     }
   }
 }

@@ -31,6 +31,7 @@ export interface Category {
   type: 'expense' | 'income';
   groupName: string;
   budgetGroup?: BudgetGroup;
+  expenseNature?: 'variable' | 'fixed'; // 'variable' (Pengeluaran Harian) | 'fixed' (Tagihan Bulanan)
   iconKey: string;
   emoji?: string;
   colorValue: string;
@@ -44,6 +45,24 @@ export interface BudgetSubcategory {
   allocatedAmount: number;
   emoji: string;
   dueDateDay?: number;
+  subscriptionId?: string;
+  isSubscriptionActive?: boolean;
+}
+
+export interface RecurringItem {
+  id: string;
+  name: string;
+  emoji: string;
+  type: 'expense' | 'income';
+  amount: number;
+  frequency: 'monthly' | 'yearly' | 'weekly';
+  billingDay: number;
+  walletId: string;
+  categoryId: string;
+  subcategoryId?: string;
+  budgetGroup?: BudgetGroup;
+  isActive: boolean;
+  lastRecordedPeriod?: string;
 }
 
 export interface BudgetConfig {
@@ -76,14 +95,34 @@ export interface Asset {
   institution?: string;
 }
 
+export interface DebtPayment {
+  id: string;
+  debtId: string;
+  amount: number;
+  date: string;
+  walletId?: string;
+  walletName?: string;
+  note?: string;
+  transactionId?: string;
+}
+
 export interface Debt {
   id: string;
   name: string;
-  type: 'payable' | 'receivable'; // Utang / Piutang
+  type: 'payable' | 'receivable'; // 'payable' (Utang Saya) | 'receivable' (Piutang / Dipinjam Orang)
+  contactName: string; // Pihak terkait (e.g. BCA, Budi, Kredivo)
   totalAmount: number;
   remainingAmount: number;
-  dueDate: string;
+  dueDate: string; // YYYY-MM-DD
+  startDate?: string;
+  walletId?: string;
+  category?: string;
+  interestRate?: number;
+  status: 'active' | 'paid';
   note?: string;
+  payments?: DebtPayment[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface UpcomingBill {
@@ -101,6 +140,7 @@ export interface Transaction {
   amount: number;
   categoryId?: string | null;
   budgetGroup?: BudgetGroup;
+  expenseNature?: 'variable' | 'fixed'; // 'variable' (Pengeluaran Harian) | 'fixed' (Tagihan Bulanan)
   walletId: string;
   transferWalletId?: string | null;
   date: string; // ISO date string
@@ -170,4 +210,13 @@ export interface DashboardSummary {
   todayExpense: number;
   emergencyFundRunwayMonths: number;
   liquidAssetsTotal: number;
+  // Pos Anggaran Terpisah: Tagihan Bulanan (Fixed) vs Pengeluaran Harian (Variable)
+  monthlyFixedBudget: number;
+  monthlyVariableBudget: number;
+  monthlyFixedExpense: number;
+  monthlyVariableExpense: number;
+  todayVariableExpense: number;
+  todayFixedExpense: number;
+  dailyOverbudget: boolean;
+  dailyOverbudgetAmount: number;
 }

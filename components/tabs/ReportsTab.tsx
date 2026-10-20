@@ -171,7 +171,50 @@ export function ReportsTab() {
   const handleDownloadExport = (e: React.FormEvent) => {
     e.preventDefault();
     if (exportFormat === 'csv') {
-      exportToCSV();
+      const startObj = startDate ? new Date(`${startDate}T00:00:00`) : null;
+      const endObj = endDate ? new Date(`${endDate}T23:59:59`) : null;
+      const walletMap = new Map(wallets.map((w) => [w.id, w.name]));
+      const catMap = new Map(categories.map((c) => [c.id, c.name]));
+
+      const matching = transactions.filter((tx) => {
+        const d = new Date(tx.date);
+        if (startObj && d < startObj) return false;
+        if (endObj && d > endObj) return false;
+        if (
+          exportWalletId !== 'all' &&
+          tx.walletId !== exportWalletId &&
+          tx.transferWalletId !== exportWalletId
+        ) {
+          return false;
+        }
+        return true;
+      });
+
+      if (matching.length === 0) {
+        exportToCSV();
+      } else {
+        const headers = ['Tanggal', 'Tipe', 'Dompet', 'Kategori', 'Nominal (Rp)', 'Catatan'];
+        const rows = matching.map((tx) => [
+          tx.date.slice(0, 10),
+          tx.type.toUpperCase(),
+          walletMap.get(tx.walletId) || tx.walletId,
+          tx.categoryId ? catMap.get(tx.categoryId) || tx.categoryId : 'Transfer',
+          String(tx.amount),
+          `"${(tx.note || '').replace(/"/g, '""')}"`,
+        ]);
+        const csvContent =
+          '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `Dompt_Laporan_${startDate}_sd_${endDate}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        addToast('Laporan CSV Diunduh', `${matching.length} transaksi berhasil diekspor.`);
+      }
     } else {
       window.print();
       addToast('Laporan PDF Siap', 'Silakan simpan sebagai PDF melalui dialog cetak.');

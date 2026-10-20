@@ -19,9 +19,10 @@ import {
   WalletWithBalance,
 } from '@/lib/types';
 import {
-   clearAllData,
+  clearAllData,
   getInitialBudgets,
   getInitialSampleTransactions,
+  loadActiveLocalUser,
   loadStoredBudgetConfig,
   loadStoredBudgets,
   loadStoredCategories,
@@ -29,7 +30,9 @@ import {
   loadStoredSettings,
   loadStoredTransactions,
   loadStoredWallets,
+  LocalAccountProfile,
   resetStorageToZero,
+  saveActiveLocalUser,
   saveStoredBudgetConfig,
   saveStoredBudgets,
   saveStoredCategories,
@@ -48,8 +51,17 @@ import {
   DEFAULT_SETTINGS,
 } from '@/lib/constants';
 import { exportTransactionsToCSV } from '@/lib/formatters';
-import { auth, googleProvider, testConnection } from '@/lib/firebase';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
+import {
+  auth,
+  googleProvider,
+  testConnection,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+  User,
+} from '@/lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 import {
   syncUserProfile,
   fetchUserWallets,
@@ -200,12 +212,13 @@ interface AppContextType {
   resetAllAppData: () => void;
 
   // Auth & Multi-User Support
-  user: User | null;
+  user: (User & { isLocalAccount?: boolean }) | LocalAccountProfile | null;
   authLoading: boolean;
   isLoginModalOpen: boolean;
   setIsLoginModalOpen: (open: boolean) => void;
   openLoginModal: () => void;
   signInWithGoogle: () => Promise<void>;
+  signInWithLocalAccount: (name: string, email: string) => void;
   signOutUser: () => Promise<void>;
   dataResetVersion: number;
 }
@@ -260,26 +273,97 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [editingSubcategoryGroup, setEditingSubcategoryGroup] = useState<BudgetGroup>('kebutuhan');
 
   // Auth & Multi-User State
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<(User & { isLocalAccount?: boolean }) | LocalAccountProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
 
   const openLoginModal = () => setIsLoginModalOpen(true);
+
+  const isCloudUser = Boolean(user?.uid && !(user as any).isLocalAccount);
+  const localScopeUid = (user as any)?.isLocalAccount ? user?.uid : undefined;
+
+  // Security / App Lock & Toasts
+  const [isLocked, setIsLocked] = useState(false);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const addToast = (title: string, message?: string, type: 'success' | 'error' | 'info' = 'success') => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    setToasts((prev) => [...prev, { id, title, message, type }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3500);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  // Sign In with Local Account (Instant Multi-User Login on Vercel / any domain)
+  const signInWithLocalAccount = (name: string, email: string) => {
+    const cleanName = name.trim() || 'Pengguna Dompt';
+    const cleanEmail = email.trim().toLowerCase();
+    const safeId = cleanEmail.replace(/[^a-z0-9]/g, '_');
+    const profile: LocalAccountProfile = {
+      uid: `local_${safeId}`,
+      displayName: cleanName,
+      email: cleanEmail,
+      photoURL: null,
+      isLocalAccount: true,
+      createdAt: new Date().toISOString(),
+    };
+    saveActiveLocalUser(profile);
+    setUser(profile);
+    setWallets(loadStoredWallets(profile.uid));
+    setTransactions(loadStoredTransactions(profile.uid));
+    setGoals(loadStoredGoals(profile.uid));
+    setBudgetConfig(loadStoredBudgetConfig(profile.uid));
+    setSettings((prev) => {
+      const next = {
+        ...prev,
+        userName: cleanName,
+        userEmail: cleanEmail,
+        hideBalance: false,
+      };
+      saveStoredSettings(next);
+      return next;
+    });
+    setDataResetVersion((v) => v + 1);
+    addToast(
+      'Login Berhasil',
+      `Selamat datang, ${cleanName}! Ruang catatan pribadi Anda telah aktif.`,
+      'success'
+    );
+  };
 
   // Sign In with Google
   const signInWithGoogle = async () => {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       if (result.user) {
+        saveActiveLocalUser(null);
         addToast(
           'Login Berhasil',
-          `Selamat datang, ${result.user.displayName || 'Pengguna'}! Akun Anda aktif.`,
+          `Selamat datang, ${result.user.displayName || 'Pengguna'}! Akun Cloud Anda aktif.`,
           'success'
         );
       }
     } catch (err: any) {
       console.error('Google sign in error:', err);
-      addToast('Gagal Masuk', err?.message || 'Tidak dapat menyelesaikan login Google.', 'error');
+      const code = err?.code || '';
+      if (code === 'auth/popup-blocked') {
+        addToast('Membuka Halaman Login...', 'Popup diblokir browser, mengalihkan ke halaman login Google...', 'info');
+        await signInWithRedirect(auth, googleProvider);
+        return;
+      }
+      if (code === 'auth/unauthorized-domain') {
+        addToast(
+          'Domain Vercel Belum Diotorisasi di Firebase',
+          'Gunakan Masuk Cepat (Email & Nama) atau tambahkan domain Vercel ke Firebase Console.',
+          'info'
+        );
+      } else if (code !== 'auth/popup-closed-by-user' && code !== 'auth/cancelled-popup-request') {
+        addToast('Gagal Masuk Google', err?.message || 'Tidak dapat menyelesaikan login Google.', 'error');
+      }
       throw err;
     }
   };
@@ -287,7 +371,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Sign Out
   const signOutUser = async () => {
     try {
-      await signOut(auth);
+      saveActiveLocalUser(null);
+      if (auth.currentUser) {
+        await signOut(auth);
+      }
       setUser(null);
       // Revert to local initial storage
       setWallets(loadStoredWallets());
@@ -303,30 +390,54 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Security / App Lock
-  const [isLocked, setIsLocked] = useState(false);
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-
   // Hydrate local storage data on client mount
   useEffect(() => {
-    const storedSettings = loadStoredSettings();
-    setWallets(loadStoredWallets());
-    setCategories(loadStoredCategories());
-    setTransactions(loadStoredTransactions());
-    setBudgets(loadStoredBudgets());
-    setBudgetConfig(loadStoredBudgetConfig());
-    setGoals(loadStoredGoals());
-    setSettings(storedSettings);
-    setIsLocked(Boolean(storedSettings.pinEnabled));
+    queueMicrotask(() => {
+      const storedSettings = loadStoredSettings();
+      const activeLocal = loadActiveLocalUser();
+      const scope = activeLocal?.uid;
+      if (activeLocal) {
+        setUser(activeLocal);
+      }
+      setWallets(loadStoredWallets(scope));
+      setCategories(loadStoredCategories());
+      setTransactions(loadStoredTransactions(scope));
+      setBudgets(loadStoredBudgets(scope));
+      setBudgetConfig(loadStoredBudgetConfig(scope));
+      setGoals(loadStoredGoals(scope));
+      setSettings(
+        activeLocal
+          ? {
+              ...storedSettings,
+              userName: activeLocal.displayName || storedSettings.userName,
+              userEmail: activeLocal.email || storedSettings.userEmail,
+            }
+          : storedSettings
+      );
+      setIsLocked(Boolean(storedSettings.pinEnabled));
+    });
   }, []);
 
   // Firebase auth & data synchronization
   useEffect(() => {
     testConnection().catch((err) => console.warn('Firebase test connection:', err));
+    getRedirectResult(auth)
+      .then((res) => {
+        if (res?.user) {
+          saveActiveLocalUser(null);
+          addToast(
+            'Login Berhasil',
+            `Selamat datang, ${res.user.displayName || 'Pengguna'}!`,
+            'success'
+          );
+        }
+      })
+      .catch((err) => console.warn('Redirect sign-in check:', err));
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
       if (currentUser) {
+        saveActiveLocalUser(null);
+        setUser(currentUser);
         setAuthLoading(true);
         try {
           await syncUserProfile(currentUser);
@@ -355,6 +466,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setAuthLoading(false);
         }
       } else {
+        const activeLocal = loadActiveLocalUser();
+        if (activeLocal) {
+          setUser(activeLocal);
+        } else {
+          setUser(null);
+        }
         setAuthLoading(false);
       }
     });
@@ -386,18 +503,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     applyThemeToDOM(settings.themeMode, settings.accentColor);
   }, [settings.themeMode, settings.accentColor]);
-
-  const addToast = (title: string, message?: string, type: 'success' | 'error' | 'info' = 'success') => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    setToasts((prev) => [...prev, { id, title, message, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3500);
-  };
-
-  const removeToast = (id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  };
 
   // Calculate wallet balances
   const walletsWithBalance = useMemo<WalletWithBalance[]>(() => {
@@ -592,13 +697,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     setTransactions((prev) => {
       const updated = [newTx, ...prev];
-      if (!user?.uid) {
-        saveStoredTransactions(updated);
+      if (!isCloudUser) {
+        saveStoredTransactions(updated, localScopeUid);
       }
       return updated;
     });
 
-    if (user?.uid) {
+    if (isCloudUser && user?.uid) {
       saveUserTransaction(user.uid, newTx).catch((err) =>
         console.error('Error saving transaction to Firestore:', err)
       );
@@ -617,13 +722,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         return t;
       });
-      if (!user?.uid) {
-        saveStoredTransactions(updated);
+      if (!isCloudUser) {
+        saveStoredTransactions(updated, localScopeUid);
       }
       return updated;
     });
 
-    if (user?.uid && targetTx) {
+    if (isCloudUser && user?.uid && targetTx) {
       saveUserTransaction(user.uid, targetTx).catch((err) =>
         console.error('Error updating transaction in Firestore:', err)
       );
@@ -635,13 +740,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteTransaction = (id: string) => {
     setTransactions((prev) => {
       const updated = prev.filter((t) => t.id !== id);
-      if (!user?.uid) {
-        saveStoredTransactions(updated);
+      if (!isCloudUser) {
+        saveStoredTransactions(updated, localScopeUid);
       }
       return updated;
     });
 
-    if (user?.uid) {
+    if (isCloudUser && user?.uid) {
       deleteUserTransaction(user.uid, id).catch((err) =>
         console.error('Error deleting transaction from Firestore:', err)
       );
@@ -661,9 +766,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     const updated = [...wallets, newW];
     setWallets(updated);
-    if (!user?.uid) {
-      saveStoredWallets(updated);
-    } else {
+    if (!isCloudUser) {
+      saveStoredWallets(updated, localScopeUid);
+    } else if (user?.uid) {
       saveUserWallet(user.uid, newW).catch((err) =>
         console.error('Error saving wallet to Firestore:', err)
       );
@@ -681,9 +786,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return w;
     });
     setWallets(updated);
-    if (!user?.uid) {
-      saveStoredWallets(updated);
-    } else if (targetW) {
+    if (!isCloudUser) {
+      saveStoredWallets(updated, localScopeUid);
+    } else if (user?.uid && targetW) {
       saveUserWallet(user.uid, targetW).catch((err) =>
         console.error('Error updating wallet in Firestore:', err)
       );
@@ -698,9 +803,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     const updated = wallets.filter((w) => w.id !== id);
     setWallets(updated);
-    if (!user?.uid) {
-      saveStoredWallets(updated);
-    } else {
+    if (!isCloudUser) {
+      saveStoredWallets(updated, localScopeUid);
+    } else if (user?.uid) {
       deleteUserWallet(user.uid, id).catch((err) =>
         console.error('Error deleting wallet from Firestore:', err)
       );
@@ -722,9 +827,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     const updated = [...goals, newG];
     setGoals(updated);
-    if (!user?.uid) {
-      saveStoredGoals(updated);
-    } else {
+    if (!isCloudUser) {
+      saveStoredGoals(updated, localScopeUid);
+    } else if (user?.uid) {
       saveUserGoal(user.uid, newG).catch((err) =>
         console.error('Error saving goal to Firestore:', err)
       );
@@ -742,9 +847,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return g;
     });
     setGoals(updated);
-    if (!user?.uid) {
-      saveStoredGoals(updated);
-    } else if (targetG) {
+    if (!isCloudUser) {
+      saveStoredGoals(updated, localScopeUid);
+    } else if (user?.uid && targetG) {
       saveUserGoal(user.uid, targetG).catch((err) =>
         console.error('Error updating goal in Firestore:', err)
       );
@@ -755,9 +860,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteGoal = (id: string) => {
     const updated = goals.filter((g) => g.id !== id);
     setGoals(updated);
-    if (!user?.uid) {
-      saveStoredGoals(updated);
-    } else {
+    if (!isCloudUser) {
+      saveStoredGoals(updated, localScopeUid);
+    } else if (user?.uid) {
       deleteUserGoal(user.uid, id).catch((err) =>
         console.error('Error deleting goal from Firestore:', err)
       );
@@ -777,9 +882,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateBudgetConfig = (data: Partial<BudgetConfig>) => {
     const updated = { ...budgetConfig, ...data };
     setBudgetConfig(updated);
-    if (!user?.uid) {
-      saveStoredBudgetConfig(updated);
-    } else {
+    if (!isCloudUser) {
+      saveStoredBudgetConfig(updated, localScopeUid);
+    } else if (user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
         console.error('Error saving budget config to Firestore:', err)
       );
@@ -797,9 +902,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       subcategories: [...budgetConfig.subcategories, newSub],
     };
     setBudgetConfig(updated);
-    if (!user?.uid) {
-      saveStoredBudgetConfig(updated);
-    } else {
+    if (!isCloudUser) {
+      saveStoredBudgetConfig(updated, localScopeUid);
+    } else if (user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
         console.error('Error saving budget config to Firestore:', err)
       );
@@ -811,9 +916,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const updatedSub = budgetConfig.subcategories.map((s) => (s.id === id ? { ...s, ...data } : s));
     const updated = { ...budgetConfig, subcategories: updatedSub };
     setBudgetConfig(updated);
-    if (!user?.uid) {
-      saveStoredBudgetConfig(updated);
-    } else {
+    if (!isCloudUser) {
+      saveStoredBudgetConfig(updated, localScopeUid);
+    } else if (user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
         console.error('Error saving budget config to Firestore:', err)
       );
@@ -825,9 +930,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const updatedSub = budgetConfig.subcategories.filter((s) => s.id !== id);
     const updated = { ...budgetConfig, subcategories: updatedSub };
     setBudgetConfig(updated);
-    if (!user?.uid) {
-      saveStoredBudgetConfig(updated);
-    } else {
+    if (!isCloudUser) {
+      saveStoredBudgetConfig(updated, localScopeUid);
+    } else if (user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
         console.error('Error saving budget config to Firestore:', err)
       );
@@ -860,13 +965,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     setTransactions((prev) => {
       const updated = [tx, ...prev];
-      if (!user?.uid) {
-        saveStoredTransactions(updated);
+      if (!isCloudUser) {
+        saveStoredTransactions(updated, localScopeUid);
       }
       return updated;
     });
 
-    if (user?.uid) {
+    if (isCloudUser && user?.uid) {
       saveUserTransaction(user.uid, tx).catch((err) =>
         console.error('Error saving transfer transaction to Firestore:', err)
       );
@@ -1037,7 +1142,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           // ignore
         }
       }
-      if (user?.uid) {
+      if (isCloudUser && user?.uid) {
         addToast('Mereset Data...', 'Sedang membersihkan catatan di cloud Firestore...', 'info');
         const cleanWallets = await resetUserFirestoreData(user.uid);
         if (cleanWallets && cleanWallets.length > 0) {
@@ -1050,19 +1155,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setDataResetVersion((v) => v + 1);
         addToast('Data Cloud Direset', 'Semua catatan di akun cloud Anda berhasil dikosongkan ke 0.', 'success');
       } else {
-        clearAllData();
-        resetStorageToZero();
-        const cleanW = loadStoredWallets();
+        clearAllData(localScopeUid);
+        resetStorageToZero(localScopeUid);
+        const cleanW = loadStoredWallets(localScopeUid);
         setWallets(cleanW);
         setCategories(loadStoredCategories());
         setTransactions([]);
         setBudgets([]);
         setBudgetConfig(EMPTY_BUDGET_CONFIG);
         setGoals([]);
-        setSettings(loadStoredSettings());
+        if (!localScopeUid) {
+          setSettings(loadStoredSettings());
+        } else {
+          setSettings((prev) => ({ ...prev, hideBalance: false }));
+        }
         setIsLocked(false);
         setDataResetVersion((v) => v + 1);
-        addToast('Data Direset', 'Semua data telah dikosongkan menjadi 0.');
+        addToast('Data Direset', 'Semua data akun telah dikosongkan menjadi 0.');
       }
     } catch (err: any) {
       console.error('Error resetting app data:', err);
@@ -1168,6 +1277,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setIsLoginModalOpen,
         openLoginModal,
         signInWithGoogle,
+        signInWithLocalAccount,
         signOutUser,
         dataResetVersion,
       }}

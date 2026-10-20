@@ -354,25 +354,112 @@ export function getInitialBudgets(): Budget[] {
   ];
 }
 
-export function loadStoredWallets(): Wallet[] {
-  if (typeof window === 'undefined') return DEFAULT_WALLETS;
+export interface LocalAccountProfile {
+  uid: string;
+  displayName: string;
+  email: string;
+  photoURL: string | null;
+  isLocalAccount: true;
+  createdAt: string;
+}
+
+const ACTIVE_LOCAL_USER_KEY = 'budggt_active_local_user';
+const LOCAL_ACCOUNTS_LIST_KEY = 'budggt_local_accounts_list';
+
+function getScopedKey(baseKey: string, scopeUid?: string): string {
+  return scopeUid ? `${baseKey}_${scopeUid}` : baseKey;
+}
+
+export function getCleanDefaultWallets(): Wallet[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: 'wallet-cash-main',
+      name: 'Dompet Tunai',
+      type: 'cash',
+      initialBalance: 0,
+      reservedAmount: 0,
+      color: '#16A34A',
+      icon: 'Banknote',
+      isVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'wallet-bank-main',
+      name: 'Rekening Bank',
+      type: 'bank',
+      initialBalance: 0,
+      reservedAmount: 0,
+      color: '#005E9E',
+      icon: 'Landmark',
+      isVerified: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+}
+
+export function loadActiveLocalUser(): LocalAccountProfile | null {
+  if (typeof window === 'undefined') return null;
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.WALLETS);
+    const raw = localStorage.getItem(ACTIVE_LOCAL_USER_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function saveActiveLocalUser(profile: LocalAccountProfile | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (!profile) {
+      localStorage.removeItem(ACTIVE_LOCAL_USER_KEY);
+      return;
+    }
+    localStorage.setItem(ACTIVE_LOCAL_USER_KEY, JSON.stringify(profile));
+    const listRaw = localStorage.getItem(LOCAL_ACCOUNTS_LIST_KEY);
+    const list: LocalAccountProfile[] = listRaw ? JSON.parse(listRaw) : [];
+    const filtered = list.filter((item) => item.uid !== profile.uid);
+    localStorage.setItem(LOCAL_ACCOUNTS_LIST_KEY, JSON.stringify([profile, ...filtered]));
+  } catch (err) {
+    console.error('Failed to save active local user:', err);
+  }
+}
+
+export function loadSavedLocalAccounts(): LocalAccountProfile[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(LOCAL_ACCOUNTS_LIST_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function loadStoredWallets(scopeUid?: string): Wallet[] {
+  if (typeof window === 'undefined') return scopeUid ? getCleanDefaultWallets() : DEFAULT_WALLETS;
+  try {
+    const key = getScopedKey(STORAGE_KEYS.WALLETS, scopeUid);
+    const raw = localStorage.getItem(key);
     if (!raw) {
-      saveStoredWallets(DEFAULT_WALLETS);
-      return DEFAULT_WALLETS;
+      const initial = scopeUid ? getCleanDefaultWallets() : DEFAULT_WALLETS;
+      saveStoredWallets(initial, scopeUid);
+      return initial;
     }
     return JSON.parse(raw);
   } catch (err) {
     console.error('Failed to load wallets from localStorage:', err);
-    return DEFAULT_WALLETS;
+    return scopeUid ? getCleanDefaultWallets() : DEFAULT_WALLETS;
   }
 }
 
-export function saveStoredWallets(wallets: Wallet[]): void {
+export function saveStoredWallets(wallets: Wallet[], scopeUid?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEYS.WALLETS, JSON.stringify(wallets));
+    const key = getScopedKey(STORAGE_KEYS.WALLETS, scopeUid);
+    localStorage.setItem(key, JSON.stringify(wallets));
   } catch (err) {
     console.error('Failed to save wallets to localStorage:', err);
   }
@@ -402,105 +489,115 @@ export function saveStoredCategories(categories: Category[]): void {
   }
 }
 
-export function loadStoredTransactions(): Transaction[] {
-  if (typeof window === 'undefined') return getInitialSampleTransactions();
+export function loadStoredTransactions(scopeUid?: string): Transaction[] {
+  if (typeof window === 'undefined') return scopeUid ? [] : getInitialSampleTransactions();
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.TRANSACTIONS);
+    const key = getScopedKey(STORAGE_KEYS.TRANSACTIONS, scopeUid);
+    const raw = localStorage.getItem(key);
     if (!raw) {
-      const initial = getInitialSampleTransactions();
-      saveStoredTransactions(initial);
+      const initial = scopeUid ? [] : getInitialSampleTransactions();
+      saveStoredTransactions(initial, scopeUid);
       return initial;
     }
     const parsed: Transaction[] = JSON.parse(raw);
     if (!Array.isArray(parsed)) {
-      const initial = getInitialSampleTransactions();
-      saveStoredTransactions(initial);
+      const initial = scopeUid ? [] : getInitialSampleTransactions();
+      saveStoredTransactions(initial, scopeUid);
       return initial;
     }
     return parsed;
   } catch (err) {
     console.error('Failed to load transactions:', err);
-    return getInitialSampleTransactions();
+    return scopeUid ? [] : getInitialSampleTransactions();
   }
 }
 
-export function saveStoredTransactions(transactions: Transaction[]): void {
+export function saveStoredTransactions(transactions: Transaction[], scopeUid?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(transactions));
+    const key = getScopedKey(STORAGE_KEYS.TRANSACTIONS, scopeUid);
+    localStorage.setItem(key, JSON.stringify(transactions));
   } catch (err) {
     console.error('Failed to save transactions:', err);
   }
 }
 
-export function loadStoredBudgets(): Budget[] {
-  if (typeof window === 'undefined') return getInitialBudgets();
+export function loadStoredBudgets(scopeUid?: string): Budget[] {
+  if (typeof window === 'undefined') return scopeUid ? [] : getInitialBudgets();
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.BUDGETS);
+    const key = getScopedKey(STORAGE_KEYS.BUDGETS, scopeUid);
+    const raw = localStorage.getItem(key);
     if (!raw) {
-      const initial = getInitialBudgets();
-      saveStoredBudgets(initial);
+      const initial = scopeUid ? [] : getInitialBudgets();
+      saveStoredBudgets(initial, scopeUid);
       return initial;
     }
     return JSON.parse(raw);
   } catch (err) {
     console.error('Failed to load budgets:', err);
-    return getInitialBudgets();
+    return scopeUid ? [] : getInitialBudgets();
   }
 }
 
-export function saveStoredBudgets(budgets: Budget[]): void {
+export function saveStoredBudgets(budgets: Budget[], scopeUid?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEYS.BUDGETS, JSON.stringify(budgets));
+    const key = getScopedKey(STORAGE_KEYS.BUDGETS, scopeUid);
+    localStorage.setItem(key, JSON.stringify(budgets));
   } catch (err) {
     console.error('Failed to save budgets:', err);
   }
 }
 
-export function loadStoredBudgetConfig(): BudgetConfig {
-  if (typeof window === 'undefined') return DEFAULT_BUDGET_CONFIG;
+export function loadStoredBudgetConfig(scopeUid?: string): BudgetConfig {
+  if (typeof window === 'undefined') return scopeUid ? EMPTY_BUDGET_CONFIG : DEFAULT_BUDGET_CONFIG;
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.BUDGET_CONFIG);
+    const key = getScopedKey(STORAGE_KEYS.BUDGET_CONFIG, scopeUid);
+    const raw = localStorage.getItem(key);
     if (!raw) {
-      saveStoredBudgetConfig(DEFAULT_BUDGET_CONFIG);
-      return DEFAULT_BUDGET_CONFIG;
+      const initial = scopeUid ? EMPTY_BUDGET_CONFIG : DEFAULT_BUDGET_CONFIG;
+      saveStoredBudgetConfig(initial, scopeUid);
+      return initial;
     }
     return JSON.parse(raw);
   } catch (err) {
     console.error('Failed to load budget config:', err);
-    return DEFAULT_BUDGET_CONFIG;
+    return scopeUid ? EMPTY_BUDGET_CONFIG : DEFAULT_BUDGET_CONFIG;
   }
 }
 
-export function saveStoredBudgetConfig(config: BudgetConfig): void {
+export function saveStoredBudgetConfig(config: BudgetConfig, scopeUid?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEYS.BUDGET_CONFIG, JSON.stringify(config));
+    const key = getScopedKey(STORAGE_KEYS.BUDGET_CONFIG, scopeUid);
+    localStorage.setItem(key, JSON.stringify(config));
   } catch (err) {
     console.error('Failed to save budget config:', err);
   }
 }
 
-export function loadStoredGoals(): Goal[] {
-  if (typeof window === 'undefined') return DEFAULT_GOALS;
+export function loadStoredGoals(scopeUid?: string): Goal[] {
+  if (typeof window === 'undefined') return scopeUid ? [] : DEFAULT_GOALS;
   try {
-    const raw = localStorage.getItem(STORAGE_KEYS.GOALS);
+    const key = getScopedKey(STORAGE_KEYS.GOALS, scopeUid);
+    const raw = localStorage.getItem(key);
     if (!raw) {
-      saveStoredGoals(DEFAULT_GOALS);
-      return DEFAULT_GOALS;
+      const initial = scopeUid ? [] : DEFAULT_GOALS;
+      saveStoredGoals(initial, scopeUid);
+      return initial;
     }
     return JSON.parse(raw);
   } catch (err) {
     console.error('Failed to load goals:', err);
-    return DEFAULT_GOALS;
+    return scopeUid ? [] : DEFAULT_GOALS;
   }
 }
 
-export function saveStoredGoals(goals: Goal[]): void {
+export function saveStoredGoals(goals: Goal[], scopeUid?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_KEYS.GOALS, JSON.stringify(goals));
+    const key = getScopedKey(STORAGE_KEYS.GOALS, scopeUid);
+    localStorage.setItem(key, JSON.stringify(goals));
   } catch (err) {
     console.error('Failed to save goals:', err);
   }
@@ -530,62 +627,43 @@ export function saveStoredSettings(settings: AppSettings): void {
   }
 }
 
-export function clearAllData(): void {
+export function clearAllData(scopeUid?: string): void {
   if (typeof window === 'undefined') return;
   try {
-    Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
-    localStorage.removeItem('budggt_assets_liquid');
-    localStorage.removeItem('budggt_assets_fixed');
-    localStorage.removeItem('budggt_debts');
-    localStorage.removeItem('budggt_investments');
+    Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(getScopedKey(k, scopeUid)));
+    const suffix = scopeUid ? `_${scopeUid}` : '';
+    localStorage.removeItem(`budggt_assets_liquid${suffix}`);
+    localStorage.removeItem(`budggt_assets_fixed${suffix}`);
+    localStorage.removeItem(`budggt_debts${suffix}`);
+    localStorage.removeItem(`budggt_investments${suffix}`);
+    localStorage.removeItem(`budggt_subscriptions${suffix}`);
   } catch (err) {
     console.error('Failed to clear storage:', err);
   }
 }
 
-export function resetStorageToZero(): void {
-  const now = new Date().toISOString();
-  const cleanWallets: Wallet[] = [
-    {
-      id: 'wallet-cash-main',
-      name: 'Dompet Tunai',
-      type: 'cash',
-      initialBalance: 0,
-      reservedAmount: 0,
-      color: '#16A34A',
-      icon: 'Banknote',
-      isVerified: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-    {
-      id: 'wallet-bank-main',
-      name: 'Rekening Bank',
-      type: 'bank',
-      initialBalance: 0,
-      reservedAmount: 0,
-      color: '#005E9E',
-      icon: 'Landmark',
-      isVerified: true,
-      createdAt: now,
-      updatedAt: now,
-    },
-  ];
-  saveStoredWallets(cleanWallets);
+export function resetStorageToZero(scopeUid?: string): void {
+  const cleanWallets = getCleanDefaultWallets();
+  saveStoredWallets(cleanWallets, scopeUid);
   saveStoredCategories(DEFAULT_CATEGORIES);
-  saveStoredTransactions([]);
-  saveStoredBudgets([]);
-  saveStoredBudgetConfig(EMPTY_BUDGET_CONFIG);
-  saveStoredGoals([]);
-  saveStoredSettings({ ...DEFAULT_SETTINGS, hideBalance: false });
+  saveStoredTransactions([], scopeUid);
+  saveStoredBudgets([], scopeUid);
+  saveStoredBudgetConfig(EMPTY_BUDGET_CONFIG, scopeUid);
+  saveStoredGoals([], scopeUid);
+  if (!scopeUid) {
+    saveStoredSettings({ ...DEFAULT_SETTINGS, hideBalance: false });
+  }
   if (typeof window !== 'undefined') {
     try {
-      localStorage.setItem('budggt_assets_liquid', JSON.stringify([]));
-      localStorage.setItem('budggt_assets_fixed', JSON.stringify([]));
-      localStorage.setItem('budggt_debts', JSON.stringify([]));
-      localStorage.setItem('budggt_investments', JSON.stringify([]));
+      const suffix = scopeUid ? `_${scopeUid}` : '';
+      localStorage.setItem(`budggt_assets_liquid${suffix}`, JSON.stringify([]));
+      localStorage.setItem(`budggt_assets_fixed${suffix}`, JSON.stringify([]));
+      localStorage.setItem(`budggt_debts${suffix}`, JSON.stringify([]));
+      localStorage.setItem(`budggt_investments${suffix}`, JSON.stringify([]));
+      localStorage.setItem(`budggt_subscriptions${suffix}`, JSON.stringify([]));
     } catch {
       // ignore
     }
   }
 }
+

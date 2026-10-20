@@ -57,11 +57,14 @@ export function DashboardTab() {
   const userName = settings.userName || 'Trisna';
 
   // Quick greetings (hydrated on client to avoid server/client timezone mismatch)
-  const [greetingEmoji, setGreetingEmoji] = useState<string>('☀️');
-  React.useEffect(() => {
-    const currentHour = new Date().getHours();
-    setGreetingEmoji(currentHour >= 18 || currentHour < 5 ? '🌙' : currentHour >= 12 ? '☀️' : '🌅');
-  }, []);
+  const greetingEmoji = React.useSyncExternalStore(
+    () => () => {},
+    () => {
+      const currentHour = new Date().getHours();
+      return currentHour >= 18 || currentHour < 5 ? '🌙' : currentHour >= 12 ? '☀️' : '🌅';
+    },
+    () => '☀️'
+  );
 
   const refDateObj = useMemo(() => new Date(activeDate + 'T12:00:00'), [activeDate]);
   const currentDay = activeDay;
@@ -800,8 +803,11 @@ export function DashboardTab() {
 
           <div className="divide-y divide-gray-100 dark:divide-gray-800/60">
             {transactionDetails.slice(0, 6).map((detail) => {
-              const { transaction, wallet, category } = detail;
+              const { transaction, wallet, category, transferWallet } = detail;
               const isExpanded = selectedTxId === transaction.id;
+              const isExpense = transaction.type === 'expense';
+              const isIncome = transaction.type === 'income';
+              const isTransfer = transaction.type === 'transfer';
 
               return (
                 <div
@@ -812,11 +818,11 @@ export function DashboardTab() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3.5 min-w-0">
                       <div className="w-10 h-10 rounded-full bg-[#FFE4E8] dark:bg-[#3D1E24] text-lg flex items-center justify-center shrink-0">
-                        {category?.emoji || '☕'}
+                        {category?.emoji || (isTransfer ? '🔄' : isIncome ? '💰' : '☕')}
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs lg:text-sm font-extrabold text-gray-900 dark:text-white truncate">
-                          {transaction.note || category?.name || 'Transaksi'}
+                          {transaction.note || category?.name || (isTransfer ? 'Transfer Antar Dompet' : 'Transaksi')}
                         </p>
                         <p className="text-[10px] lg:text-[11px] text-gray-400 mt-0.5">
                           {formatFullDateIndo(transaction.date)}
@@ -825,8 +831,16 @@ export function DashboardTab() {
                     </div>
 
                     <div className="text-right shrink-0">
-                      <span className="text-xs lg:text-sm font-black text-gray-900 dark:text-white tabular-nums">
-                        {transaction.type === 'expense' ? '-' : '+'}
+                      <span
+                        className={`text-xs lg:text-sm font-black tabular-nums ${
+                          isExpense
+                            ? 'text-gray-900 dark:text-white'
+                            : isIncome
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-blue-600 dark:text-blue-400'
+                        }`}
+                      >
+                        {isExpense ? '-' : isIncome ? '+' : ''}
                         {hide ? 'Rp •••••••' : formatRupiah(transaction.amount, false)}
                       </span>
                     </div>
@@ -850,10 +864,12 @@ export function DashboardTab() {
                         </div>
                         <div>
                           <span className="text-gray-400 block text-[9px] uppercase font-bold">
-                            KATEGORI
+                            {isTransfer ? 'KE DOMPET' : 'KATEGORI'}
                           </span>
                           <span className="font-extrabold text-gray-800 dark:text-gray-200">
-                            {category?.emoji} {category?.name || 'Lainnya'}
+                            {isTransfer
+                              ? transferWallet?.name || 'Dompet Tujuan'
+                              : `${category?.emoji || ''} ${category?.name || 'Lainnya'}`}
                           </span>
                         </div>
                       </div>

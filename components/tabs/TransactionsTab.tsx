@@ -42,17 +42,22 @@ export function TransactionsTab() {
   // Filter transactions
   const filteredTransactions = useMemo(() => {
     return transactionDetails.filter((detail) => {
-      const { transaction, wallet, category } = detail;
+      const { transaction, wallet, category, transferWallet } = detail;
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const noteMatch = (transaction.note || '').toLowerCase().includes(q);
         const catMatch = (category?.name || '').toLowerCase().includes(q);
         const walletMatch = wallet.name.toLowerCase().includes(q);
-        if (!noteMatch && !catMatch && !walletMatch) return false;
+        const transferWalletMatch = (transferWallet?.name || '').toLowerCase().includes(q);
+        if (!noteMatch && !catMatch && !walletMatch && !transferWalletMatch) return false;
       }
 
-      if (selectedWalletId !== 'all' && transaction.walletId !== selectedWalletId) {
+      if (
+        selectedWalletId !== 'all' &&
+        transaction.walletId !== selectedWalletId &&
+        transaction.transferWalletId !== selectedWalletId
+      ) {
         return false;
       }
 

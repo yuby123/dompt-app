@@ -359,18 +359,7 @@ export function BudgetTab() {
                   <div className="absolute right-0 top-8 z-20 bg-white dark:bg-[#1E2026] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[130px] text-xs font-bold space-y-1">
                     <button
                       type="button"
-                      onClick={() => {
-                        const newLimit = prompt(
-                          `Ubah limit alokasi untuk ${sub.name}:`,
-                          String(sub.allocatedAmount)
-                        );
-                        if (newLimit) {
-                          updateBudgetSubcategory(sub.id, {
-                            allocatedAmount: Number(newLimit.replace(/\D/g, '')),
-                          });
-                        }
-                        setActiveMenuSubId(null);
-                      }}
+                      onClick={() => openEditSub(sub)}
                       className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
                     >
                       <Pencil size={12} />
@@ -483,18 +472,7 @@ export function BudgetTab() {
                   <div className="absolute right-0 top-8 z-20 bg-white dark:bg-[#1E2026] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[130px] text-xs font-bold space-y-1">
                     <button
                       type="button"
-                      onClick={() => {
-                        const newLimit = prompt(
-                          `Ubah limit alokasi untuk ${sub.name}:`,
-                          String(sub.allocatedAmount)
-                        );
-                        if (newLimit) {
-                          updateBudgetSubcategory(sub.id, {
-                            allocatedAmount: Number(newLimit.replace(/\D/g, '')),
-                          });
-                        }
-                        setActiveMenuSubId(null);
-                      }}
+                      onClick={() => openEditSub(sub)}
                       className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
                     >
                       <Pencil size={12} />
@@ -605,18 +583,7 @@ export function BudgetTab() {
                   <div className="absolute right-0 top-8 z-20 bg-white dark:bg-[#1E2026] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[130px] text-xs font-bold space-y-1">
                     <button
                       type="button"
-                      onClick={() => {
-                        const newLimit = prompt(
-                          `Ubah limit alokasi untuk ${sub.name}:`,
-                          String(sub.allocatedAmount)
-                        );
-                        if (newLimit) {
-                          updateBudgetSubcategory(sub.id, {
-                            allocatedAmount: Number(newLimit.replace(/\D/g, '')),
-                          });
-                        }
-                        setActiveMenuSubId(null);
-                      }}
+                      onClick={() => openEditSub(sub)}
                       className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
                     >
                       <Pencil size={12} />

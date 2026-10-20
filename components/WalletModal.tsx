@@ -12,6 +12,8 @@ const WALLET_TYPE_OPTIONS: { type: WalletType; label: string; icon: string; defa
   { type: 'bank', label: 'Rekening Bank', icon: 'Landmark', defaultColor: '#2563EB' },
   { type: 'savings', label: 'Tabungan', icon: 'PiggyBank', defaultColor: '#8B5CF6' },
   { type: 'investment', label: 'Investasi', icon: 'TrendingUp', defaultColor: '#EC4899' },
+  { type: 'credit', label: 'Kartu Kredit', icon: 'CreditCard', defaultColor: '#DC2626' },
+  { type: 'paylater', label: 'Paylater', icon: 'CalendarClock', defaultColor: '#EA580C' },
   { type: 'other', label: 'Lainnya', icon: 'Wallet', defaultColor: '#6B7280' },
 ];
 
@@ -26,11 +28,14 @@ function WalletModalForm() {
   const [color, setColor] = useState(() => editingWallet?.color || '#0F766E');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const isDebtType = type === 'credit' || type === 'paylater';
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
-    const balanceNum = parseInt(initialBalance, 10) || 0;
+    const rawNum = parseInt(initialBalance, 10) || 0;
+    const balanceNum = isDebtType && rawNum > 0 ? -Math.abs(rawNum) : rawNum;
     const selectedOption = WALLET_TYPE_OPTIONS.find((o) => o.type === type);
 
     if (editingWallet) {
@@ -39,7 +44,7 @@ function WalletModalForm() {
         type,
         initialBalance: balanceNum,
         color,
-        icon: selectedOption?.icon || 'Wallet',
+        icon: selectedOption?.icon || editingWallet.icon || 'Wallet',
       });
     } else {
       addWallet({
@@ -113,7 +118,7 @@ function WalletModalForm() {
 
         <div>
           <label className="text-xs font-semibold text-gray-500 block mb-1.5">Tipe Dompet</label>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-4 gap-2">
             {WALLET_TYPE_OPTIONS.map((opt) => (
               <button
                 key={opt.type}
@@ -122,7 +127,7 @@ function WalletModalForm() {
                   setType(opt.type);
                   setColor(opt.defaultColor);
                 }}
-                className={`p-2.5 rounded-xl text-xs font-semibold flex flex-col items-center gap-1 border transition-all ${
+                className={`p-2.5 rounded-xl text-[11px] font-semibold flex flex-col items-center gap-1 border transition-all cursor-pointer ${
                   type === opt.type
                     ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-200 ring-1 ring-teal-600'
                     : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300'
@@ -135,7 +140,9 @@ function WalletModalForm() {
         </div>
 
         <div>
-          <label className="text-xs font-semibold text-gray-500 block mb-1">Saldo Awal (Rp)</label>
+          <label className="text-xs font-semibold text-gray-500 block mb-1">
+            {isDebtType ? 'Tagihan Berjalan / Saldo Awal (Rp)' : 'Saldo Awal (Rp)'}
+          </label>
           <input
             type="number"
             placeholder="0"
@@ -143,17 +150,22 @@ function WalletModalForm() {
             onChange={(e) => setInitialBalance(e.target.value)}
             className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-base font-bold text-teal-700 dark:text-teal-400 focus:ring-2 focus:ring-teal-500"
           />
+          {isDebtType && (
+            <p className="text-[11px] text-gray-400 mt-1">
+              Otomatis dicatat sebagai kewajiban / tagihan mendatang.
+            </p>
+          )}
         </div>
 
         <div>
           <label className="text-xs font-semibold text-gray-500 block mb-1.5">Pilihan Warna Label</label>
           <div className="flex gap-2">
-            {['#0F766E', '#16A34A', '#2563EB', '#8B5CF6', '#EC4899', '#F97316', '#6B7280'].map((c) => (
+            {['#0F766E', '#16A34A', '#2563EB', '#8B5CF6', '#EC4899', '#F97316', '#DC2626', '#6B7280'].map((c) => (
               <button
                 key={c}
                 type="button"
                 onClick={() => setColor(c)}
-                className={`w-7 h-7 rounded-full transition-transform ${
+                className={`w-7 h-7 rounded-full transition-transform cursor-pointer ${
                   color === c ? 'scale-110 ring-2 ring-offset-2 ring-gray-400' : ''
                 }`}
                 style={{ backgroundColor: c }}
@@ -166,7 +178,7 @@ function WalletModalForm() {
           <button
             type="button"
             onClick={() => setIsWalletModalOpen(false)}
-            className="flex-1 py-3 text-sm font-semibold rounded-2xl bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+            className="flex-1 py-3 text-sm font-semibold rounded-2xl bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 cursor-pointer"
           >
             Batal
           </button>

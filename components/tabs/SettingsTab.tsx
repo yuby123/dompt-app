@@ -36,13 +36,30 @@ export function SettingsTab() {
     openLoginModal,
     signOutUser,
     setActiveTab,
+    dataResetVersion,
   } = useApp();
 
-  const [userNameInput, setUserNameInput] = useState(settings.userName || 'Trisna');
-  const [emailInput, setEmailInput] = useState(settings.userEmail || 'creator1@dompt.com');
+  const syncKey = `${user?.uid || 'guest'}_${settings.userName}_${settings.userEmail}_${dataResetVersion}`;
+  const [prevSyncKey, setPrevSyncKey] = useState(syncKey);
+
+  const [userNameInput, setUserNameInput] = useState(
+    user?.displayName || settings.userName || 'Trisna'
+  );
+  const [emailInput, setEmailInput] = useState(
+    user?.email || settings.userEmail || 'creator1@dompt.com'
+  );
   const [currencyInput, setCurrencyInput] = useState(settings.currency || 'IDR (Rp)');
   const [languageInput, setLanguageInput] = useState(settings.language || 'Bahasa Indonesia');
   const [showDecimals, setShowDecimals] = useState(settings.showDecimals || false);
+
+  if (prevSyncKey !== syncKey) {
+    setPrevSyncKey(syncKey);
+    setUserNameInput(user?.displayName || settings.userName || 'Trisna');
+    setEmailInput(user?.email || settings.userEmail || 'creator1@dompt.com');
+    setCurrencyInput(settings.currency || 'IDR (Rp)');
+    setLanguageInput(settings.language || 'Bahasa Indonesia');
+    setShowDecimals(Boolean(settings.showDecimals));
+  }
 
   const themeChoice = settings.themeMode || 'light';
   const accentChoice = settings.accentColor || 'lime';
@@ -103,7 +120,16 @@ export function SettingsTab() {
           <div className="bg-white dark:bg-[#16181D] rounded-3xl p-6 shadow-xs border border-gray-100 dark:border-gray-800 text-center space-y-3">
             <div className="relative w-24 h-24 mx-auto">
               <div className="w-full h-full rounded-full border-4 border-[#D4F826] overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center shadow-md">
-                <span className="text-4xl">👩‍💼</span>
+                {user?.photoURL ? (
+                  <img
+                    src={user.photoURL}
+                    alt={userNameInput}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span className="text-4xl">👩‍💼</span>
+                )}
               </div>
               <button
                 type="button"
@@ -171,7 +197,7 @@ export function SettingsTab() {
               {user ? (
                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full border border-emerald-500/20">
                   <Cloud size={12} />
-                  Cloud Aktif
+                  {(user as any).isLocalAccount ? 'Akun Aktif' : 'Cloud Aktif'}
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full border border-amber-500/20">
@@ -188,6 +214,7 @@ export function SettingsTab() {
                       <img
                         src={user.photoURL}
                         alt={user.displayName || 'User'}
+                        referrerPolicy="no-referrer"
                         className="w-full h-full object-cover"
                       />
                     ) : (
@@ -203,8 +230,8 @@ export function SettingsTab() {
                 </div>
 
                 <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
-                  Catatan dompet, transaksi, dan target Anda tersimpan aman di cloud Firebase
-                  Firestore dan terisolasi dari pengguna lain.
+                  Catatan dompet, transaksi, dan target untuk <strong>{user.email}</strong> tersimpan
+                  aman dan terisolasi dari pengguna lain.
                 </p>
 
                 <div className="flex gap-2 pt-1">
@@ -227,9 +254,9 @@ export function SettingsTab() {
             ) : (
               <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 space-y-3">
                 <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
-                  Saat ini Anda menggunakan <strong>Mode Tamu</strong> (data hanya ada di
-                  browser ini). Masuk dengan akun Google Anda agar catatan tersimpan di cloud
-                  dan terpisah untuk setiap pengguna.
+                  Saat ini Anda menggunakan <strong>Mode Tamu</strong>. Masuk dengan{' '}
+                  <strong>Email & Nama</strong> (Langsung Aktif di Vercel) atau{' '}
+                  <strong>Akun Google</strong> agar catatan terpisah untuk setiap pengguna.
                 </p>
                 <button
                   type="button"
@@ -237,7 +264,7 @@ export function SettingsTab() {
                   className="w-full py-2.5 px-3 rounded-xl bg-[#D4F826] hover:bg-[#cbf11e] text-black text-xs font-black transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer"
                 >
                   <LogIn size={15} />
-                  <span>Masuk dengan Akun Google</span>
+                  <span>Masuk / Pilih Akun Pribadi</span>
                 </button>
               </div>
             )}

@@ -5,6 +5,7 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
+  deleteField,
   query,
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
@@ -160,7 +161,10 @@ export async function fetchUserTransactions(userId: string): Promise<Transaction
         id: d.id,
         type: d.type,
         amount: Number(d.amount) || 0,
-        categoryId: d.categoryId === 'other' ? null : d.categoryId,
+        categoryId:
+          d.categoryId === 'other' || d.categoryId === 'uncategorized'
+            ? null
+            : d.categoryId,
         budgetGroup: d.budgetGroup,
         walletId: d.walletId,
         transferWalletId: d.transferWalletId || null,
@@ -186,15 +190,15 @@ export async function saveUserTransaction(userId: string, tx: Transaction): Prom
       walletId: tx.walletId,
       type: tx.type,
       amount: Number(tx.amount) || 0,
-      categoryId: tx.categoryId || 'other',
+      categoryId: tx.categoryId || 'uncategorized',
       date: tx.date,
       createdAt: tx.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      budgetGroup: tx.budgetGroup ? tx.budgetGroup : deleteField(),
+      note: tx.note ? tx.note.substring(0, 500) : deleteField(),
+      transferWalletId: tx.transferWalletId ? tx.transferWalletId : deleteField(),
+      imageReceiptUrl: tx.receiptImageUrl ? tx.receiptImageUrl.substring(0, 500) : deleteField(),
     };
-    if (tx.budgetGroup) payload.budgetGroup = tx.budgetGroup;
-    if (tx.note) payload.note = tx.note.substring(0, 500);
-    if (tx.transferWalletId) payload.transferWalletId = tx.transferWalletId;
-    if (tx.receiptImageUrl) payload.imageReceiptUrl = tx.receiptImageUrl.substring(0, 500);
 
     await setDoc(docRef, payload, { merge: true });
   } catch (error) {

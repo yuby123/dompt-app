@@ -9,9 +9,9 @@ import {
   query,
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
-import { db, handleFirestoreError, OperationType } from './firebase';
+import { db, handleFirestoreError, isFirestoreOfflineError, OperationType } from './firebase';
 import { BudgetConfig, Goal, Transaction, Wallet } from './types';
-import { DEFAULT_BUDGET_CONFIG, DEFAULT_WALLETS, EMPTY_BUDGET_CONFIG } from './constants';
+import { EMPTY_BUDGET_CONFIG } from './constants';
 
 export interface UserProfileData {
   uid: string;
@@ -23,6 +23,26 @@ export interface UserProfileData {
   updatedAt: string;
 }
 
+async function cloudRestApi(
+  action: 'get' | 'list' | 'set' | 'delete',
+  path: string,
+  data?: Record<string, any>,
+  merge = true
+): Promise<any> {
+  if (typeof window === 'undefined') return null;
+  try {
+    const res = await fetch('/api/cloud-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, path, data, merge }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 // Register an Email & Password account directly in Cloud Firestore Database
 export async function registerCloudEmailAccount(
   uid: string,
@@ -31,10 +51,13 @@ export async function registerCloudEmailAccount(
   passwordHash: string
 ): Promise<{ ok: true; profile: UserProfileData } | { ok: false; error: string }> {
   const path = `users/${uid}`;
+  const now = new Date().toISOString();
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanName = name.trim() || 'Pengguna Dompt';
+
   try {
     const userDocRef = doc(db, 'users', uid);
     const snap = await getDoc(userDocRef);
-    const now = new Date().toISOString();
 
     if (snap.exists()) {
       const existing = snap.data() as UserProfileData;
@@ -46,8 +69,8 @@ export async function registerCloudEmailAccount(
       }
       const updated: UserProfileData = {
         uid,
-        email: email.trim().toLowerCase(),
-        displayName: name.trim() || existing.displayName || 'Pengguna Dompt',
+        email: cleanEmail,
+        displayName: cleanName || existing.displayName || 'Pengguna Dompt',
         photoURL: existing.photoURL || '',
         passwordHash,
         createdAt: existing.createdAt || now,
@@ -59,8 +82,8 @@ export async function registerCloudEmailAccount(
 
     const initial: UserProfileData = {
       uid,
-      email: email.trim().toLowerCase(),
-      displayName: name.trim() || 'Pengguna Dompt',
+      email: cleanEmail,
+      displayName: cleanName,
       photoURL: '',
       passwordHash,
       createdAt: now,
@@ -69,7 +92,43 @@ export async function registerCloudEmailAccount(
     await setDoc(userDocRef, initial);
     return { ok: true, profile: initial };
   } catch (error) {
-    console.error('Error registering account in Firestore:', error);
+    if (isFirestoreOfflineError(error)) {
+      const getRes = await cloudRestApi('get', path);
+      if (getRes?.ok && getRes.exists && getRes.data) {
+        const existing = getRes.data as UserProfileData;
+        if (existing.passwordHash && existing.passwordHash !== passwordHash) {
+          return {
+            ok: false,
+            error: 'Email ini sudah terdaftar. Silakan masuk menggunakan email dan password Anda.',
+          };
+        }
+        const updated: UserProfileData = {
+          uid,
+          email: cleanEmail,
+          displayName: cleanName || existing.displayName || 'Pengguna Dompt',
+          photoURL: existing.photoURL || '',
+          passwordHash,
+          createdAt: existing.createdAt || now,
+          updatedAt: now,
+        };
+        await cloudRestApi('set', path, updated, true);
+        return { ok: true, profile: updated };
+      }
+
+      const initial: UserProfileData = {
+        uid,
+        email: cleanEmail,
+        displayName: cleanName,
+        photoURL: '',
+        passwordHash,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const setRes = await cloudRestApi('set', path, initial, false);
+      if (setRes?.ok) {
+        return { ok: true, profile: initial };
+      }
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -81,6 +140,9 @@ export async function loginCloudEmailAccount(
   passwordHash: string
 ): Promise<{ ok: true; profile: UserProfileData } | { ok: false; error: string; notFound?: boolean }> {
   const path = `users/${uid}`;
+  const now = new Date().toISOString();
+  const cleanEmail = email.trim().toLowerCase();
+
   try {
     const userDocRef = doc(db, 'users', uid);
     const snap = await getDoc(userDocRef);
@@ -101,10 +163,9 @@ export async function loginCloudEmailAccount(
       };
     }
 
-    const now = new Date().toISOString();
     const updated: UserProfileData = {
       uid,
-      email: data.email || email.trim().toLowerCase(),
+      email: data.email || cleanEmail,
       displayName: data.displayName || 'Pengguna Dompt',
       photoURL: data.photoURL || '',
       passwordHash,
@@ -114,7 +175,36 @@ export async function loginCloudEmailAccount(
     await setDoc(userDocRef, updated, { merge: true });
     return { ok: true, profile: updated };
   } catch (error) {
-    console.error('Error logging in account from Firestore:', error);
+    if (isFirestoreOfflineError(error)) {
+      const getRes = await cloudRestApi('get', path);
+      if (getRes?.ok) {
+        if (!getRes.exists || !getRes.data) {
+          return {
+            ok: false,
+            notFound: true,
+            error: 'Akun dengan email ini belum terdaftar di Database. Silakan klik tab "Daftar Baru" terlebih dahulu.',
+          };
+        }
+        const data = getRes.data as UserProfileData;
+        if (data.passwordHash && data.passwordHash !== passwordHash) {
+          return {
+            ok: false,
+            error: 'Password yang Anda masukkan salah. Silakan periksa kembali.',
+          };
+        }
+        const updated: UserProfileData = {
+          uid,
+          email: data.email || cleanEmail,
+          displayName: data.displayName || 'Pengguna Dompt',
+          photoURL: data.photoURL || '',
+          passwordHash,
+          createdAt: data.createdAt || now,
+          updatedAt: now,
+        };
+        await cloudRestApi('set', path, updated, true);
+        return { ok: true, profile: updated };
+      }
+    }
     handleFirestoreError(error, OperationType.GET, path);
   }
 }
@@ -122,10 +212,10 @@ export async function loginCloudEmailAccount(
 // Ensure user profile document exists
 export async function syncUserProfile(user: User): Promise<UserProfileData> {
   const path = `users/${user.uid}`;
+  const now = new Date().toISOString();
   try {
     const userDocRef = doc(db, 'users', user.uid);
     const snap = await getDoc(userDocRef);
-    const now = new Date().toISOString();
 
     if (snap.exists()) {
       const data = snap.data() as UserProfileData;
@@ -153,6 +243,18 @@ export async function syncUserProfile(user: User): Promise<UserProfileData> {
       return initial;
     }
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const fallback: UserProfileData = {
+        uid: user.uid,
+        email: user.email || 'user@example.com',
+        displayName: user.displayName || 'Pengguna Dompt',
+        photoURL: user.photoURL || '',
+        createdAt: now,
+        updatedAt: now,
+      };
+      await cloudRestApi('set', path, fallback, true);
+      return fallback;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -160,40 +262,40 @@ export async function syncUserProfile(user: User): Promise<UserProfileData> {
 // Wallets
 export async function fetchUserWallets(userId: string): Promise<Wallet[]> {
   const path = `users/${userId}/wallets`;
+  const createCleanWallets = async (): Promise<Wallet[]> => {
+    const initialWallets: Wallet[] = [
+      {
+        id: `wallet-cash-${Date.now()}`,
+        name: 'Dompet Tunai',
+        type: 'cash',
+        initialBalance: 0,
+        reservedAmount: 0,
+        color: '#16A34A',
+        icon: 'wallet',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: `wallet-bank-${Date.now() + 1}`,
+        name: 'Rekening Bank',
+        type: 'bank',
+        initialBalance: 0,
+        reservedAmount: 0,
+        color: '#005E9E',
+        icon: 'landmark',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+    for (const w of initialWallets) {
+      await saveUserWallet(userId, w);
+    }
+    return initialWallets;
+  };
+
   try {
     const colRef = collection(db, 'users', userId, 'wallets');
     const snap = await getDocs(query(colRef));
-
-    const createCleanWallets = async (): Promise<Wallet[]> => {
-      const initialWallets: Wallet[] = [
-        {
-          id: `wallet-cash-${Date.now()}`,
-          name: 'Dompet Tunai',
-          type: 'cash',
-          initialBalance: 0,
-          reservedAmount: 0,
-          color: '#16A34A',
-          icon: 'wallet',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: `wallet-bank-${Date.now() + 1}`,
-          name: 'Rekening Bank',
-          type: 'bank',
-          initialBalance: 0,
-          reservedAmount: 0,
-          color: '#005E9E',
-          icon: 'landmark',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      ];
-      for (const w of initialWallets) {
-        await saveUserWallet(userId, w);
-      }
-      return initialWallets;
-    };
 
     if (snap.empty) {
       return await createCleanWallets();
@@ -211,28 +313,41 @@ export async function fetchUserWallets(userId: string): Promise<Wallet[]> {
 
     return wallets;
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const listRes = await cloudRestApi('list', path);
+      if (listRes?.ok && Array.isArray(listRes.docs)) {
+        if (listRes.docs.length === 0) {
+          return await createCleanWallets();
+        }
+        return listRes.docs as Wallet[];
+      }
+    }
     handleFirestoreError(error, OperationType.GET, path);
   }
 }
 
 export async function saveUserWallet(userId: string, wallet: Wallet): Promise<void> {
   const path = `users/${userId}/wallets/${wallet.id}`;
+  const payload = {
+    id: wallet.id,
+    userId,
+    name: wallet.name,
+    type: wallet.type,
+    icon: wallet.icon || 'wallet',
+    color: wallet.color || '#10b981',
+    initialBalance: Number(wallet.initialBalance) || 0,
+    reservedAmount: Number(wallet.reservedAmount) || 0,
+    createdAt: wallet.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
   try {
     const docRef = doc(db, 'users', userId, 'wallets', wallet.id);
-    const payload = {
-      id: wallet.id,
-      userId,
-      name: wallet.name,
-      type: wallet.type,
-      icon: wallet.icon || 'wallet',
-      color: wallet.color || '#10b981',
-      initialBalance: Number(wallet.initialBalance) || 0,
-      reservedAmount: Number(wallet.reservedAmount) || 0,
-      createdAt: wallet.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
     await setDoc(docRef, payload, { merge: true });
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const setRes = await cloudRestApi('set', path, payload, true);
+      if (setRes?.ok) return;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -243,6 +358,10 @@ export async function deleteUserWallet(userId: string, walletId: string): Promis
     const docRef = doc(db, 'users', userId, 'wallets', walletId);
     await deleteDoc(docRef);
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const delRes = await cloudRestApi('delete', path);
+      if (delRes?.ok) return;
+    }
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
@@ -250,48 +369,61 @@ export async function deleteUserWallet(userId: string, walletId: string): Promis
 // Transactions
 export async function fetchUserTransactions(userId: string): Promise<Transaction[]> {
   const path = `users/${userId}/transactions`;
+  const mapTxDoc = (d: any): Transaction => ({
+    id: d.id,
+    type: d.type,
+    amount: Number(d.amount) || 0,
+    categoryId:
+      d.categoryId === 'other' || d.categoryId === 'uncategorized'
+        ? null
+        : d.categoryId,
+    budgetGroup: d.budgetGroup,
+    walletId: d.walletId,
+    transferWalletId: d.transferWalletId || null,
+    date: d.date,
+    note: d.note,
+    receiptImageUrl: d.imageReceiptUrl || d.receiptImageUrl,
+    createdAt: d.createdAt,
+    updatedAt: d.updatedAt,
+  });
+
   try {
     const colRef = collection(db, 'users', userId, 'transactions');
     const snap = await getDocs(query(colRef));
-    return snap.docs.map(docSnap => {
-      const d = docSnap.data();
-      return {
-        id: d.id,
-        type: d.type,
-        amount: Number(d.amount) || 0,
-        categoryId:
-          d.categoryId === 'other' || d.categoryId === 'uncategorized'
-            ? null
-            : d.categoryId,
-        budgetGroup: d.budgetGroup,
-        walletId: d.walletId,
-        transferWalletId: d.transferWalletId || null,
-        date: d.date,
-        note: d.note,
-        receiptImageUrl: d.imageReceiptUrl || d.receiptImageUrl,
-        createdAt: d.createdAt,
-        updatedAt: d.updatedAt,
-      } as Transaction;
-    });
+    return snap.docs.map(docSnap => mapTxDoc(docSnap.data()));
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const listRes = await cloudRestApi('list', path);
+      if (listRes?.ok && Array.isArray(listRes.docs)) {
+        return listRes.docs.map(mapTxDoc);
+      }
+    }
     handleFirestoreError(error, OperationType.GET, path);
   }
 }
 
 export async function saveUserTransaction(userId: string, tx: Transaction): Promise<void> {
   const path = `users/${userId}/transactions/${tx.id}`;
+  const restPayload: Record<string, any> = {
+    id: tx.id,
+    userId,
+    walletId: tx.walletId,
+    type: tx.type,
+    amount: Number(tx.amount) || 0,
+    categoryId: tx.categoryId || 'uncategorized',
+    date: tx.date,
+    createdAt: tx.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...(tx.budgetGroup ? { budgetGroup: tx.budgetGroup } : {}),
+    ...(tx.note ? { note: tx.note.substring(0, 500) } : {}),
+    ...(tx.transferWalletId ? { transferWalletId: tx.transferWalletId } : {}),
+    ...(tx.receiptImageUrl ? { imageReceiptUrl: tx.receiptImageUrl.substring(0, 500) } : {}),
+  };
+
   try {
     const docRef = doc(db, 'users', userId, 'transactions', tx.id);
     const payload: Record<string, any> = {
-      id: tx.id,
-      userId,
-      walletId: tx.walletId,
-      type: tx.type,
-      amount: Number(tx.amount) || 0,
-      categoryId: tx.categoryId || 'uncategorized',
-      date: tx.date,
-      createdAt: tx.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      ...restPayload,
       budgetGroup: tx.budgetGroup ? tx.budgetGroup : deleteField(),
       note: tx.note ? tx.note.substring(0, 500) : deleteField(),
       transferWalletId: tx.transferWalletId ? tx.transferWalletId : deleteField(),
@@ -300,6 +432,10 @@ export async function saveUserTransaction(userId: string, tx: Transaction): Prom
 
     await setDoc(docRef, payload, { merge: true });
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const setRes = await cloudRestApi('set', path, restPayload, false);
+      if (setRes?.ok) return;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -310,6 +446,10 @@ export async function deleteUserTransaction(userId: string, txId: string): Promi
     const docRef = doc(db, 'users', userId, 'transactions', txId);
     await deleteDoc(docRef);
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const delRes = await cloudRestApi('delete', path);
+      if (delRes?.ok) return;
+    }
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
@@ -317,51 +457,60 @@ export async function deleteUserTransaction(userId: string, txId: string): Promi
 // Goals
 export async function fetchUserGoals(userId: string): Promise<Goal[]> {
   const path = `users/${userId}/goals`;
+  const mapGoalDoc = (d: any): Goal => ({
+    id: d.id,
+    name: d.title || d.name || 'Target Tabungan',
+    targetAmount: Number(d.targetAmount) || 0,
+    currentAmount: Number(d.currentAmount) || 0,
+    targetDate: d.deadline || d.targetDate || '2026-12-31',
+    emoji: d.emoji || '🎯',
+    walletId: d.walletId || '',
+    isEmergencyFund: Boolean(d.isEmergencyFund),
+    isLocked: Boolean(d.isLocked),
+    monthlyTargetSaving: Number(d.monthlyTargetSaving) || Math.round((Number(d.targetAmount) || 0) / 12),
+  });
+
   try {
     const colRef = collection(db, 'users', userId, 'goals');
     const snap = await getDocs(query(colRef));
-    return snap.docs.map(docSnap => {
-      const d = docSnap.data();
-      return {
-        id: d.id,
-        name: d.title || d.name || 'Target Tabungan',
-        targetAmount: Number(d.targetAmount) || 0,
-        currentAmount: Number(d.currentAmount) || 0,
-        targetDate: d.deadline || d.targetDate || '2026-12-31',
-        emoji: d.emoji || '🎯',
-        walletId: d.walletId || '',
-        isEmergencyFund: Boolean(d.isEmergencyFund),
-        isLocked: Boolean(d.isLocked),
-        monthlyTargetSaving: Number(d.monthlyTargetSaving) || Math.round((Number(d.targetAmount) || 0) / 12),
-      } as Goal;
-    });
+    return snap.docs.map(docSnap => mapGoalDoc(docSnap.data()));
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const listRes = await cloudRestApi('list', path);
+      if (listRes?.ok && Array.isArray(listRes.docs)) {
+        return listRes.docs.map(mapGoalDoc);
+      }
+    }
     handleFirestoreError(error, OperationType.GET, path);
   }
 }
 
 export async function saveUserGoal(userId: string, goal: Goal): Promise<void> {
   const path = `users/${userId}/goals/${goal.id}`;
+  const payload: Record<string, any> = {
+    id: goal.id,
+    userId,
+    title: goal.name || 'Target Tabungan',
+    targetAmount: Number(goal.targetAmount) || 0,
+    currentAmount: Number(goal.currentAmount) || 0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  if (goal.targetDate) payload.deadline = goal.targetDate;
+  if (goal.emoji) payload.emoji = goal.emoji;
+  if (goal.walletId) payload.walletId = goal.walletId;
+  if (goal.isEmergencyFund !== undefined) payload.isEmergencyFund = Boolean(goal.isEmergencyFund);
+  if (goal.monthlyTargetSaving !== undefined) payload.monthlyTargetSaving = Number(goal.monthlyTargetSaving) || 0;
+  if (goal.isLocked !== undefined) payload.isLocked = Boolean(goal.isLocked);
+
   try {
     const docRef = doc(db, 'users', userId, 'goals', goal.id);
-    const payload: Record<string, any> = {
-      id: goal.id,
-      userId,
-      title: goal.name || 'Target Tabungan',
-      targetAmount: Number(goal.targetAmount) || 0,
-      currentAmount: Number(goal.currentAmount) || 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    if (goal.targetDate) payload.deadline = goal.targetDate;
-    if (goal.emoji) payload.emoji = goal.emoji;
-    if (goal.walletId) payload.walletId = goal.walletId;
-    if (goal.isEmergencyFund !== undefined) payload.isEmergencyFund = Boolean(goal.isEmergencyFund);
-    if (goal.monthlyTargetSaving !== undefined) payload.monthlyTargetSaving = Number(goal.monthlyTargetSaving) || 0;
-    if (goal.isLocked !== undefined) payload.isLocked = Boolean(goal.isLocked);
-
     await setDoc(docRef, payload, { merge: true });
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const setRes = await cloudRestApi('set', path, payload, true);
+      if (setRes?.ok) return;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -372,6 +521,10 @@ export async function deleteUserGoal(userId: string, goalId: string): Promise<vo
     const docRef = doc(db, 'users', userId, 'goals', goalId);
     await deleteDoc(docRef);
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const delRes = await cloudRestApi('delete', path);
+      if (delRes?.ok) return;
+    }
     handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
@@ -379,19 +532,7 @@ export async function deleteUserGoal(userId: string, goalId: string): Promise<vo
 // Budget Config
 export async function fetchUserBudgetConfig(userId: string): Promise<BudgetConfig | null> {
   const path = `users/${userId}/budgetConfig/main`;
-  try {
-    const docRef = doc(db, 'users', userId, 'budgetConfig', 'main');
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) {
-      await saveUserBudgetConfig(userId, EMPTY_BUDGET_CONFIG);
-      return EMPTY_BUDGET_CONFIG;
-    }
-    const data = snap.data();
-    // Only sanitize if it was the legacy schema without subcategoriesJson and had the old 5,000,000 template
-    if (!('subcategoriesJson' in data) && data.estimatedIncome === 5000000) {
-      await saveUserBudgetConfig(userId, EMPTY_BUDGET_CONFIG);
-      return EMPTY_BUDGET_CONFIG;
-    }
+  const parseBudgetData = (data: Record<string, any>): BudgetConfig => {
     let parsedSubcategories = [];
     if (data.subcategoriesJson) {
       try {
@@ -407,28 +548,59 @@ export async function fetchUserBudgetConfig(userId: string): Promise<BudgetConfi
       savingsPercent: Number(data.savingsPercent) || 20,
       subcategories: Array.isArray(parsedSubcategories) ? parsedSubcategories : [],
     };
+  };
+
+  try {
+    const docRef = doc(db, 'users', userId, 'budgetConfig', 'main');
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      await saveUserBudgetConfig(userId, EMPTY_BUDGET_CONFIG);
+      return EMPTY_BUDGET_CONFIG;
+    }
+    const data = snap.data();
+    // Only sanitize if it was the legacy schema without subcategoriesJson and had the old 5,000,000 template
+    if (!('subcategoriesJson' in data) && data.estimatedIncome === 5000000) {
+      await saveUserBudgetConfig(userId, EMPTY_BUDGET_CONFIG);
+      return EMPTY_BUDGET_CONFIG;
+    }
+    return parseBudgetData(data);
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const getRes = await cloudRestApi('get', path);
+      if (getRes?.ok) {
+        if (!getRes.exists || !getRes.data) {
+          await saveUserBudgetConfig(userId, EMPTY_BUDGET_CONFIG);
+          return EMPTY_BUDGET_CONFIG;
+        }
+        return parseBudgetData(getRes.data);
+      }
+    }
     handleFirestoreError(error, OperationType.GET, path);
   }
 }
 
 export async function saveUserBudgetConfig(userId: string, config: BudgetConfig): Promise<void> {
   const path = `users/${userId}/budgetConfig/main`;
+  const payload = {
+    id: 'main',
+    userId,
+    estimatedIncome: Number(config.estimatedIncome) || 0,
+    needsPercent: Number(config.needsPercent) || 50,
+    wantsPercent: Number(config.wantsPercent) || 30,
+    savingsPercent: Number(config.savingsPercent) || 20,
+    subcategoriesJson: JSON.stringify(config.subcategories || []).substring(0, 10000),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
   try {
     const docRef = doc(db, 'users', userId, 'budgetConfig', 'main');
-    const payload = {
-      id: 'main',
-      userId,
-      estimatedIncome: Number(config.estimatedIncome) || 0,
-      needsPercent: Number(config.needsPercent) || 50,
-      wantsPercent: Number(config.wantsPercent) || 30,
-      savingsPercent: Number(config.savingsPercent) || 20,
-      subcategoriesJson: JSON.stringify(config.subcategories || []).substring(0, 10000),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
     await setDoc(docRef, payload, { merge: true });
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const setRes = await cloudRestApi('set', path, payload, true);
+      if (setRes?.ok) return;
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -475,6 +647,22 @@ export async function resetUserFirestoreData(userId: string): Promise<Wallet[]> 
 
     return [cleanWallet];
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const cleanWallet: Wallet = {
+        id: `wallet-cash-${Date.now()}`,
+        name: 'Dompet Utama',
+        type: 'cash',
+        initialBalance: 0,
+        reservedAmount: 0,
+        color: '#10b981',
+        icon: 'wallet',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await saveUserWallet(userId, cleanWallet);
+      await saveUserBudgetConfig(userId, EMPTY_BUDGET_CONFIG);
+      return [cleanWallet];
+    }
     handleFirestoreError(error, OperationType.WRITE, `users/${userId}`);
   }
 }

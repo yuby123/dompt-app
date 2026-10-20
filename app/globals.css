@@ -21,3 +21,90 @@
     padding-right: max(0.75rem, env(safe-area-inset-right));
   }
 }
+
+/* Global Soft Coral Pink Accent Theme Overrides */
+[data-accent="pink"] .bg-\[\#D4F826\]:not([data-swatch="lime"]) {
+  background-color: #FFA4A4 !important;
+}
+[data-accent="pink"] .hover\:bg-\[\#c6ec15\]:not([data-swatch="lime"]):hover,
+[data-accent="pink"] .hover\:bg-\[\#cbf11e\]:not([data-swatch="lime"]):hover,
+[data-accent="pink"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch="lime"]):hover,
+[data-accent="pink"] .hover\:bg-\[\#b8dc12\]:not([data-swatch="lime"]):hover {
+  background-color: #ff8e8e !important;
+}
+[data-accent="pink"] .bg-\[\#EEF9B4\] {
+  background-color: #FFE4E8 !important;
+}
+[data-accent="pink"] .bg-\[\#ECFCCB\],
+[data-accent="pink"] .hover\:bg-\[\#ECFCCB\]:hover {
+  background-color: #FFE4E8 !important;
+}
+[data-accent="pink"] .bg-\[\#F4FDE1\] {
+  background-color: #FFF1F3 !important;
+}
+[data-accent="pink"] .bg-\[\#1C2417\] {
+  background-color: #2A181D !important;
+}
+[data-accent="pink"] .bg-\[\#D4F826\]\/30 {
+  background-color: rgba(255, 164, 164, 0.3) !important;
+}
+[data-accent="pink"] .bg-\[\#D4F826\]\/25,
+[data-accent="pink"] .dark .dark\:bg-\[\#D4F826\]\/25,
+.dark[data-accent="pink"] .dark\:bg-\[\#D4F826\]\/25 {
+  background-color: rgba(255, 164, 164, 0.25) !important;
+}
+[data-accent="pink"] .bg-\[\#D4F826\]\/20,
+[data-accent="pink"] .hover\:bg-\[\#D4F826\]\/20:hover,
+[data-accent="pink"] .dark .dark\:bg-\[\#EEF9B4\]\/20,
+.dark[data-accent="pink"] .dark\:bg-\[\#EEF9B4\]\/20 {
+  background-color: rgba(255, 164, 164, 0.2) !important;
+}
+[data-accent="pink"] .bg-\[\#D4F826\]\/15,
+[data-accent="pink"] .dark .dark\:hover\:bg-\[\#D4F826\]\/15:hover,
+.dark[data-accent="pink"] .dark\:hover\:bg-\[\#D4F826\]\/15:hover {
+  background-color: rgba(255, 164, 164, 0.15) !important;
+}
+[data-accent="pink"] .bg-\[\#D4F826\]\/10,
+[data-accent="pink"] .dark .dark\:bg-\[\#D4F826\]\/10,
+.dark[data-accent="pink"] .dark\:bg-\[\#D4F826\]\/10 {
+  background-color: rgba(255, 164, 164, 0.12) !important;
+}
+
+/* Text color overrides for Pink theme */
+[data-accent="pink"] .text-\[\#D4F826\],
+[data-accent="pink"] .dark .dark\:text-\[\#D4F826\],
+.dark[data-accent="pink"] .dark\:text-\[\#D4F826\] {
+  color: #FFA4A4 !important;
+}
+[data-accent="pink"] .text-\[\#84CC16\] {
+  color: #F43F5E !important;
+}
+[data-accent="pink"] .text-\[\#65A30D\],
+[data-accent="pink"] .text-\[\#658500\] {
+  color: #E11D48 !important;
+}
+
+/* Border & Ring overrides for Pink theme */
+[data-accent="pink"] .border-\[\#D4F826\]:not([data-swatch="lime"]),
+[data-accent="pink"] .hover\:border-\[\#D4F826\]:hover,
+[data-accent="pink"] .focus\:border-\[\#D4F826\]:focus,
+[data-accent="pink"] .dark .dark\:border-\[\#D4F826\],
+.dark[data-accent="pink"] .dark\:border-\[\#D4F826\] {
+  border-color: #FFA4A4 !important;
+}
+[data-accent="pink"] .border-\[\#D4F826\]\/40,
+[data-accent="pink"] .hover\:border-\[\#D4F826\]\/60:hover,
+[data-accent="pink"] .hover\:border-\[\#D4F826\]\/50:hover {
+  border-color: rgba(255, 164, 164, 0.5) !important;
+}
+[data-accent="pink"] .border-\[\#84CC16\] {
+  border-color: #F43F5E !important;
+}
+[data-accent="pink"] .border-\[\#2D3F1D\] {
+  border-color: #4C232E !important;
+}
+[data-accent="pink"] .ring-\[\#D4F826\],
+[data-accent="pink"] .focus\:ring-\[\#D4F826\]:focus {
+  --tw-ring-color: #FFA4A4 !important;
+}
+

@@ -18,21 +18,25 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'FadDompet — Dompet & Keuangan Pribadi',
+  title: 'Dompt. — Dompet & Keuangan Pribadi',
   description: 'Offline-first personal finance tracker. Kelola pemasukan, pengeluaran, dompet, dan anggaran keuangan pribadi dengan cepat, aman, dan tanpa iklan.',
   manifest: '/manifest.json',
   icons: {
-    icon: '/icons/faddompet-lightmode.svg',
-    apple: '/icons/app_icon.png',
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/icons/dompt-logo.svg', type: 'image/svg+xml' },
+    ],
+    shortcut: '/favicon.svg',
+    apple: '/icons/dompt-logo.svg',
   },
   openGraph: {
-    title: 'FadDompet — Dompet & Keuangan Pribadi',
+    title: 'Dompt. — Dompet & Keuangan Pribadi',
     description: 'Offline-first personal finance tracker. Kelola pemasukan, pengeluaran, dompet, dan anggaran.',
     type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'FadDompet — Dompet & Keuangan Pribadi',
+    title: 'Dompt. — Dompet & Keuangan Pribadi',
     description: 'Offline-first personal finance tracker. Kelola pemasukan, pengeluaran, dompet, dan anggaran.',
   },
 };

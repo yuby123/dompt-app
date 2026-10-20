@@ -693,7 +693,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setActiveDate(getTodayDateStr());
           setDataResetVersion((v) => v + 1);
         } catch (err) {
-          console.error('Error loading user data from Firestore:', err);
+          console.warn('Error loading user data from Firestore:', err);
         } finally {
           setAuthLoading(false);
         }
@@ -895,8 +895,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .filter((w) => w.type === 'bank' || w.type === 'ewallet' || w.type === 'cash')
       .reduce((acc, w) => acc + Math.max(0, w.balance), 0);
 
-    const avgMonthlyExpense = Math.max(1, totalExpense || 4000000);
-    const runwayMonths = liquidTotal > 0 ? Number((liquidTotal / avgMonthlyExpense).toFixed(1)) : 0;
+    // Standard monthly expense baseline for emergency runway calculation:
+    // Uses monthly spending budget limit if set, or the greater of actual expenses or standard baseline (Rp 3.000.000)
+    const baselineMonthlyExpense = Math.max(
+      monthlySpendingLimit > 0 ? monthlySpendingLimit : 0,
+      totalExpense,
+      3000000
+    );
+    const runwayMonths = liquidTotal > 0 ? Number((liquidTotal / baselineMonthlyExpense).toFixed(1)) : 0;
 
     return {
       totalBalance,
@@ -946,7 +952,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     if (isCloudUser && user?.uid) {
       saveUserTransaction(user.uid, newTx).catch((err) =>
-        console.error('Error saving transaction to Firestore:', err)
+        console.warn('Error saving transaction to Firestore:', err)
       );
     }
 
@@ -969,7 +975,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     if (isCloudUser && user?.uid && targetTx) {
       saveUserTransaction(user.uid, targetTx).catch((err) =>
-        console.error('Error updating transaction in Firestore:', err)
+        console.warn('Error updating transaction in Firestore:', err)
       );
     }
 
@@ -985,7 +991,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     if (isCloudUser && user?.uid) {
       deleteUserTransaction(user.uid, id).catch((err) =>
-        console.error('Error deleting transaction from Firestore:', err)
+        console.warn('Error deleting transaction from Firestore:', err)
       );
     }
 
@@ -1006,7 +1012,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredWallets(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
       saveUserWallet(user.uid, newW).catch((err) =>
-        console.error('Error saving wallet to Firestore:', err)
+        console.warn('Error saving wallet to Firestore:', err)
       );
     }
     addToast('Dompet Ditambahkan', `Dompet ${data.name} berhasil dibuat.`);
@@ -1025,7 +1031,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredWallets(updated, localScopeUid);
     if (isCloudUser && user?.uid && targetW) {
       saveUserWallet(user.uid, targetW).catch((err) =>
-        console.error('Error updating wallet in Firestore:', err)
+        console.warn('Error updating wallet in Firestore:', err)
       );
     }
     addToast('Dompet Diperbarui', 'Informasi dompet berhasil diubah.');
@@ -1041,7 +1047,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredWallets(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
       deleteUserWallet(user.uid, id).catch((err) =>
-        console.error('Error deleting wallet from Firestore:', err)
+        console.warn('Error deleting wallet from Firestore:', err)
       );
     }
     addToast('Dompet Dihapus', 'Dompet berhasil dihapus.', 'info');
@@ -1064,7 +1070,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredGoals(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
       saveUserGoal(user.uid, newG).catch((err) =>
-        console.error('Error saving goal to Firestore:', err)
+        console.warn('Error saving goal to Firestore:', err)
       );
     }
     addToast('Target Goal Dibuat', `Target ${data.name} berhasil ditambahkan.`);
@@ -1083,7 +1089,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredGoals(updated, localScopeUid);
     if (isCloudUser && user?.uid && targetG) {
       saveUserGoal(user.uid, targetG).catch((err) =>
-        console.error('Error updating goal in Firestore:', err)
+        console.warn('Error updating goal in Firestore:', err)
       );
     }
     addToast('Goal Diperbarui', 'Perubahan target berhasil disimpan.');
@@ -1095,7 +1101,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredGoals(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
       deleteUserGoal(user.uid, id).catch((err) =>
-        console.error('Error deleting goal from Firestore:', err)
+        console.warn('Error deleting goal from Firestore:', err)
       );
     }
     addToast('Goal Dihapus', 'Target goal telah dihapus.', 'info');
@@ -1116,7 +1122,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredBudgetConfig(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
-        console.error('Error saving budget config to Firestore:', err)
+        console.warn('Error saving budget config to Firestore:', err)
       );
     }
     addToast('Alokasi Disimpan', 'Alokasi anggaran 50/30/20 berhasil diperbarui.');
@@ -1135,7 +1141,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredBudgetConfig(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
-        console.error('Error saving budget config to Firestore:', err)
+        console.warn('Error saving budget config to Firestore:', err)
       );
     }
     addToast('Subkategori Ditambahkan', `${item.name} berhasil ditambahkan ke ${item.group}.`);
@@ -1148,7 +1154,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredBudgetConfig(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
-        console.error('Error saving budget config to Firestore:', err)
+        console.warn('Error saving budget config to Firestore:', err)
       );
     }
     addToast('Subkategori Diperbarui', 'Alokasi subkategori berhasil disimpan.');
@@ -1161,7 +1167,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredBudgetConfig(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
-        console.error('Error saving budget config to Firestore:', err)
+        console.warn('Error saving budget config to Firestore:', err)
       );
     }
     addToast('Subkategori Dihapus', 'Subkategori telah dihapus.', 'info');
@@ -1198,7 +1204,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     if (isCloudUser && user?.uid) {
       saveUserTransaction(user.uid, tx).catch((err) =>
-        console.error('Error saving transfer transaction to Firestore:', err)
+        console.warn('Error saving transfer transaction to Firestore:', err)
       );
     }
 
@@ -1241,20 +1247,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     updateSettings({ accentColor: accent });
   };
 
-  const deductAiCredit = (amount = 1): boolean => {
-    if (settings.aiCredits < amount) {
-      addToast('AI Credits Habis', 'Saldo kredit AI tidak mencukupi.', 'error');
-      return false;
-    }
-    const updated = Math.max(0, settings.aiCredits - amount);
-    updateSettings({ aiCredits: updated });
+  const deductAiCredit = (_amount = 1): boolean => {
     return true;
   };
 
-  const addAiCredits = (amount: number) => {
-    const updated = settings.aiCredits + amount;
-    updateSettings({ aiCredits: updated });
-    addToast('Top Up Berhasil', `${amount} AI Credits telah ditambahkan.`);
+  const addAiCredits = (_amount: number) => {
+    // No-op: AI credits feature disabled
   };
 
   // App Lock

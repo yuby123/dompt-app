@@ -31,19 +31,23 @@ import { ClipboardScreenshotDetector } from '@/components/ClipboardScreenshotDet
 import { motion, AnimatePresence } from 'motion/react';
 
 function MainAppContent() {
-  const { activeTab, user } = useApp();
+  const { activeTab, user, settings } = useApp();
+  const accentAttr = settings.accentColor || 'lime';
 
   if (!user) {
     return (
-      <>
+      <div data-accent={accentAttr}>
         <AuthScreen />
         <ToastContainer />
-      </>
+      </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#F5F6F8] dark:bg-[#0B0C10] text-gray-900 dark:text-gray-100 transition-colors selection:bg-[#D4F826] selection:text-black lg:flex">
+    <div
+      data-accent={accentAttr}
+      className="min-h-screen bg-[#F5F6F8] dark:bg-[#0B0C10] text-gray-900 dark:text-gray-100 transition-colors selection:bg-[#D4F826] selection:text-black lg:flex"
+    >
       {/* Desktop Left Sidebar (visible on lg+ website view) */}
       <DesktopSidebar />
 

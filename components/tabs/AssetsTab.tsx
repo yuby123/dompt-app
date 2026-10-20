@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
-import { formatRupiah } from '@/lib/formatters';
+import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
 
 type AssetItem = { id: string; name: string; amount: number };
 
@@ -93,7 +93,7 @@ export function AssetsTab() {
 
   const handleAddAsset = (e: React.FormEvent) => {
     e.preventDefault();
-    const amountVal = Number(assetAmount.replace(/\D/g, ''));
+    const amountVal = parseNominalInput(assetAmount);
     if (!assetName.trim() || amountVal <= 0) return;
 
     const newAsset = {
@@ -454,9 +454,10 @@ export function AssetsTab() {
                   </label>
                   <input
                     type="text"
+                    inputMode="numeric"
                     value={assetAmount}
-                    onChange={(e) => setAssetAmount(e.target.value)}
-                    placeholder="Rp 15.000.000"
+                    onChange={(e) => setAssetAmount(formatNominalInput(e.target.value))}
+                    placeholder="Contoh: 15.000.000"
                     required
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />

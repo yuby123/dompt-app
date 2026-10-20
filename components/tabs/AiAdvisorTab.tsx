@@ -7,7 +7,6 @@ import {
   RotateCcw,
   Check,
   Plus,
-  Coins,
   Loader2,
   MessageSquare,
   Trash2,
@@ -47,8 +46,6 @@ export function AiAdvisorTab() {
   const {
     user,
     settings,
-    deductAiCredit,
-    addAiCredits,
     addTransaction,
     wallets,
     categories,
@@ -148,11 +145,6 @@ export function AiAdvisorTab() {
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend ?? inputMessage).trim();
     if (!text || isLoading) return;
-
-    if (!deductAiCredit(1)) {
-      addToast('Kredit Habis', 'Top up AI Credits di menu Pengaturan.', 'error');
-      return;
-    }
 
     const userMsg: ChatMessage = {
       id: nextMsgId('user'),
@@ -374,20 +366,10 @@ export function AiAdvisorTab() {
               </div>
             </div>
 
-            {/* AI Credits Badge + Top Up */}
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gray-100 dark:bg-gray-800 text-xs font-black text-gray-700 dark:text-gray-200">
-                <Coins size={14} className="text-[#84CC16] dark:text-[#D4F826]" />
-                <span>{settings.aiCredits}</span>
-                <span className="hidden sm:inline font-bold text-gray-400">Credits</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => addAiCredits(10)}
-                className="hidden sm:inline-flex items-center px-3 py-1.5 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black shadow-xs cursor-pointer"
-              >
-                Top Up
-              </button>
+            {/* Status Indicator */}
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold border border-emerald-500/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Online</span>
             </div>
           </div>
 

@@ -5,6 +5,27 @@ export function formatNumberOnly(amount: number): string {
   return abs.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
+/**
+ * Format string or number into thousand-separated format with dots (e.g. 5000 -> "5.000")
+ */
+export function formatNominalInput(value: string | number): string {
+  if (value === '' || value === null || value === undefined) return '';
+  const digits = String(value).replace(/\D/g, '');
+  if (!digits) return '';
+  const normalized = digits.replace(/^0+(?=\d)/, '');
+  return normalized.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/**
+ * Parse nominal input string with dot thousand-separators back to integer number
+ */
+export function parseNominalInput(value: string | number): number {
+  if (typeof value === 'number') return isNaN(value) ? 0 : value;
+  const digits = String(value).replace(/\D/g, '');
+  return digits ? parseInt(digits, 10) : 0;
+}
+
+
 export function formatRupiah(amount: number, hidden = false): string {
   if (hidden) {
     return 'Rp •••••••';

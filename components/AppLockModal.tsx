@@ -67,12 +67,12 @@ export function AppLockModal() {
         animate={{ opacity: 1, scale: 1 }}
         className="w-full max-w-sm flex flex-col items-center text-center space-y-5 landscape:space-y-3 py-4 my-auto"
       >
-        <div className="w-14 h-14 landscape:w-12 landscape:h-12 rounded-2xl bg-teal-500/20 border border-teal-500/30 flex items-center justify-center text-teal-400">
-          <Lock size={28} />
+        <div className="w-14 h-14 landscape:w-12 landscape:h-12 rounded-2xl bg-[#D4F826] text-black font-black text-2xl flex items-center justify-center shadow-lg">
+          D.
         </div>
 
         <div>
-          <h2 className="text-2xl landscape:text-xl font-black tracking-tight">FadDompet</h2>
+          <h2 className="text-2xl landscape:text-xl font-black tracking-tight">Dompt.</h2>
           <p className="text-xs text-gray-400 mt-0.5">Masukkan PIN untuk membuka dompet</p>
         </div>
 

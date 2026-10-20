@@ -1,29 +1,23 @@
 {
-  "name": "FadDompet — Dompet & Keuangan Pribadi",
-  "short_name": "FadDompet",
-  "description": "Offline-first personal finance tracker & Ekstraksi Otomatis Bukti Transfer / SS",
+  "name": "Dompt. — Dompet & Keuangan Pribadi",
+  "short_name": "Dompt.",
+  "description": "Offline-first personal finance tracker. Kelola pemasukan, pengeluaran, dompet, dan anggaran pribadi.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0F766E",
-  "theme_color": "#0F766E",
+  "background_color": "#121316",
+  "theme_color": "#D4F826",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/icons/faddompet-lightmode.svg",
+      "src": "/icons/dompt-logo.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
     },
     {
-      "src": "/icons/faddompet-darkmode.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "/icons/app_icon.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
     }
   ],
   "share_target": {

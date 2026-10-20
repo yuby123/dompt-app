@@ -32,6 +32,10 @@ export function Header() {
     );
   };
 
+  const isPink = settings.accentColor === 'pink';
+  const accentBg = isPink ? 'bg-[#FFA4A4]' : 'bg-[#D4F826]';
+  const accentBtn = isPink ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e]' : 'bg-[#D4F826] hover:bg-[#cbf11e]';
+
   return (
     <header className="px-3 pt-4 pb-2 flex items-center justify-between lg:hidden">
       {/* Brand Logo */}
@@ -39,7 +43,7 @@ export function Header() {
         onClick={() => setActiveTab('dashboard')}
         className="flex items-center gap-2 cursor-pointer select-none group"
       >
-        <div className="w-8 h-8 rounded-xl bg-[#D4F826] text-black font-black flex items-center justify-center text-base shadow-xs group-hover:scale-105 transition-transform">
+        <div className={`w-8 h-8 rounded-xl ${accentBg} text-black font-black flex items-center justify-center text-base shadow-xs group-hover:scale-105 transition-all`}>
           D.
         </div>
         <span className="text-xl font-black tracking-tight text-gray-900 dark:text-white">
@@ -94,7 +98,7 @@ export function Header() {
             className="flex items-center gap-1.5 p-1 pl-1.5 pr-2.5 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 transition-colors cursor-pointer border border-gray-200/60 dark:border-gray-700/60 text-xs font-bold"
             title={`Akun: ${user.displayName || user.email}`}
           >
-            <div className="relative w-6 h-6 rounded-full overflow-hidden bg-[#D4F826] text-black font-black flex items-center justify-center text-[11px]">
+            <div className={`relative w-6 h-6 rounded-full overflow-hidden ${accentBg} text-black font-black flex items-center justify-center text-[11px] transition-colors`}>
               {user.photoURL ? (
                 <img src={user.photoURL} alt="Avatar" className="w-full h-full object-cover" />
               ) : (
@@ -110,7 +114,7 @@ export function Header() {
           <button
             type="button"
             onClick={openLoginModal}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#D4F826] hover:bg-[#cbf11e] text-black font-black text-xs transition-transform active:scale-95 shadow-xs cursor-pointer ml-1"
+            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl ${accentBtn} text-black font-black text-xs transition-transform active:scale-95 shadow-xs cursor-pointer ml-1`}
             title="Masuk dengan Akun Pribadi"
           >
             <LogIn size={14} strokeWidth={2.5} />

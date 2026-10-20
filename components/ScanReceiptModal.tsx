@@ -507,7 +507,7 @@ export function ScanReceiptModal() {
                       1
                     </span>
                     <p>
-                      <strong>Screenshot & Bagikan (Share):</strong> Saat ambil screenshot di HP, tekan tombol <em>Bagikan (Share)</em> pada popup screenshot lalu pilih <strong>FadDompet</strong>.
+                      <strong>Screenshot & Bagikan (Share):</strong> Saat ambil screenshot di HP, tekan tombol <em>Bagikan (Share)</em> pada popup screenshot lalu pilih <strong>Dompt.</strong>.
                     </p>
                   </div>
                   <div className="flex items-start gap-2">
@@ -515,7 +515,7 @@ export function ScanReceiptModal() {
                       2
                     </span>
                     <p>
-                      <strong>Salin & Buka App:</strong> Screenshot bukti transfer, salin gambar, lalu buka FadDompet. Banner <em>Terdeteksi SS</em> akan otomatis muncul di atas layar!
+                      <strong>Salin & Buka App:</strong> Screenshot bukti transfer, salin gambar, lalu buka Dompt. Banner <em>Terdeteksi SS</em> akan otomatis muncul di atas layar!
                     </p>
                   </div>
                   <div className="flex items-start gap-2">

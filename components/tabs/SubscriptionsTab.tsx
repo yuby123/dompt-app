@@ -16,7 +16,8 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
-import { formatRupiah } from '@/lib/formatters';
+import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
+import { BudgetGroup } from '@/lib/types';
 
 export interface RecurringItem {
   id: string;
@@ -28,6 +29,8 @@ export interface RecurringItem {
   billingDay: number;
   walletId: string;
   categoryId: string;
+  subcategoryId?: string;
+  budgetGroup?: BudgetGroup;
   isActive: boolean;
   lastRecordedPeriod?: string;
 }
@@ -36,6 +39,7 @@ export function SubscriptionsTab() {
   const {
     wallets,
     categories,
+    budgetConfig,
     settings,
     addTransaction,
     addToast,
@@ -92,6 +96,7 @@ export function SubscriptionsTab() {
   const [billingDay, setBillingDay] = useState('1');
   const [walletId, setWalletId] = useState(wallets[0]?.id || 'wallet-bca');
   const [categoryId, setCategoryId] = useState('cat-tagihan');
+  const [subcategoryId, setSubcategoryId] = useState('');
 
   const quickPresets = [
     { name: 'Netflix', emoji: '🎬', type: 'expense' as const, cat: 'cat-hiburan', day: '5' },
@@ -149,10 +154,23 @@ export function SubscriptionsTab() {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = Number(amount.replace(/\D/g, ''));
+    const val = parseNominalInput(amount);
     if (!name.trim() || val <= 0) return;
 
     const dayNum = Math.min(31, Math.max(1, parseInt(billingDay, 10) || 1));
+    const cleanItemName = name.trim().toLowerCase();
+
+    // Auto match or link to budget subcategory
+    const autoMatchedSub =
+      (subcategoryId && budgetConfig?.subcategories?.find((s) => s.id === subcategoryId)) ||
+      budgetConfig?.subcategories?.find((s) => {
+        const sName = s.name.toLowerCase().trim();
+        return cleanItemName === sName || cleanItemName.includes(sName) || sName.includes(cleanItemName);
+      });
+
+    const determinedGroup: BudgetGroup =
+      autoMatchedSub?.group ||
+      (categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
 
     const newItem: RecurringItem = {
       id: `sub-${Date.now()}`,
@@ -165,25 +183,47 @@ export function SubscriptionsTab() {
       walletId: walletId || wallets[0]?.id || 'wallet-bca',
       categoryId:
         categoryId ||
-        (txType === 'expense' ? 'cat-tagihan' : 'cat-gaji'),
+        (txType === 'expense' ? (determinedGroup === 'keinginan' ? 'cat-hiburan' : 'cat-tagihan') : 'cat-gaji'),
+      subcategoryId: autoMatchedSub?.id || undefined,
+      budgetGroup: txType === 'expense' ? determinedGroup : undefined,
       isActive: true,
     };
 
     saveItems([...items, newItem]);
     addToast(
       'Jadwal Rutin Disimpan',
-      `${newItem.name} berhasil ditambahkan ke jadwal berulang.`
+      `${newItem.name} berhasil ditambahkan & terhubung ke alokasi budget.`
     );
     setIsAddOpen(false);
     setName('');
     setAmount('');
+    setSubcategoryId('');
   };
 
   const handleRecordNow = (item: RecurringItem) => {
     const dateStr = new Date(activeYear, activeMonth, activeDay, 9, 0, 0).toISOString();
+
+    const cleanItemName = item.name.toLowerCase().trim();
+    const matchedSub =
+      (item.subcategoryId && budgetConfig?.subcategories?.find((s) => s.id === item.subcategoryId)) ||
+      budgetConfig?.subcategories?.find((s) => {
+        const sName = s.name.toLowerCase().trim();
+        return (
+          cleanItemName === sName ||
+          cleanItemName.includes(sName) ||
+          sName.includes(cleanItemName)
+        );
+      });
+
+    const determinedBudgetGroup: BudgetGroup =
+      matchedSub?.group ||
+      item.budgetGroup ||
+      (item.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
+
     addTransaction({
       walletId: item.walletId || wallets[0]?.id || 'wallet-bca',
-      categoryId: item.categoryId,
+      categoryId: item.categoryId || (matchedSub ? matchedSub.id.replace('sub-', 'cat-') : 'cat-tagihan'),
+      budgetGroup: item.type === 'expense' ? determinedBudgetGroup : undefined,
       type: item.type,
       amount: item.amount,
       note: `${item.name} (Otomatis Rutin)`,
@@ -194,6 +234,11 @@ export function SubscriptionsTab() {
       i.id === item.id ? { ...i, lastRecordedPeriod: currentPeriodKey } : i
     );
     saveItems(updated);
+    addToast(
+      'Pembayaran Dicatat',
+      `${item.name} berhasil dicatat & masuk ke alokasi budget ${determinedBudgetGroup.toUpperCase()}.`,
+      'success'
+    );
   };
 
   const handleToggleActive = (id: string) => {
@@ -481,6 +526,18 @@ export function SubscriptionsTab() {
                         setTxType(preset.type);
                         setCategoryId(preset.cat);
                         setBillingDay(preset.day);
+
+                        const pName = preset.name.toLowerCase();
+                        const foundSub = budgetConfig?.subcategories?.find((s) => {
+                          const sName = s.name.toLowerCase();
+                          return pName.includes(sName) || sName.includes(pName);
+                        });
+                        if (foundSub) {
+                          setSubcategoryId(foundSub.id);
+                          if (!amount && foundSub.allocatedAmount > 0) {
+                            setAmount(formatNominalInput(foundSub.allocatedAmount));
+                          }
+                        }
                       }}
                       className="px-2.5 py-1.5 rounded-xl bg-gray-50 dark:bg-gray-800 hover:bg-[#D4F826]/20 border border-gray-200 dark:border-gray-700 text-xs font-bold text-gray-800 dark:text-gray-200 shrink-0 cursor-pointer flex items-center gap-1"
                     >
@@ -547,9 +604,10 @@ export function SubscriptionsTab() {
                   </label>
                   <input
                     type="text"
+                    inputMode="numeric"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="Contoh: 186000"
+                    onChange={(e) => setAmount(formatNominalInput(e.target.value))}
+                    placeholder="Contoh: 186.000"
                     required
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
@@ -625,6 +683,58 @@ export function SubscriptionsTab() {
                     </select>
                   </div>
                 </div>
+
+                {/* Hubungkan ke Alokasi Budget */}
+                {txType === 'expense' && budgetConfig?.subcategories && budgetConfig.subcategories.length > 0 && (
+                  <div>
+                    <label className="text-xs font-bold text-gray-500 block mb-1">
+                      Alokasi Budget (Otomatis Terhubung ke Menu Budget)
+                    </label>
+                    <select
+                      value={subcategoryId}
+                      onChange={(e) => {
+                        const sid = e.target.value;
+                        setSubcategoryId(sid);
+                        if (sid) {
+                          const sub = budgetConfig.subcategories.find((s) => s.id === sid);
+                          if (sub) {
+                            if (!name) setName(sub.name);
+                            if (sub.emoji) setEmoji(sub.emoji);
+                            if (!amount && sub.allocatedAmount > 0) {
+                              setAmount(formatNominalInput(sub.allocatedAmount));
+                            }
+                            if (sub.group === 'keinginan') {
+                              setCategoryId('cat-hiburan');
+                            } else {
+                              setCategoryId('cat-tagihan');
+                            }
+                          }
+                        }
+                      }}
+                      className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                    >
+                      <option value="">Otomatis Cocokkan Sesuai Nama</option>
+                      <optgroup label="Kebutuhan (Needs)">
+                        {budgetConfig.subcategories
+                          .filter((s) => s.group === 'kebutuhan')
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.emoji} {s.name} ({formatRupiah(s.allocatedAmount)})
+                            </option>
+                          ))}
+                      </optgroup>
+                      <optgroup label="Keinginan (Wants)">
+                        {budgetConfig.subcategories
+                          .filter((s) => s.group === 'keinginan')
+                          .map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.emoji} {s.name} ({formatRupiah(s.allocatedAmount)})
+                            </option>
+                          ))}
+                      </optgroup>
+                    </select>
+                  </div>
+                )}
 
                 <div className="flex gap-2 pt-2">
                   <button

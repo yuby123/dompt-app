@@ -10,6 +10,8 @@ import {
   X,
   FileSpreadsheet,
   FileText,
+  Plus,
+  AlertCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -28,6 +30,7 @@ export function ReportsTab() {
     settings,
     exportToCSV,
     addToast,
+    openAddTransaction,
   } = useApp();
 
   const hide = settings.hideBalance;
@@ -79,12 +82,22 @@ export function ReportsTab() {
     savingsTarget,
     topCategories,
     healthScore,
+    budgetOk,
+    incChangePct,
+    expChangePct,
   } = useMemo(() => {
     let inc = 0;
     let exp = 0;
     let nSpent = 0;
     let wSpent = 0;
     let sSpent = 0;
+
+    // Previous month comparison
+    const prevDate = new Date(activeYear, activeMonth - 1, 1);
+    const pYear = prevDate.getFullYear();
+    const pMonth = prevDate.getMonth();
+    let prevInc = 0;
+    let prevExp = 0;
 
     const catGroupMap = new Map(categories.map((c) => [c.id, c.budgetGroup]));
     const catInfoMap = new Map(categories.map((c) => [c.id, c]));
@@ -109,8 +122,16 @@ export function ReportsTab() {
         } else if (tx.type === 'transfer' && tx.budgetGroup === 'tabungan') {
           sSpent += tx.amount;
         }
+      } else if (d.getFullYear() === pYear && d.getMonth() === pMonth) {
+        if (tx.type === 'income') prevInc += tx.amount;
+        else if (tx.type === 'expense') prevExp += tx.amount;
       }
     });
+
+    const incChangePct =
+      prevInc > 0 ? Math.round(((inc - prevInc) / prevInc) * 100) : null;
+    const expChangePct =
+      prevExp > 0 ? Math.round(((exp - prevExp) / prevExp) * 100) : null;
 
     const baseIncome = Math.max(inc, budgetConfig.estimatedIncome || 0);
     const nTarget = Math.round((baseIncome * (budgetConfig.needsPercent || 50)) / 100);
@@ -136,9 +157,9 @@ export function ReportsTab() {
 
     // Calculate financial health score (0-100)
     const savingsPts = ratio >= 20 ? 35 : Math.round((ratio / 20) * 35);
-    const budgetOk =
+    const isBudgetCompliant =
       (nTarget === 0 || nSpent <= nTarget) && (wTarget === 0 || wSpent <= wTarget);
-    const budgetPts = budgetOk ? 35 : 20;
+    const budgetPts = isBudgetCompliant ? 35 : 20;
     const runwayPts = Math.min(
       30,
       Math.round((dashboardSummary.emergencyFundRunwayMonths / 6) * 30)
@@ -158,6 +179,9 @@ export function ReportsTab() {
       savingsTarget: sTarget,
       topCategories: sortedCats,
       healthScore: score,
+      budgetOk: isBudgetCompliant,
+      incChangePct,
+      expChangePct,
     };
   }, [
     transactions,
@@ -334,10 +358,18 @@ export function ReportsTab() {
               <div className="bg-gray-50/90 dark:bg-gray-800/50 rounded-2xl p-3.5 border border-gray-100 dark:border-gray-800">
                 <div className="flex items-center justify-between text-[10px] font-bold text-gray-400">
                   <span>Kepatuhan Budget</span>
-                  <span className="text-[#65A30D] dark:text-[#D4F826] font-black">Aman</span>
+                  <span
+                    className={`font-black ${
+                      budgetOk
+                        ? 'text-[#65A30D] dark:text-[#D4F826]'
+                        : 'text-rose-500 dark:text-rose-400'
+                    }`}
+                  >
+                    {budgetOk ? 'Aman' : 'Overbudget'}
+                  </span>
                 </div>
                 <div className="text-base font-black text-gray-900 dark:text-white mt-1">
-                  Terkendali
+                  {budgetOk ? 'Terkendali' : 'Melebihi Alokasi'}
                 </div>
                 <span className="text-[10px] text-gray-400">Sesuai alokasi 50/30/20</span>
               </div>
@@ -345,7 +377,19 @@ export function ReportsTab() {
               <div className="bg-gray-50/90 dark:bg-gray-800/50 rounded-2xl p-3.5 border border-gray-100 dark:border-gray-800">
                 <div className="flex items-center justify-between text-[10px] font-bold text-gray-400">
                   <span>Dana Darurat</span>
-                  <span className="text-amber-500 font-black">Perlu Ditambah</span>
+                  <span
+                    className={`font-black ${
+                      dashboardSummary.emergencyFundRunwayMonths >= 3
+                        ? 'text-[#65A30D] dark:text-[#D4F826]'
+                        : 'text-amber-500'
+                    }`}
+                  >
+                    {dashboardSummary.emergencyFundRunwayMonths >= 6
+                      ? 'Sangat Aman'
+                      : dashboardSummary.emergencyFundRunwayMonths >= 3
+                      ? 'Aman'
+                      : 'Perlu Ditambah'}
+                  </span>
                 </div>
                 <div className="text-base font-black text-gray-900 dark:text-white mt-1">
                   {dashboardSummary.emergencyFundRunwayMonths} Bulan
@@ -359,45 +403,119 @@ export function ReportsTab() {
 
       {/* 2. Pemasukan & Pengeluaran 2-Column Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Pemasukan Card */}
         <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-2">
-          <div className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase tracking-wider">
-            <span className="w-6 h-6 rounded-lg bg-[#D4F826]/30 text-[#65A30D] dark:text-[#D4F826] flex items-center justify-center">
-              <TrendingUp size={13} />
-            </span>
-            <span>PEMASUKAN</span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase tracking-wider">
+              <span className="w-6 h-6 rounded-lg bg-[#D4F826]/30 text-[#65A30D] dark:text-[#D4F826] flex items-center justify-center">
+                <TrendingUp size={13} />
+              </span>
+              <span>PEMASUKAN REALISASI</span>
+            </div>
+            {monthIncome === 0 && (
+              <button
+                type="button"
+                onClick={() => openAddTransaction()}
+                className="text-[11px] font-bold text-emerald-600 dark:text-[#D4F826] hover:underline flex items-center gap-1 cursor-pointer"
+              >
+                <Plus size={12} />
+                <span>Catat Masuk</span>
+              </button>
+            )}
           </div>
+
           <div className="text-2xl font-black text-gray-900 dark:text-white tabular-nums">
             {formatRupiah(monthIncome, hide)}
           </div>
-          <span className="inline-flex items-center gap-1 text-[10px] font-black bg-[#EEF9B4] text-[#4D7C0F] px-2.5 py-0.5 rounded-lg">
-            ↗ 100% vs bulan lalu
-          </span>
+
+          {monthIncome === 0 ? (
+            <div className="space-y-1">
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 px-2.5 py-0.5 rounded-lg border border-amber-200/40">
+                Belum ada transaksi pemasukan
+              </span>
+              {budgetConfig.estimatedIncome > 0 && (
+                <p className="text-[10px] text-gray-400 font-medium">
+                  Rencana anggaran pemasukan: {formatRupiah(budgetConfig.estimatedIncome, hide)}
+                </p>
+              )}
+            </div>
+          ) : incChangePct !== null ? (
+            <span
+              className={`inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-0.5 rounded-lg ${
+                incChangePct >= 0
+                  ? 'bg-[#EEF9B4] text-[#4D7C0F]'
+                  : 'bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400'
+              }`}
+            >
+              {incChangePct >= 0 ? `↗ +${incChangePct}%` : `↘ ${incChangePct}%`} vs bulan lalu
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[10px] font-black bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 px-2.5 py-0.5 rounded-lg">
+              Tercatat aktif
+            </span>
+          )}
         </div>
 
+        {/* Pengeluaran Card */}
         <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-2">
           <div className="flex items-center gap-2 text-[10px] font-black text-gray-400 uppercase tracking-wider">
             <span className="w-6 h-6 rounded-lg bg-pink-100 dark:bg-pink-950/50 text-pink-500 flex items-center justify-center">
               <TrendingDown size={13} />
             </span>
-            <span>PENGELUARAN</span>
+            <span>PENGELUARAN REALISASI</span>
           </div>
+
           <div className="text-2xl font-black text-gray-900 dark:text-white tabular-nums">
             {formatRupiah(monthExpense, hide)}
           </div>
-          <span className="inline-flex items-center gap-1 text-[10px] font-black bg-pink-100 dark:bg-pink-950/50 text-pink-600 dark:text-pink-400 px-2.5 py-0.5 rounded-lg">
-            ↘ 100% vs bulan lalu
-          </span>
+
+          {monthExpense === 0 ? (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-gray-100 dark:bg-gray-800 text-gray-500 px-2.5 py-0.5 rounded-lg">
+              Belum ada pengeluaran
+            </span>
+          ) : expChangePct !== null ? (
+            <span
+              className={`inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-0.5 rounded-lg ${
+                expChangePct <= 0
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                  : 'bg-pink-100 dark:bg-pink-950/50 text-pink-600 dark:text-pink-400'
+              }`}
+            >
+              {expChangePct > 0 ? `↗ +${expChangePct}%` : `↘ ${expChangePct}%`} vs bulan lalu
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[10px] font-black bg-pink-100 dark:bg-pink-950/50 text-pink-600 dark:text-pink-400 px-2.5 py-0.5 rounded-lg">
+              Bulan berjalan
+            </span>
+          )}
         </div>
       </div>
 
-      {/* 3. Tabungan Bersih (Net Savings) */}
-      <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-2.5">
+      {/* 3. Sisa Kas / Tabungan Bersih (Net Cashflow) */}
+      <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
-              TABUNGAN BERSIH (NET SAVINGS)
-            </span>
-            <div className="text-2xl font-black text-[#65A30D] dark:text-[#D4F826] mt-0.5 tabular-nums">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
+                {netSavings >= 0 ? 'TABUNGAN BERSIH (SURPLUS KAS)' : 'ARUS KAS BERSIH (DEFISIT BULAN INI)'}
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase ${
+                  netSavings >= 0
+                    ? 'bg-[#D4F826] text-black'
+                    : 'bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400'
+                }`}
+              >
+                {netSavings >= 0 ? 'Surplus' : 'Defisit'}
+              </span>
+            </div>
+            <div
+              className={`text-2xl font-black mt-1 tabular-nums ${
+                netSavings >= 0
+                  ? 'text-[#65A30D] dark:text-[#D4F826]'
+                  : 'text-rose-600 dark:text-rose-400'
+              }`}
+            >
               {formatRupiah(netSavings, hide)}
             </div>
           </div>
@@ -410,12 +528,46 @@ export function ReportsTab() {
             </span>
           </div>
         </div>
+
+        {/* Progress bar */}
         <div className="w-full h-2.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
           <div
-            className="h-full rounded-full bg-[#D4F826] transition-all duration-300"
-            style={{ width: `${Math.min(100, savingsRatio)}%` }}
+            className={`h-full rounded-full transition-all duration-300 ${
+              netSavings >= 0 ? 'bg-[#D4F826]' : 'bg-rose-500'
+            }`}
+            style={{ width: `${netSavings >= 0 ? Math.min(100, savingsRatio) : 100}%` }}
           />
         </div>
+
+        {/* Informative Explanation Box when Income is 0 and Expense > 0 */}
+        {monthIncome === 0 && monthExpense > 0 ? (
+          <div className="p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/40 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="space-y-1">
+              <span className="font-extrabold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                <AlertCircle size={14} className="text-amber-600 shrink-0" />
+                <span>Kenapa Tabungan Bersih Bernilai Minus ({formatRupiah(netSavings)})?</span>
+              </span>
+              <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                Di bulan ini Anda telah mencatat pengeluaran ({formatRupiah(monthExpense)}), tetapi <strong>belum mencatat transaksi pemasukan (Rp0)</strong>. Rumus arus kas adalah (Pemasukan - Pengeluaran = Rp0 - {formatRupiah(monthExpense)} = {formatRupiah(netSavings)}). Pengeluaran ini sementara memotong saldo dompet yang ada sebelumnya.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => openAddTransaction()}
+              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-black text-xs shrink-0 cursor-pointer shadow-xs transition-transform active:scale-95"
+            >
+              + Catat Pemasukan
+            </button>
+          </div>
+        ) : netSavings < 0 ? (
+          <p className="text-xs text-rose-500 dark:text-rose-400 font-semibold">
+            Pengeluaran bulan ini melebihi pemasukan tercatat sebesar {formatRupiah(Math.abs(netSavings))}.
+          </p>
+        ) : monthIncome > 0 ? (
+          <p className="text-xs text-emerald-600 dark:text-[#D4F826] font-semibold">
+            Surplus kas bersih bulan ini sebesar {formatRupiah(netSavings)} ({savingsRatio}% dari pemasukan berhasil disimpan).
+          </p>
+        ) : null}
       </div>
 
       {/* 4. Bottom 2-Column Row: Rincian 50/30/20 + Top Pengeluaran */}

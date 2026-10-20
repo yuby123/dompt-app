@@ -249,7 +249,6 @@ export function DashboardTab() {
 
   const menuItems = [
     { id: 'budget', label: 'Budget', icon: PieChart, action: () => setActiveTab('budget') },
-    { id: 'scanner', label: 'Scanner', icon: Camera, action: () => openScanModal() },
     { id: 'goals', label: 'Goals', icon: Target, action: () => setActiveTab('goals') },
     { id: 'aset', label: 'Aset', icon: Landmark, action: () => setActiveTab('assets') },
     { id: 'subscriptions', label: 'Langganan', icon: CalendarClock, action: () => setActiveTab('subscriptions') },

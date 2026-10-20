@@ -12,6 +12,7 @@ import {
   ArrowRightLeft,
   X,
   Plus,
+  Camera,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -26,6 +27,7 @@ export function TransactionsTab() {
     goals,
     settings,
     openAddTransaction,
+    openScanModal,
     openEditTransaction,
     deleteTransaction,
     activeDate,
@@ -111,7 +113,7 @@ export function TransactionsTab() {
   return (
     <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
-      <div className="flex items-center justify-between pt-2 lg:pt-0 px-1">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 lg:pt-0 px-1">
         <div>
           <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
             Transaksi
@@ -120,13 +122,53 @@ export function TransactionsTab() {
             Uangmu lari ke mana aja? Pantau dan filter semua riwayatmu.
           </p>
         </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => openScanModal()}
+            className="h-10 px-3.5 sm:px-4 rounded-2xl bg-white dark:bg-[#16181D] hover:bg-gray-50 dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95"
+            title="Scan Struk & Bukti Transfer"
+          >
+            <Camera size={16} className="text-[#658500] dark:text-[#D4F826]" />
+            <span>Scan Struk</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => openAddTransaction()}
+            className="h-10 px-3.5 sm:px-4 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95"
+            title="Catat Transaksi Manual"
+          >
+            <Plus size={18} strokeWidth={2.8} />
+            <span className="hidden sm:inline">Catat Transaksi</span>
+            <span className="sm:hidden">Catat</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Quick AI OCR Scan Struk Banner */}
+      <div className="flex items-center justify-between p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-[#D4F826]/15 via-emerald-500/10 to-transparent border border-[#D4F826]/30 dark:border-[#D4F826]/20">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[#D4F826] text-black flex items-center justify-center shrink-0 shadow-xs">
+            <Camera size={20} strokeWidth={2.4} />
+          </div>
+          <div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-black text-gray-900 dark:text-white">Scan Struk / Bukti Transfer</span>
+              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-black/10 dark:bg-white/10 text-gray-800 dark:text-gray-200">AI OCR</span>
+            </div>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+              Foto struk belanja atau upload screenshot bukti transfer untuk catat otomatis.
+            </p>
+          </div>
+        </div>
         <button
           type="button"
-          onClick={() => openAddTransaction()}
-          className="h-10 px-3.5 lg:px-4 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95"
+          onClick={() => openScanModal()}
+          className="shrink-0 ml-2 px-3.5 py-2 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black font-black text-xs shadow-xs transition-transform active:scale-95 cursor-pointer flex items-center gap-1.5"
         >
-          <Plus size={18} strokeWidth={2.8} />
-          <span className="hidden sm:inline">Catat Transaksi</span>
+          <Camera size={14} strokeWidth={2.6} />
+          <span className="hidden sm:inline">Mulai Scan</span>
+          <span className="sm:hidden">Scan</span>
         </button>
       </div>
 
@@ -241,8 +283,26 @@ export function TransactionsTab() {
 
       {/* Transactions List Grouped by Date */}
       {groupedByDate.length === 0 ? (
-        <div className="py-16 text-center space-y-2 bg-white dark:bg-[#16181D] rounded-3xl p-6 border border-gray-100 dark:border-gray-800">
+        <div className="py-16 text-center space-y-4 bg-white dark:bg-[#16181D] rounded-3xl p-6 border border-gray-100 dark:border-gray-800">
           <p className="text-xs text-gray-400">Tidak ada transaksi yang cocok</p>
+          <div className="flex items-center justify-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => openScanModal()}
+              className="px-4 py-2 rounded-xl bg-white dark:bg-[#16181D] hover:bg-gray-50 dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <Camera size={14} className="text-[#658500] dark:text-[#D4F826]" />
+              <span>Scan Struk</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => openAddTransaction()}
+              className="px-4 py-2 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <Plus size={14} strokeWidth={2.8} />
+              <span>Catat Manual</span>
+            </button>
+          </div>
         </div>
       ) : (
         <div className="space-y-4">

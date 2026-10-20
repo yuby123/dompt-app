@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, ArrowRightLeft } from 'lucide-react';
 import { useApp } from './AppContext';
-import { formatNumberOnly } from '@/lib/formatters';
+import { formatNumberOnly, formatNominalInput, parseNominalInput } from '@/lib/formatters';
 
 function TransferModalForm() {
   const { setIsTransferOpen, wallets, transferFunds, addToast } = useApp();
@@ -15,7 +15,7 @@ function TransferModalForm() {
   const [amountStr, setAmountStr] = useState('');
   const [note, setNote] = useState('');
 
-  const currentAmount = parseInt(amountStr, 10) || 0;
+  const currentAmount = parseNominalInput(amountStr);
 
   const handleFromWalletChange = (newFromId: string) => {
     setFromWalletId(newFromId);
@@ -91,12 +91,12 @@ function TransferModalForm() {
         <div>
           <label className="text-xs font-semibold text-gray-500 block mb-1">Nominal Transfer (Rp)</label>
           <input
-            type="number"
+            type="text"
+            inputMode="numeric"
             placeholder="0"
             value={amountStr}
-            onChange={(e) => setAmountStr(e.target.value)}
+            onChange={(e) => setAmountStr(formatNominalInput(e.target.value))}
             required
-            min="100"
             className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-lg font-bold text-blue-600 dark:text-blue-400 focus:ring-2 focus:ring-blue-500"
           />
           <div className="flex gap-2 mt-2">
@@ -104,7 +104,7 @@ function TransferModalForm() {
               <button
                 key={v}
                 type="button"
-                onClick={() => setAmountStr(String(v))}
+                onClick={() => setAmountStr(formatNominalInput(v))}
                 className="px-2.5 py-1 text-xs rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 cursor-pointer"
               >
                 +{formatNumberOnly(v)}

@@ -26,12 +26,12 @@ export async function POST(req: NextRequest) {
         <body style="background:#0F766E;color:white;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
           <div style="text-align:center;">
             <h2>Menerima Screenshot...</h2>
-            <p>Membuka FadDompet untuk Ekstraksi Otomatis...</p>
+            <p>Membuka Dompt. untuk Ekstraksi Otomatis...</p>
           </div>
           <script>
             try {
-              sessionStorage.setItem('faddompet_shared_image', ${JSON.stringify(base64)});
-              sessionStorage.setItem('faddompet_shared_mime', ${JSON.stringify(mimeType)});
+              sessionStorage.setItem('dompt_shared_image', ${JSON.stringify(base64)});
+              sessionStorage.setItem('dompt_shared_mime', ${JSON.stringify(mimeType)});
             } catch (e) {
               console.error(e);
             }

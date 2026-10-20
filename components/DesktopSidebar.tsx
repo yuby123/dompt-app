@@ -6,7 +6,6 @@ import {
   Wallet,
   ArrowRightLeft,
   PieChart,
-  Camera,
   Target,
   Landmark,
   CreditCard,
@@ -32,7 +31,6 @@ export function DesktopSidebar() {
     activeTab,
     setActiveTab,
     openAddTransaction,
-    openScanModal,
     settings,
     setThemeMode,
     addToast,
@@ -75,7 +73,7 @@ export function DesktopSidebar() {
     : 'bg-[#D4F826] text-black font-extrabold shadow-xs';
 
   const navItems: {
-    id: TabType | 'scanner-modal';
+    id: TabType;
     label: string;
     icon: React.ElementType;
     hasLock?: boolean;
@@ -104,12 +102,6 @@ export function DesktopSidebar() {
       label: 'Budget',
       icon: PieChart,
       onClick: () => setActiveTab('budget'),
-    },
-    {
-      id: 'scanner-modal',
-      label: 'Scan Struk',
-      icon: Camera,
-      onClick: () => openScanModal(),
     },
     {
       id: 'goals',
@@ -187,7 +179,7 @@ export function DesktopSidebar() {
             onClick={() => setActiveTab('dashboard')}
             className="flex items-center gap-2.5 cursor-pointer group"
           >
-            <div className="w-8 h-8 rounded-xl bg-[#D4F826] text-black font-black flex items-center justify-center text-base shadow-xs group-hover:scale-105 transition-transform">
+            <div className={`w-8 h-8 rounded-xl ${isPink ? 'bg-[#FFA4A4]' : 'bg-[#D4F826]'} text-black font-black flex items-center justify-center text-base shadow-xs group-hover:scale-105 transition-all`}>
               D.
             </div>
             <span className="text-xl font-black tracking-tight text-gray-900 dark:text-white">
@@ -277,7 +269,7 @@ export function DesktopSidebar() {
           onClick={() => setActiveTab('settings')}
           className="flex items-center gap-3 p-2.5 rounded-2xl bg-gray-50/90 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer border border-gray-100 dark:border-gray-700/50"
         >
-          <div className="relative w-10 h-10 rounded-full border-2 border-[#D4F826] overflow-hidden bg-white dark:bg-gray-700 flex items-center justify-center shrink-0 text-lg">
+          <div className={`relative w-10 h-10 rounded-full border-2 ${isPink ? 'border-[#FFA4A4]' : 'border-[#D4F826]'} overflow-hidden bg-white dark:bg-gray-700 flex items-center justify-center shrink-0 text-lg transition-colors`}>
             {user?.photoURL ? (
               <img
                 src={user.photoURL}
@@ -293,7 +285,7 @@ export function DesktopSidebar() {
               {displayName}
             </p>
             <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="inline-block text-[9px] font-black bg-[#D4F826] text-black px-1.5 py-0.2 rounded-md uppercase">
+              <span className={`inline-block text-[9px] font-black ${isPink ? 'bg-[#FFA4A4]' : 'bg-[#D4F826]'} text-black px-1.5 py-0.2 rounded-md uppercase transition-colors`}>
                 PRO
               </span>
               {user && (

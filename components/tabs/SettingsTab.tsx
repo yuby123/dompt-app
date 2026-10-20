@@ -3,7 +3,6 @@
 import React, { useState } from 'react';
 import {
   Lock,
-  Coins,
   Check,
   FileSpreadsheet,
   RotateCcw,
@@ -28,7 +27,6 @@ export function SettingsTab() {
     setAccentColor,
     setAppPin,
     disableAppPin,
-    addAiCredits,
     exportToCSV,
     resetAllAppData,
     addToast,
@@ -63,6 +61,13 @@ export function SettingsTab() {
 
   const themeChoice = settings.themeMode || 'light';
   const accentChoice = settings.accentColor || 'lime';
+  const isPink = accentChoice === 'pink';
+  const accentBg = isPink ? 'bg-[#FFA4A4]' : 'bg-[#D4F826]';
+  const accentBtn = isPink
+    ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e]'
+    : 'bg-[#D4F826] hover:bg-[#c6ec15]';
+  const accentBorder = isPink ? 'border-[#FFA4A4]' : 'border-[#D4F826]';
+  const accentFocusRing = isPink ? 'focus:ring-[#FFA4A4]' : 'focus:ring-[#D4F826]';
 
   // PIN states
   const [isSettingPin, setIsSettingPin] = useState(false);
@@ -119,7 +124,7 @@ export function SettingsTab() {
           {/* 1. Profile Avatar & Badge Card */}
           <div className="bg-white dark:bg-[#16181D] rounded-3xl p-6 shadow-xs border border-gray-100 dark:border-gray-800 text-center space-y-3">
             <div className="relative w-24 h-24 mx-auto">
-              <div className="w-full h-full rounded-full border-4 border-[#D4F826] overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center shadow-md">
+              <div className={`w-full h-full rounded-full border-4 ${accentBorder} overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center shadow-md transition-colors`}>
                 {user?.photoURL ? (
                   <img
                     src={user.photoURL}
@@ -146,7 +151,7 @@ export function SettingsTab() {
                 {userNameInput}
               </h2>
               <div className="flex items-center justify-center gap-2 mt-1">
-                <span className="text-[10px] font-black bg-[#D4F826] text-black px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                <span className={`text-[10px] font-black ${accentBg} text-black px-2.5 py-0.5 rounded-full uppercase tracking-wider transition-colors`}>
                   PRO
                 </span>
                 <span className="text-[11px] text-gray-400 font-semibold">
@@ -171,7 +176,7 @@ export function SettingsTab() {
                     'Akun Anda aktif sebagai Dompt PRO Seumur Hidup.'
                   )
                 }
-                className="flex-1 py-2.5 rounded-2xl bg-[#D4F826] text-black text-xs font-black shadow-xs hover:bg-[#c6ec15] cursor-pointer"
+                className={`flex-1 py-2.5 rounded-2xl ${accentBtn} text-black text-xs font-black shadow-xs transition-colors cursor-pointer`}
               >
                 Kelola Langganan
               </button>
@@ -182,7 +187,7 @@ export function SettingsTab() {
           <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-[#D4F826] text-black flex items-center justify-center font-black">
+                <div className={`w-8 h-8 rounded-xl ${accentBg} text-black flex items-center justify-center font-black transition-colors`}>
                   <Users size={16} />
                 </div>
                 <div>
@@ -209,7 +214,7 @@ export function SettingsTab() {
             {user ? (
               <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 space-y-3">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-[#D4F826] text-black font-black flex items-center justify-center overflow-hidden shrink-0">
+                  <div className={`w-10 h-10 rounded-full ${accentBg} text-black font-black flex items-center justify-center overflow-hidden shrink-0 transition-colors`}>
                     {user.photoURL ? (
                       <img
                         src={user.photoURL}
@@ -255,13 +260,12 @@ export function SettingsTab() {
               <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 space-y-3">
                 <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
                   Saat ini Anda menggunakan <strong>Mode Tamu</strong>. Masuk dengan{' '}
-                  <strong>Email & Nama</strong> (Langsung Aktif di Vercel) atau{' '}
-                  <strong>Akun Google</strong> agar catatan terpisah untuk setiap pengguna.
+                  <strong>Email & Password</strong> agar catatan terpisah untuk setiap pengguna.
                 </p>
                 <button
                   type="button"
                   onClick={openLoginModal}
-                  className="w-full py-2.5 px-3 rounded-xl bg-[#D4F826] hover:bg-[#cbf11e] text-black text-xs font-black transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer"
+                  className={`w-full py-2.5 px-3 rounded-xl ${accentBtn} text-black text-xs font-black transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer`}
                 >
                   <LogIn size={15} />
                   <span>Masuk / Pilih Akun Pribadi</span>
@@ -270,47 +274,12 @@ export function SettingsTab() {
             )}
           </div>
 
-          {/* 3. AI Credits Card */}
-          <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-500 flex items-center justify-center">
-                <Coins size={16} />
-              </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
-                  AI Credits
-                </h3>
-                <p className="text-[10px] text-gray-400">
-                  Gunakan kredit untuk fitur pintar AI.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-gray-800">
-              <div>
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                  SISA KREDIT
-                </span>
-                <span className="text-xl font-black text-gray-900 dark:text-white mt-0.5 block tabular-nums">
-                  {settings.aiCredits}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => addAiCredits(100)}
-                className="px-4 py-2 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black shadow-xs cursor-pointer"
-              >
-                + Top Up
-              </button>
-            </div>
-          </div>
 
           {/* 4. Keamanan & PIN */}
           <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Lock size={16} className="text-[#84CC16]" />
+                <Lock size={16} className={isPink ? 'text-[#F43F5E]' : 'text-[#84CC16]'} />
                 <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
                   Keamanan Aplikasi
                 </h3>
@@ -386,7 +355,7 @@ export function SettingsTab() {
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-2 bg-[#D4F826] text-black rounded-xl text-xs font-bold"
+                    className={`flex-1 py-2 ${accentBg} text-black rounded-xl text-xs font-bold`}
                   >
                     Simpan PIN
                   </button>
@@ -416,7 +385,7 @@ export function SettingsTab() {
                 type="text"
                 value={userNameInput}
                 onChange={(e) => setUserNameInput(e.target.value)}
-                className="w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                className={`w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 ${accentFocusRing}`}
               />
             </div>
 
@@ -429,7 +398,7 @@ export function SettingsTab() {
                 type="email"
                 value={emailInput}
                 onChange={(e) => setEmailInput(e.target.value)}
-                className="w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                className={`w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 ${accentFocusRing}`}
               />
             </div>
 
@@ -442,7 +411,7 @@ export function SettingsTab() {
                 <select
                   value={currencyInput}
                   onChange={(e) => setCurrencyInput(e.target.value)}
-                  className="w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                  className={`w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 ${accentFocusRing}`}
                 >
                   <option value="IDR (Rp)">IDR (Rp) - Rupiah</option>
                   <option value="USD ($)">USD ($) - Dollar</option>
@@ -458,7 +427,7 @@ export function SettingsTab() {
                 <select
                   value={languageInput}
                   onChange={(e) => setLanguageInput(e.target.value)}
-                  className="w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                  className={`w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 ${accentFocusRing}`}
                 >
                   <option value="Bahasa Indonesia">Bahasa Indonesia</option>
                   <option value="English">English</option>
@@ -477,14 +446,20 @@ export function SettingsTab() {
                   onClick={() => setThemeMode('light')}
                   className={`py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer border ${
                     themeChoice === 'light'
-                      ? 'bg-[#EEF9B4] text-black border-[#84CC16] shadow-xs'
+                      ? isPink
+                        ? 'bg-[#FFE4E8] text-black border-[#F43F5E] shadow-xs'
+                        : 'bg-[#EEF9B4] text-black border-[#84CC16] shadow-xs'
                       : 'bg-gray-50 dark:bg-gray-800/60 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700/80 hover:bg-gray-100 dark:hover:bg-gray-800'
                   }`}
                 >
                   <Sun
                     size={15}
                     className={
-                      themeChoice === 'light' ? 'text-[#65A30D]' : 'text-gray-400'
+                      themeChoice === 'light'
+                        ? isPink
+                          ? 'text-[#E11D48]'
+                          : 'text-[#65A30D]'
+                        : 'text-gray-400'
                     }
                   />
                   <span>Terang</span>
@@ -494,7 +469,9 @@ export function SettingsTab() {
                   onClick={() => setThemeMode('dark')}
                   className={`py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer border ${
                     themeChoice === 'dark'
-                      ? 'bg-gray-900 text-white border-gray-900 dark:bg-[#EEF9B4]/20 dark:text-[#D4F826] dark:border-[#D4F826] shadow-xs'
+                      ? isPink
+                        ? 'bg-gray-900 text-white border-gray-900 dark:bg-[#FFA4A4]/20 dark:text-[#FFA4A4] dark:border-[#FFA4A4] shadow-xs'
+                        : 'bg-gray-900 text-white border-gray-900 dark:bg-[#EEF9B4]/20 dark:text-[#D4F826] dark:border-[#D4F826] shadow-xs'
                       : 'bg-gray-50 dark:bg-gray-800/60 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700/80 hover:bg-gray-100 dark:hover:bg-gray-800'
                   }`}
                 >
@@ -516,6 +493,7 @@ export function SettingsTab() {
                 <div className="flex items-center gap-3 mt-2">
                   <button
                     type="button"
+                    data-swatch="lime"
                     onClick={() => setAccentColor('lime')}
                     className={`w-8 h-8 rounded-full bg-[#D4F826] border-2 cursor-pointer transition-transform ${
                       accentChoice === 'lime'
@@ -526,6 +504,7 @@ export function SettingsTab() {
                   />
                   <button
                     type="button"
+                    data-swatch="pink"
                     onClick={() => setAccentColor('pink')}
                     className={`w-8 h-8 rounded-full bg-[#FFA4A4] border-2 cursor-pointer transition-transform ${
                       accentChoice === 'pink'
@@ -546,7 +525,7 @@ export function SettingsTab() {
                     type="button"
                     onClick={() => setShowDecimals(!showDecimals)}
                     className={`w-12 h-6.5 rounded-full p-1 transition-colors relative cursor-pointer ${
-                      showDecimals ? 'bg-[#D4F826]' : 'bg-gray-200 dark:bg-gray-700'
+                      showDecimals ? accentBg : 'bg-gray-200 dark:bg-gray-700'
                     }`}
                   >
                     <div
@@ -563,11 +542,7 @@ export function SettingsTab() {
             {/* Simpan Perubahan Button */}
             <button
               type="submit"
-              className={`w-full py-3.5 ${
-                accentChoice === 'pink'
-                  ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e]'
-                  : 'bg-[#D4F826] hover:bg-[#c6ec15]'
-              } text-black text-xs font-black rounded-2xl shadow-xs transition-colors cursor-pointer mt-2 flex items-center justify-center gap-1.5`}
+              className={`w-full py-3.5 ${accentBtn} text-black text-xs font-black rounded-2xl shadow-xs transition-colors cursor-pointer mt-2 flex items-center justify-center gap-1.5`}
             >
               <Check size={16} strokeWidth={2.8} />
               <span>Simpan Perubahan</span>

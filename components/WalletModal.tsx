@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { X, Trash2 } from 'lucide-react';
 import { useApp } from './AppContext';
 import { WalletType } from '@/lib/types';
+import { formatNominalInput, parseNominalInput } from '@/lib/formatters';
 
 const WALLET_TYPE_OPTIONS: { type: WalletType; label: string; icon: string; defaultColor: string }[] = [
   { type: 'cash', label: 'Tunai', icon: 'Banknote', defaultColor: '#16A34A' },
@@ -23,7 +24,7 @@ function WalletModalForm() {
   const [name, setName] = useState(() => editingWallet?.name || '');
   const [type, setType] = useState<WalletType>(() => editingWallet?.type || 'ewallet');
   const [initialBalance, setInitialBalance] = useState<string>(() =>
-    editingWallet ? String(editingWallet.initialBalance) : '0'
+    editingWallet ? formatNominalInput(Math.abs(editingWallet.initialBalance)) : '0'
   );
   const [color, setColor] = useState(() => editingWallet?.color || '#0F766E');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -34,7 +35,7 @@ function WalletModalForm() {
     e.preventDefault();
     if (!name.trim()) return;
 
-    const rawNum = parseInt(initialBalance, 10) || 0;
+    const rawNum = parseNominalInput(initialBalance);
     const balanceNum = isDebtType && rawNum > 0 ? -Math.abs(rawNum) : rawNum;
     const selectedOption = WALLET_TYPE_OPTIONS.find((o) => o.type === type);
 
@@ -144,10 +145,11 @@ function WalletModalForm() {
             {isDebtType ? 'Tagihan Berjalan / Saldo Awal (Rp)' : 'Saldo Awal (Rp)'}
           </label>
           <input
-            type="number"
+            type="text"
+            inputMode="numeric"
             placeholder="0"
             value={initialBalance}
-            onChange={(e) => setInitialBalance(e.target.value)}
+            onChange={(e) => setInitialBalance(formatNominalInput(e.target.value))}
             className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-base font-bold text-teal-700 dark:text-teal-400 focus:ring-2 focus:ring-teal-500"
           />
           {isDebtType && (

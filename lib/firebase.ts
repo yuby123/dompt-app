@@ -11,7 +11,13 @@ import {
   signOut,
   User,
 } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import {
+  getFirestore,
+  initializeFirestore,
+  setLogLevel,
+  doc,
+  getDocFromServer,
+} from 'firebase/firestore';
 import firebaseConfig from '@/firebase-applet-config.json';
 
 export const effectiveFirebaseConfig = {
@@ -29,6 +35,21 @@ export const effectiveFirebaseConfig = {
 // Initialize Firebase App
 export const app =
   getApps().length > 0 ? getApp() : initializeApp(effectiveFirebaseConfig);
+
+// Silence internal @firebase/firestore WebChannel timeout console.error logs
+// and enable HTTP long-polling fallback for iframe/proxy/mobile networks
+try {
+  setLogLevel('silent');
+  initializeFirestore(
+    app,
+    {
+      experimentalForceLongPolling: true,
+    },
+    effectiveFirebaseConfig.firestoreDatabaseId
+  );
+} catch {
+  // Firestore instance already initialized
+}
 
 // Initialize Firestore with specific database ID
 export const db = getFirestore(app, effectiveFirebaseConfig.firestoreDatabaseId);
@@ -75,6 +96,18 @@ export interface FirestoreErrorInfo {
   };
 }
 
+export function isFirestoreOfflineError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error || '');
+  const code = (error as any)?.code || '';
+  return (
+    code === 'unavailable' ||
+    msg.includes('client is offline') ||
+    msg.includes('Could not reach Cloud Firestore') ||
+    msg.includes('Failed to get document because the client is offline') ||
+    msg.includes('network-request-failed')
+  );
+}
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
@@ -92,7 +125,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  if (isFirestoreOfflineError(error)) {
+    console.warn('Firestore Offline Fallback:', JSON.stringify(errInfo));
+  } else {
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+  }
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -102,8 +139,7 @@ export async function testConnection(): Promise<boolean> {
     await getDocFromServer(doc(db, 'test', 'connection'));
     return true;
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firebase client is offline. Checking connection...');
+    if (isFirestoreOfflineError(error)) {
       return false;
     }
     // Permission denied on test/connection is normal when catch-all deny rule is active

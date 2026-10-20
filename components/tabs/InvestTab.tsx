@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { TrendingUp, Plus, ArrowUpRight, X, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
-import { formatRupiah } from '@/lib/formatters';
+import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
 
 interface InvestmentItem {
   id: string;
@@ -56,7 +56,7 @@ export function InvestTab() {
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = Number(amount.replace(/\D/g, ''));
+    const val = parseNominalInput(amount);
     if (!name.trim() || val <= 0) return;
 
     const updated: InvestmentItem[] = [
@@ -266,9 +266,10 @@ export function InvestTab() {
                   </label>
                   <input
                     type="text"
+                    inputMode="numeric"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="Rp 1.000.000"
+                    onChange={(e) => setAmount(formatNominalInput(e.target.value))}
+                    placeholder="Contoh: 1.000.000"
                     required
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />

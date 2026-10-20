@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { CreditCard, Plus, CheckCircle2, Clock, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
-import { formatRupiah } from '@/lib/formatters';
+import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
 
 interface DebtItem {
   id: string;
@@ -63,7 +63,7 @@ export function DebtTab() {
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = Number(amount.replace(/\D/g, ''));
+    const val = parseNominalInput(amount);
     if (!name.trim() || val <= 0) return;
 
     const updated = [
@@ -250,9 +250,10 @@ export function DebtTab() {
                   <label className="text-xs font-bold text-gray-500 block mb-1">Nominal (Rp)</label>
                   <input
                     type="text"
+                    inputMode="numeric"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="Rp 500.000"
+                    onChange={(e) => setAmount(formatNominalInput(e.target.value))}
+                    placeholder="Contoh: 500.000"
                     required
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border rounded-2xl text-xs font-bold"
                   />

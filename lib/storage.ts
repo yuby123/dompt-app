@@ -631,7 +631,15 @@ export function loadStoredCategories(): Category[] {
       saveStoredCategories(DEFAULT_CATEGORIES);
       return DEFAULT_CATEGORIES;
     }
-    return JSON.parse(raw);
+    const parsed: Category[] = JSON.parse(raw);
+    const existingIds = new Set(parsed.map((c) => c.id));
+    const missing = DEFAULT_CATEGORIES.filter((c) => !existingIds.has(c.id));
+    if (missing.length > 0) {
+      const merged = [...parsed, ...missing];
+      saveStoredCategories(merged);
+      return merged;
+    }
+    return parsed;
   } catch (err) {
     console.error('Failed to load categories:', err);
     return DEFAULT_CATEGORIES;

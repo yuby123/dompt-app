@@ -1,5 +1,5 @@
 {
-  "name": "FadDompet",
+  "name": "Dompt.",
   "description": "Offline-first personal finance tracker. Kelola pemasukan, pengeluaran, dompet, dan anggaran keuangan pribadi dengan cepat, aman, dan tanpa iklan.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

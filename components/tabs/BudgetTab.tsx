@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
-import { formatRupiah } from '@/lib/formatters';
+import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
 import { BudgetGroup } from '@/lib/types';
 
 export function BudgetTab() {
@@ -68,43 +68,122 @@ export function BudgetTab() {
   const savingsSubs = budgetConfig.subcategories.filter((s) => s.group === 'tabungan');
 
   // Dynamic subcategory spent amounts calculated from transactions this month
-  const subSpentMap = useMemo(() => {
+  const { subSpentMap, unallocatedGroupSpent } = useMemo(() => {
     const map: Record<string, number> = {};
+    const unallocatedMap: Record<BudgetGroup, number> = {
+      kebutuhan: 0,
+      keinginan: 0,
+      tabungan: 0,
+    };
 
-    const catMap = new Map<string, string>(
-      categories.map((c) => [c.id, c.name.toLowerCase()])
+    const catMap = new Map<string, { name: string; group?: BudgetGroup }>(
+      categories.map((c) => [c.id, { name: c.name.toLowerCase(), group: c.budgetGroup }])
     );
 
     transactions.forEach((tx) => {
       const d = new Date(tx.date);
       if (d.getFullYear() === activeYear && d.getMonth() === activeMonth) {
         if (tx.type === 'expense') {
-          const catName = tx.categoryId ? catMap.get(tx.categoryId) || '' : '';
-          const matchSub = budgetConfig.subcategories.find(
-            (s) =>
-              (tx.categoryId && s.id.replace('sub-', '') === tx.categoryId.replace('cat-', '')) ||
-              (catName && s.name.toLowerCase().includes(catName)) ||
-              (catName && catName.includes(s.name.toLowerCase())) ||
-              (tx.note && s.name.toLowerCase().includes(tx.note.toLowerCase()))
-          );
+          const catInfo = tx.categoryId ? catMap.get(tx.categoryId) : undefined;
+          const catName = catInfo?.name || '';
+          const txGroup = tx.budgetGroup || catInfo?.group;
+
+          const cleanTxNote = (tx.note || '')
+            .toLowerCase()
+            .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)/gi, '')
+            .trim();
+          const rawTxNote = (tx.note || '').toLowerCase().trim();
+
+          // 1. Try matching subcategory in the same budget group first (if txGroup is known)
+          let matchSub = budgetConfig.subcategories.find((s) => {
+            if (txGroup && s.group !== txGroup) return false;
+
+            const subNameLower = s.name.toLowerCase().trim();
+
+            // A. Direct ID match (e.g. sub-makan vs cat-makan)
+            if (tx.categoryId && s.id.replace('sub-', '') === tx.categoryId.replace('cat-', '')) {
+              return true;
+            }
+
+            // B. Note matches subcategory name (bidirectional)
+            if (subNameLower) {
+              if (
+                cleanTxNote === subNameLower ||
+                rawTxNote.includes(subNameLower) ||
+                cleanTxNote.includes(subNameLower) ||
+                subNameLower.includes(cleanTxNote)
+              ) {
+                return true;
+              }
+
+              // C. Keyword overlap (e.g. "wifi" in "wifi & internet")
+              const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
+              const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
+              if (subWords.length > 0 && noteWords.length > 0) {
+                const hasCommon = subWords.some((sw) =>
+                  noteWords.some((nw) => nw === sw || nw.includes(sw) || sw.includes(nw))
+                );
+                if (hasCommon) return true;
+              }
+            }
+
+            // D. Category Name matches subcategory name
+            if (catName && subNameLower) {
+              if (catName.includes(subNameLower) || subNameLower.includes(catName)) {
+                return true;
+              }
+            }
+
+            return false;
+          });
+
+          // 2. If no match within group, search all subcategories by note / keywords
+          if (!matchSub && (cleanTxNote || rawTxNote)) {
+            matchSub = budgetConfig.subcategories.find((s) => {
+              const subNameLower = s.name.toLowerCase().trim();
+              if (!subNameLower) return false;
+              if (
+                cleanTxNote === subNameLower ||
+                rawTxNote.includes(subNameLower) ||
+                cleanTxNote.includes(subNameLower) ||
+                subNameLower.includes(cleanTxNote)
+              ) {
+                return true;
+              }
+              const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
+              const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
+              return subWords.some((sw) =>
+                noteWords.some((nw) => nw === sw || nw.includes(sw) || sw.includes(nw))
+              );
+            });
+          }
+
           if (matchSub) {
             map[matchSub.id] = (map[matchSub.id] || 0) + tx.amount;
+          } else if (txGroup) {
+            unallocatedMap[txGroup] = (unallocatedMap[txGroup] || 0) + tx.amount;
+          } else {
+            unallocatedMap['kebutuhan'] = (unallocatedMap['kebutuhan'] || 0) + tx.amount;
           }
         } else if (tx.type === 'transfer' && tx.budgetGroup === 'tabungan') {
           const matchSub = budgetConfig.subcategories.find((s) => s.group === 'tabungan');
           if (matchSub) {
             map[matchSub.id] = (map[matchSub.id] || 0) + tx.amount;
+          } else {
+            unallocatedMap['tabungan'] = (unallocatedMap['tabungan'] || 0) + tx.amount;
           }
         }
       }
     });
-    return map;
+
+    return { subSpentMap: map, unallocatedGroupSpent: unallocatedMap };
   }, [transactions, categories, budgetConfig.subcategories, activeYear, activeMonth]);
 
   const calculateGroupSpent = (group: BudgetGroup) => {
-    return budgetConfig.subcategories
+    const subTotal = budgetConfig.subcategories
       .filter((s) => s.group === group)
       .reduce((acc, s) => acc + (subSpentMap[s.id] || 0), 0);
+    return subTotal + (unallocatedGroupSpent[group] || 0);
   };
 
   const needsSpent = calculateGroupSpent('kebutuhan');
@@ -115,7 +194,7 @@ export function BudgetTab() {
 
   const handleSaveIncome = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = Number(tempIncomeInput.replace(/\D/g, '')) || 0;
+    const val = parseNominalInput(tempIncomeInput);
     updateBudgetConfig({ estimatedIncome: val });
     setIsEditIncomeOpen(false);
   };
@@ -133,7 +212,7 @@ export function BudgetTab() {
 
   const handleCreateSubcategory = (e: React.FormEvent) => {
     e.preventDefault();
-    const amountVal = Number(newSubAmount.replace(/\D/g, ''));
+    const amountVal = parseNominalInput(newSubAmount);
     if (!newSubName.trim()) return;
 
     if (editingSubId) {
@@ -175,7 +254,7 @@ export function BudgetTab() {
     setEditingSubId(sub.id);
     setTargetGroup(sub.group);
     setNewSubName(sub.name);
-    setNewSubAmount(String(sub.allocatedAmount));
+    setNewSubAmount(formatNominalInput(sub.allocatedAmount));
     setNewSubEmoji(sub.emoji || '📦');
     setNewSubDueDay(sub.dueDateDay ? String(sub.dueDateDay) : '');
     setActiveMenuSubId(null);
@@ -206,7 +285,7 @@ export function BudgetTab() {
               <button
                 type="button"
                 onClick={() => {
-                  setTempIncomeInput(String(totalIncome));
+                  setTempIncomeInput(formatNominalInput(totalIncome));
                   setIsEditIncomeOpen(true);
                 }}
                 className="p-1 text-gray-400 hover:text-white rounded-lg transition-colors cursor-pointer"
@@ -648,9 +727,10 @@ export function BudgetTab() {
                   </label>
                   <input
                     type="text"
+                    inputMode="numeric"
                     value={tempIncomeInput}
-                    onChange={(e) => setTempIncomeInput(e.target.value)}
-                    placeholder="Rp 5.000.000"
+                    onChange={(e) => setTempIncomeInput(formatNominalInput(e.target.value))}
+                    placeholder="Contoh: 5.000.000"
                     className="w-full p-3.5 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-2xl text-base font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
                 </div>
@@ -891,9 +971,10 @@ export function BudgetTab() {
                   </label>
                   <input
                     type="text"
+                    inputMode="numeric"
                     value={newSubAmount}
-                    onChange={(e) => setNewSubAmount(e.target.value)}
-                    placeholder="Rp 200.000"
+                    onChange={(e) => setNewSubAmount(formatNominalInput(e.target.value))}
+                    placeholder="Contoh: 200.000"
                     required
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />

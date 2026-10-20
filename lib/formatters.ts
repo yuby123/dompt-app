@@ -50,9 +50,11 @@ export function formatFullDateIndo(dateStr: string): string {
   return `${day} ${month} ${year}`;
 }
 
-export function formatRelativeDate(dateStr: string, baseDateStr = '2026-03-25'): string {
+export function formatRelativeDate(dateStr: string, baseDateStr?: string): string {
   const target = new Date(dateStr);
-  const now = new Date(baseDateStr.includes('T') ? baseDateStr : `${baseDateStr}T12:00:00`);
+  const now = baseDateStr
+    ? new Date(baseDateStr.includes('T') ? baseDateStr : `${baseDateStr}T12:00:00`)
+    : new Date();
   
   const isToday =
     target.getDate() === now.getDate() &&

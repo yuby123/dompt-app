@@ -19,11 +19,13 @@ const STORAGE_KEYS = {
 };
 
 export function getInitialSampleTransactions(): Transaction[] {
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const makeDate = (day: number, hour: number, min: number) => {
     const dd = String(day).padStart(2, '0');
     const hh = String(hour).padStart(2, '0');
     const mm = String(min).padStart(2, '0');
-    return `2026-03-${dd}T${hh}:${mm}:00`;
+    return `${ym}-${dd}T${hh}:${mm}:00`;
   };
 
   return [
@@ -342,14 +344,16 @@ export function getInitialSampleTransactions(): Transaction[] {
 }
 
 export function getInitialBudgets(): Budget[] {
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   return [
     {
       id: 'budget-total-current',
       categoryId: null,
-      month: '2026-03',
+      month: ym,
       limitAmount: 4000000,
-      createdAt: '2026-03-01T00:00:00',
-      updatedAt: '2026-03-01T00:00:00',
+      createdAt: `${ym}-01T00:00:00`,
+      updatedAt: `${ym}-01T00:00:00`,
     },
   ];
 }
@@ -359,7 +363,7 @@ export interface LocalAccountProfile {
   displayName: string;
   email: string;
   photoURL: string | null;
-  isLocalAccount: true;
+  isLocalAccount?: boolean;
   createdAt: string;
 }
 
@@ -371,7 +375,16 @@ const ACTIVE_LOCAL_USER_KEY = 'budggt_active_local_user';
 const LOCAL_ACCOUNTS_LIST_KEY = 'budggt_local_accounts_list';
 const REGISTERED_ACCOUNTS_KEY = 'budggt_registered_accounts_v1';
 
-function hashPassword(email: string, password: string): string {
+export function getCloudAccountUid(email: string): string {
+  const clean = email.trim().toLowerCase();
+  const slug = clean
+    .replace(/@/g, '_at_')
+    .replace(/\./g, '_dot_')
+    .replace(/[^a-z0-9_-]/g, '_');
+  return `acct_${slug.slice(0, 100)}`;
+}
+
+export function hashAccountPassword(email: string, password: string): string {
   const normalized = `dompt_v1_${email.trim().toLowerCase()}::${password}`;
   if (typeof window !== 'undefined' && typeof window.btoa === 'function') {
     return window.btoa(encodeURIComponent(normalized));
@@ -391,7 +404,7 @@ export function loadRegisteredAccounts(): RegisteredAccountRecord[] {
   }
 }
 
-function saveRegisteredAccounts(records: RegisteredAccountRecord[]): void {
+export function saveRegisteredAccounts(records: RegisteredAccountRecord[]): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(REGISTERED_ACCOUNTS_KEY, JSON.stringify(records));
@@ -400,11 +413,19 @@ function saveRegisteredAccounts(records: RegisteredAccountRecord[]): void {
   }
 }
 
+export function cacheRegisteredAccountLocally(record: RegisteredAccountRecord): void {
+  const accounts = loadRegisteredAccounts();
+  const filtered = accounts.filter(
+    (a) => a.email.toLowerCase() !== record.email.toLowerCase() && a.uid !== record.uid
+  );
+  saveRegisteredAccounts([record, ...filtered]);
+}
+
 export function registerAccountWithPassword(
   name: string,
   email: string,
   password: string
-): { ok: true; profile: LocalAccountProfile } | { ok: false; error: string } {
+): { ok: true; profile: LocalAccountProfile; record: RegisteredAccountRecord } | { ok: false; error: string } {
   const cleanName = name.trim();
   const cleanEmail = email.trim().toLowerCase();
 
@@ -427,16 +448,15 @@ export function registerAccountWithPassword(
     };
   }
 
-  const safeId = cleanEmail.replace(/[^a-z0-9]/g, '_');
-  const uid = `user_${safeId}`;
+  const uid = getCloudAccountUid(cleanEmail);
   const now = new Date().toISOString();
   const newRecord: RegisteredAccountRecord = {
     uid,
     displayName: cleanName,
     email: cleanEmail,
-    passwordHash: hashPassword(cleanEmail, password),
+    passwordHash: hashAccountPassword(cleanEmail, password),
     photoURL: null,
-    isLocalAccount: true,
+    isLocalAccount: false,
     createdAt: now,
   };
 
@@ -449,17 +469,17 @@ export function registerAccountWithPassword(
     displayName: newRecord.displayName,
     email: newRecord.email,
     photoURL: null,
-    isLocalAccount: true,
+    isLocalAccount: false,
     createdAt: newRecord.createdAt,
   };
   saveActiveLocalUser(profile);
-  return { ok: true, profile };
+  return { ok: true, profile, record: newRecord };
 }
 
 export function loginAccountWithPassword(
   email: string,
   password: string
-): { ok: true; profile: LocalAccountProfile } | { ok: false; error: string } {
+): { ok: true; profile: LocalAccountProfile; record: RegisteredAccountRecord } | { ok: false; error: string } {
   const cleanEmail = email.trim().toLowerCase();
   if (!cleanEmail || !cleanEmail.includes('@')) {
     return { ok: false, error: 'Masukkan alamat email yang valid.' };
@@ -477,7 +497,7 @@ export function loginAccountWithPassword(
     };
   }
 
-  const expectedHash = hashPassword(cleanEmail, password);
+  const expectedHash = hashAccountPassword(cleanEmail, password);
   if (matched.passwordHash !== expectedHash) {
     return {
       ok: false,
@@ -485,16 +505,23 @@ export function loginAccountWithPassword(
     };
   }
 
+  const cloudUid = getCloudAccountUid(cleanEmail);
+  const normalizedRecord: RegisteredAccountRecord = {
+    ...matched,
+    uid: cloudUid,
+    isLocalAccount: false,
+  };
+
   const profile: LocalAccountProfile = {
-    uid: matched.uid,
+    uid: cloudUid,
     displayName: matched.displayName,
     email: matched.email,
     photoURL: matched.photoURL,
-    isLocalAccount: true,
+    isLocalAccount: false,
     createdAt: matched.createdAt,
   };
   saveActiveLocalUser(profile);
-  return { ok: true, profile };
+  return { ok: true, profile, record: normalizedRecord };
 }
 
 function getScopedKey(baseKey: string, scopeUid?: string): string {

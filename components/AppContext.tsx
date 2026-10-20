@@ -19,10 +19,14 @@ import {
   WalletWithBalance,
 } from '@/lib/types';
 import {
+  cacheRegisteredAccountLocally,
   clearAllData,
+  getCloudAccountUid,
   getInitialBudgets,
   getInitialSampleTransactions,
+  hashAccountPassword,
   loadActiveLocalUser,
+  loadRegisteredAccounts,
   loadStoredBudgetConfig,
   loadStoredBudgets,
   loadStoredCategories,
@@ -69,6 +73,8 @@ import {
 import { onAuthStateChanged } from 'firebase/auth';
 import {
   syncUserProfile,
+  registerCloudEmailAccount,
+  loginCloudEmailAccount,
   fetchUserWallets,
   saveUserWallet,
   deleteUserWallet,
@@ -264,8 +270,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [goals, setGoals] = useState<Goal[]>(DEFAULT_GOALS);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
-  // Active Date & Reference Period (Defaults to '2026-03-25' matching demo app reference)
-  const [activeDate, setActiveDate] = useState<string>('2026-03-25');
+  // Active Date & Reference Period (Defaults to current real date & month)
+  const getTodayDateStr = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const [activeDate, setActiveDate] = useState<string>(() => getTodayDateStr());
   const activeDateObj = useMemo(() => new Date(activeDate + 'T12:00:00'), [activeDate]);
   const activeYear = activeDateObj.getFullYear();
   const activeMonth = activeDateObj.getMonth();
@@ -292,8 +306,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const openLoginModal = () => setIsLoginModalOpen(true);
 
-  const isCloudUser = Boolean(user?.uid && !(user as any).isLocalAccount);
-  const localScopeUid = (user as any)?.isLocalAccount ? user?.uid : undefined;
+  const isCloudUser = Boolean(user?.uid);
+  const localScopeUid = user?.uid || undefined;
 
   // Security / App Lock & Toasts
   const [isLocked, setIsLocked] = useState(false);
@@ -311,84 +325,223 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  const applyLocalProfileSession = (profile: LocalAccountProfile, isNewRegistration = false) => {
-    saveActiveLocalUser(profile);
-    setUser(profile);
-    setWallets(loadStoredWallets(profile.uid));
-    setTransactions(loadStoredTransactions(profile.uid));
-    setGoals(loadStoredGoals(profile.uid));
-    setBudgetConfig(loadStoredBudgetConfig(profile.uid));
+  // Load and sync an Email/Password account session with Cloud Firestore Database
+  const loadAndSyncCloudAccountSession = async (
+    profile: LocalAccountProfile,
+    isNewRegistration = false,
+    silentToast = false
+  ) => {
+    const cloudUid = getCloudAccountUid(profile.email);
+    const normalizedProfile: LocalAccountProfile = {
+      ...profile,
+      uid: cloudUid,
+      isLocalAccount: false,
+    };
+
+    saveActiveLocalUser(normalizedProfile);
+    setUser(normalizedProfile);
     setSettings((prev) => {
       const next = {
         ...prev,
-        userName: profile.displayName,
-        userEmail: profile.email,
+        userName: normalizedProfile.displayName,
+        userEmail: normalizedProfile.email,
         hideBalance: false,
       };
       saveStoredSettings(next);
       return next;
     });
+    setActiveDate(getTodayDateStr());
+
+    try {
+      const [loadedWallets, loadedTx, loadedGoals, loadedBudget] = await Promise.all([
+        fetchUserWallets(cloudUid),
+        fetchUserTransactions(cloudUid),
+        fetchUserGoals(cloudUid),
+        fetchUserBudgetConfig(cloudUid),
+      ]);
+
+      // Check if user had local data under legacy uid (e.g. user_...) that needs one-time upload to Firestore
+      const legacyUid = `user_${normalizedProfile.email.replace(/[^a-z0-9]/g, '_')}`;
+      const localTx = loadStoredTransactions(cloudUid);
+      const legacyTx = loadStoredTransactions(legacyUid);
+      const txToMigrate = localTx.length > 0 ? localTx : legacyTx;
+
+      if ((!loadedTx || loadedTx.length === 0) && txToMigrate.length > 0 && !isNewRegistration) {
+        for (const tx of txToMigrate) {
+          await saveUserTransaction(cloudUid, tx);
+        }
+        setTransactions(txToMigrate);
+        saveStoredTransactions(txToMigrate, cloudUid);
+      } else {
+        const finalTx = loadedTx || [];
+        setTransactions(finalTx);
+        saveStoredTransactions(finalTx, cloudUid);
+      }
+
+      if (loadedWallets && loadedWallets.length > 0) {
+        setWallets(loadedWallets);
+        saveStoredWallets(loadedWallets, cloudUid);
+      } else {
+        const fallbackWallets = loadStoredWallets(cloudUid);
+        setWallets(fallbackWallets);
+      }
+
+      const finalGoals = loadedGoals || [];
+      setGoals(finalGoals);
+      saveStoredGoals(finalGoals, cloudUid);
+
+      const finalBudget = loadedBudget || EMPTY_BUDGET_CONFIG;
+      setBudgetConfig(finalBudget);
+      saveStoredBudgetConfig(finalBudget, cloudUid);
+    } catch (err) {
+      console.warn('Fallback to cached account data while syncing Firestore:', err);
+      setWallets(loadStoredWallets(cloudUid));
+      setTransactions(loadStoredTransactions(cloudUid));
+      setGoals(loadStoredGoals(cloudUid));
+      setBudgetConfig(loadStoredBudgetConfig(cloudUid));
+    }
+
     setDataResetVersion((v) => v + 1);
-    addToast(
-      isNewRegistration ? 'Pendaftaran Berhasil' : 'Login Berhasil',
-      `Selamat datang, ${profile.displayName}! Akun Anda telah aktif.`,
-      'success'
-    );
+    if (!silentToast) {
+      addToast(
+        isNewRegistration ? 'Pendaftaran Berhasil' : 'Login Berhasil',
+        `Selamat datang, ${normalizedProfile.displayName}! Akun Anda tersinkronisasi di Cloud DB.`,
+        'success'
+      );
+    }
   };
 
-  // Register new account with Email & Password
+  // Register new account with Email & Password (saved in Cloud Firestore DB so it works on PC & HP)
   const registerWithEmailPassword = async (
     name: string,
     email: string,
     password: string
   ): Promise<{ ok: boolean; error?: string }> => {
-    const localRes = registerAccountWithPassword(name, email, password);
+    const cleanName = name.trim();
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanName) {
+      return { ok: false, error: 'Nama panggilan wajib diisi.' };
+    }
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { ok: false, error: 'Masukkan alamat email yang valid.' };
+    }
+    if (!password || password.length < 6) {
+      return { ok: false, error: 'Password minimal harus terdiri dari 6 karakter.' };
+    }
+
+    const cloudUid = getCloudAccountUid(cleanEmail);
+    const passwordHash = hashAccountPassword(cleanEmail, password);
+
+    // 1. Save account credentials directly to Cloud Firestore Database
+    try {
+      const cloudRes = await registerCloudEmailAccount(cloudUid, cleanName, cleanEmail, passwordHash);
+      if (!cloudRes.ok) {
+        return { ok: false, error: cloudRes.error };
+      }
+
+      const now = new Date().toISOString();
+      const record = {
+        uid: cloudUid,
+        displayName: cleanName,
+        email: cleanEmail,
+        passwordHash,
+        photoURL: null,
+        isLocalAccount: false,
+        createdAt: cloudRes.profile.createdAt || now,
+      };
+      cacheRegisteredAccountLocally(record);
+      resetStorageToZero(cloudUid);
+
+      await loadAndSyncCloudAccountSession(
+        {
+          uid: cloudUid,
+          displayName: cleanName,
+          email: cleanEmail,
+          photoURL: null,
+          isLocalAccount: false,
+          createdAt: record.createdAt,
+        },
+        true
+      );
+      return { ok: true };
+    } catch (err) {
+      console.warn('Cloud registration fallback:', err);
+    }
+
+    // 2. Fallback to local registration if offline
+    const localRes = registerAccountWithPassword(cleanName, cleanEmail, password);
     if (!localRes.ok) {
       return { ok: false, error: localRes.error };
     }
-
-    // Attempt Firebase Email/Password registration in background if enabled in Firebase Console
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
-      if (cred.user) {
-        await updateProfile(cred.user, { displayName: name.trim() });
-        saveActiveLocalUser(null);
-        addToast(
-          'Pendaftaran Berhasil',
-          `Selamat datang, ${name.trim()}! Akun Anda telah dibuat.`,
-          'success'
-        );
-        return { ok: true };
-      }
-    } catch (err: any) {
-      const code = err?.code || '';
-      if (code === 'auth/email-already-in-use') {
-        return {
-          ok: false,
-          error: 'Email ini sudah terdaftar. Silakan masuk menggunakan email dan password Anda.',
-        };
-      }
-      // If Firebase Email/Password provider is not enabled in console, use verified local account
-    }
-
-    applyLocalProfileSession(localRes.profile, true);
+    await loadAndSyncCloudAccountSession(localRes.profile, true);
     return { ok: true };
   };
 
-  // Login with Email & Password
+  // Login with Email & Password (queries Cloud Firestore DB first so accounts registered on PC can login on HP)
   const loginWithEmailPassword = async (
     email: string,
     password: string
   ): Promise<{ ok: boolean; error?: string }> => {
-    const localRes = loginAccountWithPassword(email, password);
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { ok: false, error: 'Masukkan alamat email yang valid.' };
+    }
+    if (!password) {
+      return { ok: false, error: 'Password wajib diisi.' };
+    }
+
+    const cloudUid = getCloudAccountUid(cleanEmail);
+    const passwordHash = hashAccountPassword(cleanEmail, password);
+
+    // 1. Check Cloud Firestore Database first (enables login on HP for accounts registered on PC)
+    try {
+      const cloudRes = await loginCloudEmailAccount(cloudUid, cleanEmail, passwordHash);
+      if (cloudRes.ok) {
+        const profile: LocalAccountProfile = {
+          uid: cloudUid,
+          displayName: cloudRes.profile.displayName || 'Pengguna Dompt',
+          email: cloudRes.profile.email || cleanEmail,
+          photoURL: cloudRes.profile.photoURL || null,
+          isLocalAccount: false,
+          createdAt: cloudRes.profile.createdAt || new Date().toISOString(),
+        };
+        cacheRegisteredAccountLocally({
+          ...profile,
+          passwordHash,
+        });
+        await loadAndSyncCloudAccountSession(profile, false);
+        return { ok: true };
+      }
+
+      if (!cloudRes.notFound) {
+        // Account exists in Cloud DB, but password was wrong
+        return { ok: false, error: cloudRes.error };
+      }
+    } catch (err) {
+      console.warn('Cloud login check error, checking local storage:', err);
+    }
+
+    // 2. Check local browser storage (in case account was registered on this PC before Cloud DB sync) and upload it to Cloud DB
+    const localRes = loginAccountWithPassword(cleanEmail, password);
     if (localRes.ok) {
-      applyLocalProfileSession(localRes.profile, false);
+      try {
+        await registerCloudEmailAccount(
+          cloudUid,
+          localRes.profile.displayName,
+          cleanEmail,
+          passwordHash
+        );
+      } catch (e) {
+        console.warn('Failed to upload local account to Cloud DB:', e);
+      }
+      await loadAndSyncCloudAccountSession(localRes.profile, false);
       return { ok: true };
     }
 
-    // Also check Firebase Email/Password auth in case registered via Firebase Cloud
+    // 3. Also check Firebase Auth Email/Password in case enabled
     try {
-      const cred = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+      const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
       if (cred.user) {
         saveActiveLocalUser(null);
         addToast(
@@ -398,14 +551,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         );
         return { ok: true };
       }
-    } catch (err: any) {
-      const code = err?.code || '';
-      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
-        return {
-          ok: false,
-          error: 'Email atau password yang Anda masukkan salah. Silakan periksa kembali.',
-        };
-      }
+    } catch {
+      // Ignore Firebase Auth error and return clear message
     }
 
     return { ok: false, error: localRes.error };
@@ -453,14 +600,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Hydrate local storage data on client mount
+  // Hydrate local storage data on client mount & migrate any local PC accounts to Cloud Firestore
   useEffect(() => {
-    queueMicrotask(() => {
+    queueMicrotask(async () => {
       const storedSettings = loadStoredSettings();
       const activeLocal = loadActiveLocalUser();
-      const scope = activeLocal?.uid;
+      const scope = activeLocal ? getCloudAccountUid(activeLocal.email) : undefined;
       if (activeLocal) {
-        setUser(activeLocal);
+        const normalizedLocal: LocalAccountProfile = {
+          ...activeLocal,
+          uid: scope || activeLocal.uid,
+          isLocalAccount: false,
+        };
+        setUser(normalizedLocal);
       }
       setWallets(loadStoredWallets(scope));
       setCategories(loadStoredCategories());
@@ -478,6 +630,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           : storedSettings
       );
       setIsLocked(Boolean(storedSettings.pinEnabled));
+      setActiveDate(getTodayDateStr());
+
+      // Automatically sync any previously registered local accounts on this PC to Cloud Firestore DB
+      const registeredList = loadRegisteredAccounts();
+      for (const acc of registeredList) {
+        if (acc.email && acc.passwordHash) {
+          const cUid = getCloudAccountUid(acc.email);
+          registerCloudEmailAccount(cUid, acc.displayName, acc.email, acc.passwordHash).catch(
+            () => {}
+          );
+        }
+      }
+
+      if (activeLocal?.email) {
+        await loadAndSyncCloudAccountSession(activeLocal, false, true);
+      }
     });
   }, []);
 
@@ -522,6 +690,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             userEmail: currentUser.email || prev.userEmail,
             hideBalance: false,
           }));
+          setActiveDate(getTodayDateStr());
           setDataResetVersion((v) => v + 1);
         } catch (err) {
           console.error('Error loading user data from Firestore:', err);
@@ -531,7 +700,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } else {
         const activeLocal = loadActiveLocalUser();
         if (activeLocal) {
-          setUser(activeLocal);
+          setUser({
+            ...activeLocal,
+            uid: getCloudAccountUid(activeLocal.email),
+            isLocalAccount: false,
+          });
         } else {
           setUser(null);
         }
@@ -665,12 +838,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Dynamic upcoming bills derived from negative credit/paylater wallets and scheduled budget subcategories
   const upcomingBills = useMemo<UpcomingBill[]>(() => {
     const bills: UpcomingBill[] = [];
+    const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    const curMonthShort = shortMonths[activeMonth] || 'Jan';
+    const nextMonthShort = shortMonths[(activeMonth + 1) % 12] || 'Feb';
+
     walletsWithBalance.forEach((w) => {
       if ((w.type === 'credit' || w.type === 'paylater') && w.balance < 0) {
+        const dueDay = w.type === 'credit' ? 10 : 14;
+        const mLabel = activeDay > dueDay ? nextMonthShort : curMonthShort;
         bills.push({
           id: `bill-wallet-${w.id}`,
           name: w.name,
-          dueDate: w.type === 'credit' ? '10 Apr' : '14 Apr',
+          dueDate: `${dueDay} ${mLabel}`,
           amount: Math.abs(w.balance),
           iconEmoji: w.type === 'credit' ? '💳' : '⏰',
           category: w.type === 'credit' ? 'Kartu Kredit' : 'Paylater',
@@ -680,10 +859,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (bills.length === 0 && budgetConfig?.subcategories) {
       budgetConfig.subcategories.forEach((sub) => {
         if (sub.dueDateDay && sub.allocatedAmount > 0) {
+          const mLabel = activeDay > sub.dueDateDay ? nextMonthShort : curMonthShort;
           bills.push({
             id: `bill-sub-${sub.id}`,
             name: sub.name,
-            dueDate: `${String(sub.dueDateDay).padStart(2, '0')} Apr`,
+            dueDate: `${String(sub.dueDateDay).padStart(2, '0')} ${mLabel}`,
             amount: sub.allocatedAmount,
             iconEmoji: sub.emoji || '📅',
             category: sub.group.toUpperCase(),
@@ -692,7 +872,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     }
     return bills;
-  }, [walletsWithBalance, budgetConfig]);
+  }, [walletsWithBalance, budgetConfig, activeMonth, activeDay]);
 
   // Dashboard summary metrics
   const dashboardSummary = useMemo<DashboardSummary>(() => {
@@ -760,9 +940,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     setTransactions((prev) => {
       const updated = [newTx, ...prev];
-      if (!isCloudUser) {
-        saveStoredTransactions(updated, localScopeUid);
-      }
+      saveStoredTransactions(updated, localScopeUid);
       return updated;
     });
 
@@ -785,9 +963,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         return t;
       });
-      if (!isCloudUser) {
-        saveStoredTransactions(updated, localScopeUid);
-      }
+      saveStoredTransactions(updated, localScopeUid);
       return updated;
     });
 
@@ -803,9 +979,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteTransaction = (id: string) => {
     setTransactions((prev) => {
       const updated = prev.filter((t) => t.id !== id);
-      if (!isCloudUser) {
-        saveStoredTransactions(updated, localScopeUid);
-      }
+      saveStoredTransactions(updated, localScopeUid);
       return updated;
     });
 
@@ -829,9 +1003,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     const updated = [...wallets, newW];
     setWallets(updated);
-    if (!isCloudUser) {
-      saveStoredWallets(updated, localScopeUid);
-    } else if (user?.uid) {
+    saveStoredWallets(updated, localScopeUid);
+    if (isCloudUser && user?.uid) {
       saveUserWallet(user.uid, newW).catch((err) =>
         console.error('Error saving wallet to Firestore:', err)
       );
@@ -849,9 +1022,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return w;
     });
     setWallets(updated);
-    if (!isCloudUser) {
-      saveStoredWallets(updated, localScopeUid);
-    } else if (user?.uid && targetW) {
+    saveStoredWallets(updated, localScopeUid);
+    if (isCloudUser && user?.uid && targetW) {
       saveUserWallet(user.uid, targetW).catch((err) =>
         console.error('Error updating wallet in Firestore:', err)
       );
@@ -866,9 +1038,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     const updated = wallets.filter((w) => w.id !== id);
     setWallets(updated);
-    if (!isCloudUser) {
-      saveStoredWallets(updated, localScopeUid);
-    } else if (user?.uid) {
+    saveStoredWallets(updated, localScopeUid);
+    if (isCloudUser && user?.uid) {
       deleteUserWallet(user.uid, id).catch((err) =>
         console.error('Error deleting wallet from Firestore:', err)
       );
@@ -890,9 +1061,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     const updated = [...goals, newG];
     setGoals(updated);
-    if (!isCloudUser) {
-      saveStoredGoals(updated, localScopeUid);
-    } else if (user?.uid) {
+    saveStoredGoals(updated, localScopeUid);
+    if (isCloudUser && user?.uid) {
       saveUserGoal(user.uid, newG).catch((err) =>
         console.error('Error saving goal to Firestore:', err)
       );
@@ -910,9 +1080,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return g;
     });
     setGoals(updated);
-    if (!isCloudUser) {
-      saveStoredGoals(updated, localScopeUid);
-    } else if (user?.uid && targetG) {
+    saveStoredGoals(updated, localScopeUid);
+    if (isCloudUser && user?.uid && targetG) {
       saveUserGoal(user.uid, targetG).catch((err) =>
         console.error('Error updating goal in Firestore:', err)
       );
@@ -923,9 +1092,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteGoal = (id: string) => {
     const updated = goals.filter((g) => g.id !== id);
     setGoals(updated);
-    if (!isCloudUser) {
-      saveStoredGoals(updated, localScopeUid);
-    } else if (user?.uid) {
+    saveStoredGoals(updated, localScopeUid);
+    if (isCloudUser && user?.uid) {
       deleteUserGoal(user.uid, id).catch((err) =>
         console.error('Error deleting goal from Firestore:', err)
       );
@@ -945,9 +1113,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateBudgetConfig = (data: Partial<BudgetConfig>) => {
     const updated = { ...budgetConfig, ...data };
     setBudgetConfig(updated);
-    if (!isCloudUser) {
-      saveStoredBudgetConfig(updated, localScopeUid);
-    } else if (user?.uid) {
+    saveStoredBudgetConfig(updated, localScopeUid);
+    if (isCloudUser && user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
         console.error('Error saving budget config to Firestore:', err)
       );
@@ -965,9 +1132,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       subcategories: [...budgetConfig.subcategories, newSub],
     };
     setBudgetConfig(updated);
-    if (!isCloudUser) {
-      saveStoredBudgetConfig(updated, localScopeUid);
-    } else if (user?.uid) {
+    saveStoredBudgetConfig(updated, localScopeUid);
+    if (isCloudUser && user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
         console.error('Error saving budget config to Firestore:', err)
       );
@@ -979,9 +1145,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const updatedSub = budgetConfig.subcategories.map((s) => (s.id === id ? { ...s, ...data } : s));
     const updated = { ...budgetConfig, subcategories: updatedSub };
     setBudgetConfig(updated);
-    if (!isCloudUser) {
-      saveStoredBudgetConfig(updated, localScopeUid);
-    } else if (user?.uid) {
+    saveStoredBudgetConfig(updated, localScopeUid);
+    if (isCloudUser && user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
         console.error('Error saving budget config to Firestore:', err)
       );
@@ -993,9 +1158,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const updatedSub = budgetConfig.subcategories.filter((s) => s.id !== id);
     const updated = { ...budgetConfig, subcategories: updatedSub };
     setBudgetConfig(updated);
-    if (!isCloudUser) {
-      saveStoredBudgetConfig(updated, localScopeUid);
-    } else if (user?.uid) {
+    saveStoredBudgetConfig(updated, localScopeUid);
+    if (isCloudUser && user?.uid) {
       saveUserBudgetConfig(user.uid, updated).catch((err) =>
         console.error('Error saving budget config to Firestore:', err)
       );
@@ -1028,9 +1192,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     setTransactions((prev) => {
       const updated = [tx, ...prev];
-      if (!isCloudUser) {
-        saveStoredTransactions(updated, localScopeUid);
-      }
+      saveStoredTransactions(updated, localScopeUid);
       return updated;
     });
 
@@ -1207,9 +1369,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       if (isCloudUser && user?.uid) {
         addToast('Mereset Data...', 'Sedang membersihkan catatan di cloud Firestore...', 'info');
+        clearAllData(localScopeUid);
+        resetStorageToZero(localScopeUid);
         const cleanWallets = await resetUserFirestoreData(user.uid);
         if (cleanWallets && cleanWallets.length > 0) {
           setWallets(cleanWallets);
+          saveStoredWallets(cleanWallets, localScopeUid);
         }
         setTransactions([]);
         setGoals([]);

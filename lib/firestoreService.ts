@@ -18,8 +18,105 @@ export interface UserProfileData {
   email: string;
   displayName?: string;
   photoURL?: string;
+  passwordHash?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// Register an Email & Password account directly in Cloud Firestore Database
+export async function registerCloudEmailAccount(
+  uid: string,
+  name: string,
+  email: string,
+  passwordHash: string
+): Promise<{ ok: true; profile: UserProfileData } | { ok: false; error: string }> {
+  const path = `users/${uid}`;
+  try {
+    const userDocRef = doc(db, 'users', uid);
+    const snap = await getDoc(userDocRef);
+    const now = new Date().toISOString();
+
+    if (snap.exists()) {
+      const existing = snap.data() as UserProfileData;
+      if (existing.passwordHash && existing.passwordHash !== passwordHash) {
+        return {
+          ok: false,
+          error: 'Email ini sudah terdaftar. Silakan masuk menggunakan email dan password Anda.',
+        };
+      }
+      const updated: UserProfileData = {
+        uid,
+        email: email.trim().toLowerCase(),
+        displayName: name.trim() || existing.displayName || 'Pengguna Dompt',
+        photoURL: existing.photoURL || '',
+        passwordHash,
+        createdAt: existing.createdAt || now,
+        updatedAt: now,
+      };
+      await setDoc(userDocRef, updated, { merge: true });
+      return { ok: true, profile: updated };
+    }
+
+    const initial: UserProfileData = {
+      uid,
+      email: email.trim().toLowerCase(),
+      displayName: name.trim() || 'Pengguna Dompt',
+      photoURL: '',
+      passwordHash,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await setDoc(userDocRef, initial);
+    return { ok: true, profile: initial };
+  } catch (error) {
+    console.error('Error registering account in Firestore:', error);
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// Login an Email & Password account directly from Cloud Firestore Database (works across PC, HP, Tablet)
+export async function loginCloudEmailAccount(
+  uid: string,
+  email: string,
+  passwordHash: string
+): Promise<{ ok: true; profile: UserProfileData } | { ok: false; error: string; notFound?: boolean }> {
+  const path = `users/${uid}`;
+  try {
+    const userDocRef = doc(db, 'users', uid);
+    const snap = await getDoc(userDocRef);
+
+    if (!snap.exists()) {
+      return {
+        ok: false,
+        notFound: true,
+        error: 'Akun dengan email ini belum terdaftar di Database. Silakan klik tab "Daftar Baru" terlebih dahulu.',
+      };
+    }
+
+    const data = snap.data() as UserProfileData;
+    if (data.passwordHash && data.passwordHash !== passwordHash) {
+      return {
+        ok: false,
+        error: 'Password yang Anda masukkan salah. Silakan periksa kembali.',
+      };
+    }
+
+    const now = new Date().toISOString();
+    const updated: UserProfileData = {
+      uid,
+      email: data.email || email.trim().toLowerCase(),
+      displayName: data.displayName || 'Pengguna Dompt',
+      photoURL: data.photoURL || '',
+      passwordHash,
+      createdAt: data.createdAt || now,
+      updatedAt: now,
+    };
+    await setDoc(userDocRef, updated, { merge: true });
+    return { ok: true, profile: updated };
+  } catch (error) {
+    console.error('Error logging in account from Firestore:', error);
+    handleFirestoreError(error, OperationType.GET, path);
+  }
 }
 
 // Ensure user profile document exists
@@ -37,6 +134,7 @@ export async function syncUserProfile(user: User): Promise<UserProfileData> {
         email: user.email || data.email || 'user@example.com',
         displayName: user.displayName || data.displayName || 'Pengguna Dompt',
         photoURL: user.photoURL || data.photoURL || '',
+        ...(data.passwordHash ? { passwordHash: data.passwordHash } : {}),
         createdAt: data.createdAt || now,
         updatedAt: now,
       };

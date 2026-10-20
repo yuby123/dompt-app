@@ -2,13 +2,14 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "User profile and settings",
+      "description": "User profile and credentials stored in Cloud Firestore",
       "type": "object",
       "properties": {
         "uid": { "type": "string", "maxLength": 128 },
         "email": { "type": "string", "maxLength": 256 },
         "displayName": { "type": "string", "maxLength": 128 },
         "photoURL": { "type": "string", "maxLength": 512 },
+        "passwordHash": { "type": "string", "maxLength": 256 },
         "createdAt": { "type": "string", "maxLength": 64 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },

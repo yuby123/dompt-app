@@ -80,7 +80,15 @@ export function DashboardTab() {
     calendarCells.push(d);
   }
 
-  const [selectedCalendarDay, setSelectedCalendarDay] = useState<number>(() => currentDay);
+  const currentMonthKey = `${activeYear}-${activeMonth}`;
+  const [selectedDayState, setSelectedDayState] = useState<{ monthKey: string; day: number } | null>(null);
+  const selectedCalendarDay =
+    selectedDayState && selectedDayState.monthKey === currentMonthKey
+      ? selectedDayState.day
+      : currentDay;
+  const setSelectedCalendarDay = (day: number) => {
+    setSelectedDayState({ monthKey: currentMonthKey, day });
+  };
 
   // Today's real expense & income from context metrics
   const { todayIncome, todayExpense } = dashboardSummary;
@@ -120,31 +128,42 @@ export function DashboardTab() {
     'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
     'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER',
   ];
-  const monthLabel = `${EN_MONTHS[activeMonth] || 'MARCH'} ${activeYear}`;
+  const monthLabel = `${EN_MONTHS[activeMonth] || 'JANUARY'} ${activeYear}`;
 
   const handlePrevMonth = () => {
+    const today = new Date();
     const prevMonthDate = new Date(activeYear, activeMonth - 1, 1);
     const y = prevMonthDate.getFullYear();
-    const m = String(prevMonthDate.getMonth() + 1).padStart(2, '0');
-    setActiveDate(`${y}-${m}-01`);
-    setSelectedCalendarDay(1);
+    const mIdx = prevMonthDate.getMonth();
+    const m = String(mIdx + 1).padStart(2, '0');
+    const isRealCurrentMonth = today.getFullYear() === y && today.getMonth() === mIdx;
+    const dayNum = isRealCurrentMonth ? today.getDate() : 1;
+    const dStr = String(dayNum).padStart(2, '0');
+    setActiveDate(`${y}-${m}-${dStr}`);
+    setSelectedDayState({ monthKey: `${y}-${mIdx}`, day: dayNum });
   };
 
   const handleNextMonth = () => {
+    const today = new Date();
     const nextMonthDate = new Date(activeYear, activeMonth + 1, 1);
     const y = nextMonthDate.getFullYear();
-    const m = String(nextMonthDate.getMonth() + 1).padStart(2, '0');
-    setActiveDate(`${y}-${m}-01`);
-    setSelectedCalendarDay(1);
+    const mIdx = nextMonthDate.getMonth();
+    const m = String(mIdx + 1).padStart(2, '0');
+    const isRealCurrentMonth = today.getFullYear() === y && today.getMonth() === mIdx;
+    const dayNum = isRealCurrentMonth ? today.getDate() : 1;
+    const dStr = String(dayNum).padStart(2, '0');
+    setActiveDate(`${y}-${m}-${dStr}`);
+    setSelectedDayState({ monthKey: `${y}-${mIdx}`, day: dayNum });
   };
 
   const handleTodayMonth = () => {
     const today = new Date();
     const y = today.getFullYear();
-    const m = String(today.getMonth() + 1).padStart(2, '0');
+    const mIdx = today.getMonth();
+    const m = String(mIdx + 1).padStart(2, '0');
     const d = String(today.getDate()).padStart(2, '0');
     setActiveDate(`${y}-${m}-${d}`);
-    setSelectedCalendarDay(today.getDate());
+    setSelectedDayState({ monthKey: `${y}-${mIdx}`, day: today.getDate() });
   };
 
   // Dynamic 50/30/20 percentages

@@ -31,6 +31,8 @@ import {
   loadStoredTransactions,
   loadStoredWallets,
   LocalAccountProfile,
+  loginAccountWithPassword,
+  registerAccountWithPassword,
   resetStorageToZero,
   saveActiveLocalUser,
   saveStoredBudgetConfig,
@@ -58,6 +60,9 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
   signOut,
   User,
 } from '@/lib/firebase';
@@ -218,7 +223,15 @@ interface AppContextType {
   setIsLoginModalOpen: (open: boolean) => void;
   openLoginModal: () => void;
   signInWithGoogle: () => Promise<void>;
-  signInWithLocalAccount: (name: string, email: string) => void;
+  registerWithEmailPassword: (
+    name: string,
+    email: string,
+    password: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  loginWithEmailPassword: (
+    email: string,
+    password: string
+  ) => Promise<{ ok: boolean; error?: string }>;
   signOutUser: () => Promise<void>;
   dataResetVersion: number;
 }
@@ -298,19 +311,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // Sign In with Local Account (Instant Multi-User Login on Vercel / any domain)
-  const signInWithLocalAccount = (name: string, email: string) => {
-    const cleanName = name.trim() || 'Pengguna Dompt';
-    const cleanEmail = email.trim().toLowerCase();
-    const safeId = cleanEmail.replace(/[^a-z0-9]/g, '_');
-    const profile: LocalAccountProfile = {
-      uid: `local_${safeId}`,
-      displayName: cleanName,
-      email: cleanEmail,
-      photoURL: null,
-      isLocalAccount: true,
-      createdAt: new Date().toISOString(),
-    };
+  const applyLocalProfileSession = (profile: LocalAccountProfile, isNewRegistration = false) => {
     saveActiveLocalUser(profile);
     setUser(profile);
     setWallets(loadStoredWallets(profile.uid));
@@ -320,8 +321,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSettings((prev) => {
       const next = {
         ...prev,
-        userName: cleanName,
-        userEmail: cleanEmail,
+        userName: profile.displayName,
+        userEmail: profile.email,
         hideBalance: false,
       };
       saveStoredSettings(next);
@@ -329,10 +330,85 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
     setDataResetVersion((v) => v + 1);
     addToast(
-      'Login Berhasil',
-      `Selamat datang, ${cleanName}! Ruang catatan pribadi Anda telah aktif.`,
+      isNewRegistration ? 'Pendaftaran Berhasil' : 'Login Berhasil',
+      `Selamat datang, ${profile.displayName}! Akun Anda telah aktif.`,
       'success'
     );
+  };
+
+  // Register new account with Email & Password
+  const registerWithEmailPassword = async (
+    name: string,
+    email: string,
+    password: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const localRes = registerAccountWithPassword(name, email, password);
+    if (!localRes.ok) {
+      return { ok: false, error: localRes.error };
+    }
+
+    // Attempt Firebase Email/Password registration in background if enabled in Firebase Console
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+      if (cred.user) {
+        await updateProfile(cred.user, { displayName: name.trim() });
+        saveActiveLocalUser(null);
+        addToast(
+          'Pendaftaran Berhasil',
+          `Selamat datang, ${name.trim()}! Akun Anda telah dibuat.`,
+          'success'
+        );
+        return { ok: true };
+      }
+    } catch (err: any) {
+      const code = err?.code || '';
+      if (code === 'auth/email-already-in-use') {
+        return {
+          ok: false,
+          error: 'Email ini sudah terdaftar. Silakan masuk menggunakan email dan password Anda.',
+        };
+      }
+      // If Firebase Email/Password provider is not enabled in console, use verified local account
+    }
+
+    applyLocalProfileSession(localRes.profile, true);
+    return { ok: true };
+  };
+
+  // Login with Email & Password
+  const loginWithEmailPassword = async (
+    email: string,
+    password: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const localRes = loginAccountWithPassword(email, password);
+    if (localRes.ok) {
+      applyLocalProfileSession(localRes.profile, false);
+      return { ok: true };
+    }
+
+    // Also check Firebase Email/Password auth in case registered via Firebase Cloud
+    try {
+      const cred = await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password);
+      if (cred.user) {
+        saveActiveLocalUser(null);
+        addToast(
+          'Login Berhasil',
+          `Selamat datang kembali, ${cred.user.displayName || cred.user.email}!`,
+          'success'
+        );
+        return { ok: true };
+      }
+    } catch (err: any) {
+      const code = err?.code || '';
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        return {
+          ok: false,
+          error: 'Email atau password yang Anda masukkan salah. Silakan periksa kembali.',
+        };
+      }
+    }
+
+    return { ok: false, error: localRes.error };
   };
 
   // Sign In with Google
@@ -343,7 +419,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         saveActiveLocalUser(null);
         addToast(
           'Login Berhasil',
-          `Selamat datang, ${result.user.displayName || 'Pengguna'}! Akun Cloud Anda aktif.`,
+          `Selamat datang, ${result.user.displayName || 'Pengguna'}! Akun Anda aktif.`,
           'success'
         );
       }
@@ -354,15 +430,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         addToast('Membuka Halaman Login...', 'Popup diblokir browser, mengalihkan ke halaman login Google...', 'info');
         await signInWithRedirect(auth, googleProvider);
         return;
-      }
-      if (code === 'auth/unauthorized-domain') {
-        addToast(
-          'Domain Vercel Belum Diotorisasi di Firebase',
-          'Gunakan Masuk Cepat (Email & Nama) atau tambahkan domain Vercel ke Firebase Console.',
-          'info'
-        );
-      } else if (code !== 'auth/popup-closed-by-user' && code !== 'auth/cancelled-popup-request') {
-        addToast('Gagal Masuk Google', err?.message || 'Tidak dapat menyelesaikan login Google.', 'error');
       }
       throw err;
     }
@@ -376,13 +443,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await signOut(auth);
       }
       setUser(null);
-      // Revert to local initial storage
-      setWallets(loadStoredWallets());
-      setTransactions(loadStoredTransactions());
-      setGoals(loadStoredGoals());
-      setBudgetConfig(loadStoredBudgetConfig());
+      setActiveTabState('dashboard');
       setDataResetVersion((v) => v + 1);
-      addToast('Berhasil Keluar', 'Anda sekarang berada dalam Mode Tamu.', 'info');
+      addToast('Berhasil Keluar', 'Anda telah keluar dari akun.', 'info');
     } catch (err: any) {
       console.error('Sign out error:', err);
       addToast('Gagal Keluar', 'Terjadi kesalahan saat logout.', 'error');
@@ -1277,7 +1340,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setIsLoginModalOpen,
         openLoginModal,
         signInWithGoogle,
-        signInWithLocalAccount,
+        registerWithEmailPassword,
+        loginWithEmailPassword,
         signOutUser,
         dataResetVersion,
       }}

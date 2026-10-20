@@ -5,6 +5,9 @@ import {
   signInWithPopup,
   signInWithRedirect,
   getRedirectResult,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
   signOut,
   User,
 } from 'firebase/auth';
@@ -34,7 +37,15 @@ export const db = getFirestore(app, effectiveFirebaseConfig.firestoreDatabaseId)
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
-export { signInWithPopup, signInWithRedirect, getRedirectResult, signOut };
+export {
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
+  signOut,
+};
 export type { User };
 
 // Operation Types for error handling

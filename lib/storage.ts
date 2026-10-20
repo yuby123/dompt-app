@@ -363,8 +363,139 @@ export interface LocalAccountProfile {
   createdAt: string;
 }
 
+export interface RegisteredAccountRecord extends LocalAccountProfile {
+  passwordHash: string;
+}
+
 const ACTIVE_LOCAL_USER_KEY = 'budggt_active_local_user';
 const LOCAL_ACCOUNTS_LIST_KEY = 'budggt_local_accounts_list';
+const REGISTERED_ACCOUNTS_KEY = 'budggt_registered_accounts_v1';
+
+function hashPassword(email: string, password: string): string {
+  const normalized = `dompt_v1_${email.trim().toLowerCase()}::${password}`;
+  if (typeof window !== 'undefined' && typeof window.btoa === 'function') {
+    return window.btoa(encodeURIComponent(normalized));
+  }
+  return normalized;
+}
+
+export function loadRegisteredAccounts(): RegisteredAccountRecord[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(REGISTERED_ACCOUNTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRegisteredAccounts(records: RegisteredAccountRecord[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(REGISTERED_ACCOUNTS_KEY, JSON.stringify(records));
+  } catch (err) {
+    console.error('Failed to save registered accounts:', err);
+  }
+}
+
+export function registerAccountWithPassword(
+  name: string,
+  email: string,
+  password: string
+): { ok: true; profile: LocalAccountProfile } | { ok: false; error: string } {
+  const cleanName = name.trim();
+  const cleanEmail = email.trim().toLowerCase();
+
+  if (!cleanName) {
+    return { ok: false, error: 'Nama panggilan wajib diisi.' };
+  }
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    return { ok: false, error: 'Masukkan alamat email yang valid.' };
+  }
+  if (!password || password.length < 6) {
+    return { ok: false, error: 'Password minimal harus terdiri dari 6 karakter.' };
+  }
+
+  const accounts = loadRegisteredAccounts();
+  const existing = accounts.find((acc) => acc.email.toLowerCase() === cleanEmail);
+  if (existing) {
+    return {
+      ok: false,
+      error: 'Email ini sudah terdaftar. Silakan masuk menggunakan email dan password Anda.',
+    };
+  }
+
+  const safeId = cleanEmail.replace(/[^a-z0-9]/g, '_');
+  const uid = `user_${safeId}`;
+  const now = new Date().toISOString();
+  const newRecord: RegisteredAccountRecord = {
+    uid,
+    displayName: cleanName,
+    email: cleanEmail,
+    passwordHash: hashPassword(cleanEmail, password),
+    photoURL: null,
+    isLocalAccount: true,
+    createdAt: now,
+  };
+
+  saveRegisteredAccounts([newRecord, ...accounts]);
+  // Initialize clean Rp 0 data for the newly registered account
+  resetStorageToZero(uid);
+
+  const profile: LocalAccountProfile = {
+    uid: newRecord.uid,
+    displayName: newRecord.displayName,
+    email: newRecord.email,
+    photoURL: null,
+    isLocalAccount: true,
+    createdAt: newRecord.createdAt,
+  };
+  saveActiveLocalUser(profile);
+  return { ok: true, profile };
+}
+
+export function loginAccountWithPassword(
+  email: string,
+  password: string
+): { ok: true; profile: LocalAccountProfile } | { ok: false; error: string } {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    return { ok: false, error: 'Masukkan alamat email yang valid.' };
+  }
+  if (!password) {
+    return { ok: false, error: 'Password wajib diisi.' };
+  }
+
+  const accounts = loadRegisteredAccounts();
+  const matched = accounts.find((acc) => acc.email.toLowerCase() === cleanEmail);
+  if (!matched) {
+    return {
+      ok: false,
+      error: 'Akun dengan email ini belum terdaftar. Silakan klik tab "Daftar Baru" terlebih dahulu.',
+    };
+  }
+
+  const expectedHash = hashPassword(cleanEmail, password);
+  if (matched.passwordHash !== expectedHash) {
+    return {
+      ok: false,
+      error: 'Password yang Anda masukkan salah. Silakan periksa kembali.',
+    };
+  }
+
+  const profile: LocalAccountProfile = {
+    uid: matched.uid,
+    displayName: matched.displayName,
+    email: matched.email,
+    photoURL: matched.photoURL,
+    isLocalAccount: true,
+    createdAt: matched.createdAt,
+  };
+  saveActiveLocalUser(profile);
+  return { ok: true, profile };
+}
 
 function getScopedKey(baseKey: string, scopeUid?: string): string {
   return scopeUid ? `${baseKey}_${scopeUid}` : baseKey;

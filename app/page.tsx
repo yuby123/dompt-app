@@ -26,11 +26,21 @@ import { WalletModal } from '@/components/WalletModal';
 import { AppLockModal } from '@/components/AppLockModal';
 import { ToastContainer } from '@/components/ToastContainer';
 import { AuthModal } from '@/components/AuthModal';
+import { AuthScreen } from '@/components/AuthScreen';
 import { ClipboardScreenshotDetector } from '@/components/ClipboardScreenshotDetector';
 import { motion, AnimatePresence } from 'motion/react';
 
 function MainAppContent() {
-  const { activeTab } = useApp();
+  const { activeTab, user } = useApp();
+
+  if (!user) {
+    return (
+      <>
+        <AuthScreen />
+        <ToastContainer />
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F5F6F8] dark:bg-[#0B0C10] text-gray-900 dark:text-gray-100 transition-colors selection:bg-[#D4F826] selection:text-black lg:flex">
@@ -94,3 +104,4 @@ export default function HomePage() {
     </AppProvider>
   );
 }
+

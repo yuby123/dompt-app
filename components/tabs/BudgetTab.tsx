@@ -7,6 +7,11 @@ import {
   MoreVertical,
   X,
   Sliders,
+  SlidersHorizontal,
+  HelpCircle,
+  ChevronUp,
+  ChevronDown,
+  Eye,
   Check,
   AlertTriangle,
   Calendar,
@@ -17,8 +22,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { EmojiPickerModal } from '../EmojiPickerModal';
 import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
-import { BudgetGroup } from '@/lib/types';
-import { FIXED_CATEGORY_IDS, FIXED_EXPENSE_KEYWORDS_REGEX, getMonthlySubscriptionAmount } from '@/lib/budgetUtils';
+import { BudgetGroup, BudgetSubcategory } from '@/lib/types';
+import { FIXED_CATEGORY_IDS, FIXED_EXPENSE_KEYWORDS_REGEX } from '@/lib/budgetUtils';
 
 export function BudgetTab() {
   const {
@@ -58,6 +63,16 @@ export function BudgetTab() {
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
 
   const [activeMenuSubId, setActiveMenuSubId] = useState<string | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<BudgetGroup, boolean>>({
+    kebutuhan: false,
+    keinginan: false,
+    tabungan: false,
+  });
+  const [showArchived, setShowArchived] = useState(false);
+
+  const toggleGroupCollapse = (group: BudgetGroup) => {
+    setCollapsedGroups((prev) => ({ ...prev, [group]: !prev[group] }));
+  };
 
   const quickEmojiSuggestions = useMemo(() => {
     if (targetGroup === 'kebutuhan') {
@@ -319,8 +334,257 @@ export function BudgetTab() {
     setIsAddSubOpen(true);
   };
 
+  const renderGroupSection = (params: {
+    group: BudgetGroup;
+    title: string;
+    tooltip: string;
+    dotColor: string;
+    sectionBarColor: string;
+    itemBarColor: string;
+    subs: BudgetSubcategory[];
+    groupSpent: number;
+    groupLimit: number;
+    spentLabel?: string;
+  }) => {
+    const {
+      group,
+      title,
+      tooltip,
+      dotColor,
+      sectionBarColor,
+      itemBarColor,
+      subs,
+      groupSpent,
+      groupLimit,
+      spentLabel = 'TERPAKAI',
+    } = params;
+
+    const isCollapsed = collapsedGroups[group];
+    const groupSpentPct = groupLimit > 0 ? Math.min(100, Math.round((groupSpent / groupLimit) * 100)) : 0;
+    const isNearOrOverLimit = groupSpentPct >= 85;
+
+    const groupAllocated = subs.reduce((sum, s) => sum + (Number(s.allocatedAmount) || 0), 0);
+    const allocPct = groupLimit > 0 ? Math.round((groupAllocated / groupLimit) * 100) : 0;
+    const remainingUnallocated = groupLimit - groupAllocated;
+
+    return (
+      <div className="space-y-3.5 pt-2">
+        {/* Section Header */}
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2.5">
+            <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+            <h3 className="text-xs font-extrabold tracking-[0.22em] text-gray-900 dark:text-white uppercase">
+              {title}
+            </h3>
+            <button
+              type="button"
+              onClick={() => {
+                setNeedsPercent(budgetConfig.needsPercent);
+                setWantsPercent(budgetConfig.wantsPercent);
+                setSavingsPercent(budgetConfig.savingsPercent);
+                setIsEditPercentagesOpen(true);
+              }}
+              className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[11px] font-bold text-gray-600 dark:text-gray-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <SlidersHorizontal size={11} />
+              <span>Ubah</span>
+            </button>
+            <span
+              className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 cursor-help transition-colors"
+              title={tooltip}
+            >
+              <HelpCircle size={14} />
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => toggleGroupCollapse(group)}
+            className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg cursor-pointer transition-colors"
+            title={isCollapsed ? 'Tampilkan' : 'Sembunyikan'}
+          >
+            {isCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+          </button>
+        </div>
+
+        {/* Section-Level Full-Width Progress Bar & Labels */}
+        <div className="space-y-1.5 px-1">
+          <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-500 ${
+                isNearOrOverLimit ? 'bg-[#EF4444]' : sectionBarColor
+              }`}
+              style={{ width: `${groupSpentPct}%` }}
+            />
+          </div>
+          <div className="flex items-center justify-between text-[10px] font-extrabold tracking-wider text-gray-400 uppercase tabular-nums">
+            <span>
+              {spentLabel}: {formatRupiah(groupSpent, hide)}
+            </span>
+            <span>BATAS: {formatRupiah(groupLimit, hide)}</span>
+          </div>
+        </div>
+
+        {!isCollapsed && (
+          <>
+            {/* 2-Column Subcategory Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
+              {subs.map((sub) => {
+                const spent = subSpentMap[sub.id] || 0;
+                const rawPct = sub.allocatedAmount > 0 ? Math.round((spent / sub.allocatedAmount) * 100) : 0;
+                const pct = Math.min(100, rawPct);
+                const isMenuOpen = activeMenuSubId === sub.id;
+
+                return (
+                  <div
+                    key={sub.id}
+                    className={`bg-white dark:bg-[#16181D] rounded-[22px] px-5 py-4 border transition-all flex items-center gap-4 relative group ${
+                      isMenuOpen
+                        ? 'border-[#D4F826] shadow-[0_4px_20px_rgba(212,248,38,0.15)]'
+                        : 'border-gray-100 dark:border-gray-800/80 hover:border-[#D4F826] dark:hover:border-[#D4F826]/70 shadow-[0_2px_10px_rgba(0,0,0,0.02)]'
+                    }`}
+                  >
+                    {/* Left Emoji Icon */}
+                    <div className="text-[28px] leading-none w-9 text-center shrink-0 select-none">
+                      {sub.emoji}
+                    </div>
+
+                    {/* Center Info + Bar */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-[13px] font-extrabold text-gray-900 dark:text-white truncate">
+                            {sub.name}
+                          </span>
+                          {(sub.subscriptionId || sub.dueDateDay) && (
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('subscriptions')}
+                              className="text-[10px] font-semibold text-gray-400 hover:text-sky-500 dark:hover:text-sky-400 shrink-0 cursor-pointer transition-colors"
+                              title="Terhubung dengan Jadwal Langganan & Tagihan Bulanan"
+                            >
+                              {sub.isSubscriptionActive === false
+                                ? '· Dijeda'
+                                : sub.dueDateDay
+                                ? `· Tgl ${sub.dueDateDay}`
+                                : '· Rutin'}
+                            </button>
+                          )}
+                        </div>
+
+                        <span className="text-[13px] font-black text-gray-900 dark:text-white tabular-nums shrink-0">
+                          {formatRupiah(spent, hide)}
+                        </span>
+                      </div>
+
+                      {/* Subcategory Progress Bar */}
+                      <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            rawPct > 100 ? 'bg-red-500' : itemBarColor
+                          }`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+
+                      {/* Bottom Right "dari Rp ..." */}
+                      <div className="flex items-center justify-end mt-1.5">
+                        <span className="text-[11px] font-semibold text-gray-400 tabular-nums">
+                          dari {formatRupiah(sub.allocatedAmount, hide)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Right 3-Dots Action Button */}
+                    <button
+                      type="button"
+                      onClick={() => setActiveMenuSubId(isMenuOpen ? null : sub.id)}
+                      className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
+                        isMenuOpen
+                          ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white'
+                          : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
+                      }`}
+                    >
+                      <MoreVertical size={15} />
+                    </button>
+
+                    {/* Subcategory Menu Dropdown */}
+                    {isMenuOpen && (
+                      <div className="absolute right-4 top-14 z-30 bg-white dark:bg-[#1E2026] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[130px] text-xs font-bold space-y-1">
+                        <button
+                          type="button"
+                          onClick={() => openEditSub(sub)}
+                          className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
+                        >
+                          <Pencil size={12} />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            deleteBudgetSubcategory(sub.id);
+                            setActiveMenuSubId(null);
+                          }}
+                          className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer"
+                        >
+                          <Trash2 size={12} />
+                          <span>Hapus</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Full-Width Dashed + TAMBAH SUBKATEGORI Button */}
+            <button
+              type="button"
+              onClick={() => openAddForGroup(group)}
+              className="w-full py-3.5 rounded-[20px] border border-dashed border-gray-200 dark:border-gray-800 text-[11px] font-extrabold tracking-[0.15em] text-gray-400 hover:text-gray-800 dark:hover:text-white hover:border-gray-400 dark:hover:border-gray-600 flex items-center justify-center gap-2 cursor-pointer transition-all uppercase bg-white/50 dark:bg-transparent"
+            >
+              <Plus size={14} />
+              <span>TAMBAH SUBKATEGORI</span>
+            </button>
+
+            {/* Allocation Footer Status Bar */}
+            <div className="bg-gray-50/90 dark:bg-[#16181D]/90 rounded-2xl px-4 py-3 flex items-center justify-between border border-gray-100/80 dark:border-gray-800/70">
+              <div className="flex items-center gap-2">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    remainingUnallocated < 0
+                      ? 'bg-red-500'
+                      : allocPct === 100
+                      ? 'bg-[#D4F826]'
+                      : 'bg-amber-400'
+                  }`}
+                />
+                <span className="text-[10px] font-extrabold tracking-widest text-gray-500 dark:text-gray-400 uppercase">
+                  {remainingUnallocated === 0 && groupLimit > 0
+                    ? 'ALOKASI PENUH 100%'
+                    : remainingUnallocated < 0
+                    ? `MELEBIHI BATAS ALOKASI (${allocPct}%)`
+                    : `TERALOKASI ${allocPct}% · SISA ALOKASI`}
+                </span>
+              </div>
+              <span
+                className={`text-xs font-black tabular-nums ${
+                  remainingUnallocated < 0
+                    ? 'text-red-500'
+                    : 'text-[#84CC16] dark:text-[#D4F826]'
+                }`}
+              >
+                {formatRupiah(remainingUnallocated, hide)}
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
+    <div className="space-y-5 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
       <div className="pt-2 lg:pt-0 px-1">
         <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
@@ -456,379 +720,61 @@ export function BudgetTab() {
               </span>
             </div>
           </div>
-          <span className="text-xs text-gray-400 font-medium hover:text-white cursor-pointer transition-colors">
-            Tampilkan Arsip
-          </span>
         </div>
       </div>
 
-      {/* Category Sections (Full-Width Cards below the Black Hero Card) */}
-      <div className="space-y-4 lg:space-y-5">
-        {/* 1. KEBUTUHAN (Needs) Section */}
-        <div className="bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-violet-500" />
-            <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">KEBUTUHAN</h3>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setNeedsPercent(budgetConfig.needsPercent);
-              setWantsPercent(budgetConfig.wantsPercent);
-              setSavingsPercent(budgetConfig.savingsPercent);
-              setIsEditPercentagesOpen(true);
-            }}
-            className="text-[11px] font-bold text-gray-500 hover:text-black dark:hover:text-white flex items-center gap-1 cursor-pointer"
-          >
-            <Pencil size={12} />
-            <span>Ubah ({budgetConfig.needsPercent}%)</span>
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between text-xs text-gray-400 pt-1">
-          <span>TERPAKAI: {formatRupiah(needsSpent, hide)}</span>
-          <span>BATAS: {formatRupiah(needsLimit, hide)}</span>
-        </div>
-
-        {/* Subcategories */}
-        <div className="space-y-3 pt-2">
-          {needsSubs.map((sub) => {
-            const spent = subSpentMap[sub.id] || 0;
-            const pct = Math.min(100, Math.round((spent / sub.allocatedAmount) * 100));
-
-            return (
-              <div key={sub.id} className="space-y-1.5 relative">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                    <span className="text-lg">{sub.emoji}</span>
-                    <span className="font-extrabold text-gray-900 dark:text-white truncate">
-                      {sub.name}
-                    </span>
-                    {(sub.subscriptionId || sub.dueDateDay) && (
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('subscriptions')}
-                        className="px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 text-[9px] font-black uppercase cursor-pointer hover:bg-sky-500/20"
-                        title="Terhubung dengan Jadwal Langganan & Tagihan Bulanan"
-                      >
-                        {sub.isSubscriptionActive === false
-                          ? 'Dijeda'
-                          : sub.dueDateDay
-                          ? `🔁 Rutin Tgl ${sub.dueDateDay}`
-                          : '🔁 Langganan'}
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="text-right">
-                      <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
-                        {formatRupiah(spent, hide)}
-                      </span>
-                      <span className="text-[10px] text-gray-400 block">
-                        dari {formatRupiah(sub.allocatedAmount, hide)}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setActiveMenuSubId(activeMenuSubId === sub.id ? null : sub.id)
-                      }
-                      className="p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer"
-                    >
-                      <MoreVertical size={14} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Progress bar */}
-                <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      pct > 100 ? 'bg-red-500' : pct >= 90 ? 'bg-amber-400' : 'bg-violet-500'
-                    }`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-
-                {/* Subcategory Menu Dropdown */}
-                {activeMenuSubId === sub.id && (
-                  <div className="absolute right-0 top-8 z-20 bg-white dark:bg-[#1E2026] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[130px] text-xs font-bold space-y-1">
-                    <button
-                      type="button"
-                      onClick={() => openEditSub(sub)}
-                      className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
-                    >
-                      <Pencil size={12} />
-                      <span>Edit</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        deleteBudgetSubcategory(sub.id);
-                        setActiveMenuSubId(null);
-                      }}
-                      className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer"
-                    >
-                      <Trash2 size={12} />
-                      <span>Hapus</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
+      {/* Top Right "Tampilkan Arsip" Pill Control (matching reference screenshot) */}
+      <div className="flex justify-end px-1 -mb-2">
         <button
           type="button"
-          onClick={() => openAddForGroup('kebutuhan')}
-          className="w-full py-2.5 mt-2 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 text-xs font-bold text-gray-500 dark:text-gray-400 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+          onClick={() => setShowArchived((v) => !v)}
+          className="px-3.5 py-1.5 rounded-full bg-gray-100/90 dark:bg-gray-800/70 hover:bg-gray-200/80 dark:hover:bg-gray-800 text-[11px] font-bold text-gray-500 dark:text-gray-400 flex items-center gap-1.5 cursor-pointer transition-colors"
         >
-          <Plus size={14} />
-          <span>TAMBAH SUBKATEGORI</span>
+          <Eye size={13} />
+          <span>{showArchived ? 'Sembunyikan Arsip' : 'Tampilkan Arsip'}</span>
         </button>
       </div>
 
-      {/* 2. KEINGINAN (Wants) Section */}
-      <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-pink-500" />
-            <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">KEINGINAN</h3>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setNeedsPercent(budgetConfig.needsPercent);
-              setWantsPercent(budgetConfig.wantsPercent);
-              setSavingsPercent(budgetConfig.savingsPercent);
-              setIsEditPercentagesOpen(true);
-            }}
-            className="text-[11px] font-bold text-gray-500 hover:text-black dark:hover:text-white flex items-center gap-1 cursor-pointer"
-          >
-            <Pencil size={12} />
-            <span>Ubah ({budgetConfig.wantsPercent}%)</span>
-          </button>
-        </div>
+      {/* Category Sections (Matching Reference 2-Column Card Grid UI) */}
+      <div className="space-y-8">
+        {renderGroupSection({
+          group: 'kebutuhan',
+          title: 'KEBUTUHAN',
+          tooltip: `Alokasi Kebutuhan Pokok & Tagihan Rutin (${budgetConfig.needsPercent}%)`,
+          dotColor: 'bg-[#A594F9]',
+          sectionBarColor: 'bg-[#A594F9]',
+          itemBarColor: 'bg-[#A594F9]',
+          subs: showArchived ? needsSubs : needsSubs.filter((s) => s.isSubscriptionActive !== false),
+          groupSpent: needsSpent,
+          groupLimit: needsLimit,
+          spentLabel: 'TERPAKAI',
+        })}
 
-        <div className="flex items-center justify-between text-xs text-gray-400 pt-1">
-          <span>TERPAKAI: {formatRupiah(wantsSpent, hide)}</span>
-          <span>BATAS: {formatRupiah(wantsLimit, hide)}</span>
-        </div>
+        {renderGroupSection({
+          group: 'keinginan',
+          title: 'KEINGINAN',
+          tooltip: `Alokasi Gaya Hidup, Hiburan & Keinginan (${budgetConfig.wantsPercent}%)`,
+          dotColor: 'bg-pink-400',
+          sectionBarColor: 'bg-pink-500',
+          itemBarColor: 'bg-pink-400',
+          subs: showArchived ? wantsSubs : wantsSubs.filter((s) => s.isSubscriptionActive !== false),
+          groupSpent: wantsSpent,
+          groupLimit: wantsLimit,
+          spentLabel: 'TERPAKAI',
+        })}
 
-        {/* Subcategories */}
-        <div className="space-y-3 pt-2">
-          {wantsSubs.map((sub) => {
-            const spent = subSpentMap[sub.id] || 0;
-            const pct = Math.min(100, Math.round((spent / sub.allocatedAmount) * 100));
-
-            return (
-              <div key={sub.id} className="space-y-1.5 relative">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                    <span className="text-lg">{sub.emoji}</span>
-                    <span className="font-extrabold text-gray-900 dark:text-white truncate">
-                      {sub.name}
-                    </span>
-                    {(sub.subscriptionId || sub.dueDateDay) && (
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('subscriptions')}
-                        className="px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 text-[9px] font-black uppercase cursor-pointer hover:bg-sky-500/20"
-                        title="Terhubung dengan Jadwal Langganan & Tagihan Bulanan"
-                      >
-                        {sub.isSubscriptionActive === false
-                          ? 'Dijeda'
-                          : sub.dueDateDay
-                          ? `🔁 Rutin Tgl ${sub.dueDateDay}`
-                          : '🔁 Langganan'}
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="text-right">
-                      <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
-                        {formatRupiah(spent, hide)}
-                      </span>
-                      <span className="text-[10px] text-gray-400 block">
-                        dari {formatRupiah(sub.allocatedAmount, hide)}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setActiveMenuSubId(activeMenuSubId === sub.id ? null : sub.id)
-                      }
-                      className="p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer"
-                    >
-                      <MoreVertical size={14} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      pct > 100 ? 'bg-red-500' : 'bg-pink-500'
-                    }`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-
-                {/* Subcategory Menu Dropdown */}
-                {activeMenuSubId === sub.id && (
-                  <div className="absolute right-0 top-8 z-20 bg-white dark:bg-[#1E2026] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[130px] text-xs font-bold space-y-1">
-                    <button
-                      type="button"
-                      onClick={() => openEditSub(sub)}
-                      className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
-                    >
-                      <Pencil size={12} />
-                      <span>Edit</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        deleteBudgetSubcategory(sub.id);
-                        setActiveMenuSubId(null);
-                      }}
-                      className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer"
-                    >
-                      <Trash2 size={12} />
-                      <span>Hapus</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => openAddForGroup('keinginan')}
-          className="w-full py-2.5 mt-2 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 text-xs font-bold text-gray-500 dark:text-gray-400 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-        >
-          <Plus size={14} />
-          <span>TAMBAH SUBKATEGORI</span>
-        </button>
-      </div>
-
-      {/* 3. TABUNGAN (Savings) Section */}
-      <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-teal-500" />
-            <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">TABUNGAN</h3>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setNeedsPercent(budgetConfig.needsPercent);
-              setWantsPercent(budgetConfig.wantsPercent);
-              setSavingsPercent(budgetConfig.savingsPercent);
-              setIsEditPercentagesOpen(true);
-            }}
-            className="text-[11px] font-bold text-gray-500 hover:text-black dark:hover:text-white flex items-center gap-1 cursor-pointer"
-          >
-            <Pencil size={12} />
-            <span>Ubah ({budgetConfig.savingsPercent}%)</span>
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between text-xs text-gray-400 pt-1">
-          <span>REALISASI: {formatRupiah(savingsSpent, hide)}</span>
-          <span>BATAS: {formatRupiah(savingsLimit, hide)}</span>
-        </div>
-
-        {/* Subcategories */}
-        <div className="space-y-3 pt-2">
-          {savingsSubs.map((sub) => {
-            const spent = subSpentMap[sub.id] || 0;
-            const pct = Math.min(100, Math.round((spent / sub.allocatedAmount) * 100));
-
-            return (
-              <div key={sub.id} className="space-y-1.5 relative">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="text-lg">{sub.emoji}</span>
-                    <span className="font-extrabold text-gray-900 dark:text-white truncate">
-                      {sub.name}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <div className="text-right">
-                      <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
-                        {formatRupiah(spent, hide)}
-                      </span>
-                      <span className="text-[10px] text-gray-400 block">
-                        dari {formatRupiah(sub.allocatedAmount, hide)}
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setActiveMenuSubId(activeMenuSubId === sub.id ? null : sub.id)
-                      }
-                      className="p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer"
-                    >
-                      <MoreVertical size={14} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-teal-400 transition-all"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-
-                {/* Subcategory Menu Dropdown */}
-                {activeMenuSubId === sub.id && (
-                  <div className="absolute right-0 top-8 z-20 bg-white dark:bg-[#1E2026] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[130px] text-xs font-bold space-y-1">
-                    <button
-                      type="button"
-                      onClick={() => openEditSub(sub)}
-                      className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
-                    >
-                      <Pencil size={12} />
-                      <span>Edit</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        deleteBudgetSubcategory(sub.id);
-                        setActiveMenuSubId(null);
-                      }}
-                      className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer"
-                    >
-                      <Trash2 size={12} />
-                      <span>Hapus</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => openAddForGroup('tabungan')}
-          className="w-full py-2.5 mt-2 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 text-xs font-bold text-gray-500 dark:text-gray-400 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-        >
-          <Plus size={14} />
-          <span>TAMBAH SUBKATEGORI</span>
-        </button>
-      </div>
+        {renderGroupSection({
+          group: 'tabungan',
+          title: 'TABUNGAN',
+          tooltip: `Alokasi Dana Darurat, Tabungan & Investasi (${budgetConfig.savingsPercent}%)`,
+          dotColor: 'bg-teal-400',
+          sectionBarColor: 'bg-teal-500',
+          itemBarColor: 'bg-teal-400',
+          subs: savingsSubs,
+          groupSpent: savingsSpent,
+          groupLimit: savingsLimit,
+          spentLabel: 'REALISASI',
+        })}
       </div>
 
       {/* Modal: Ubah Pemasukan */}

@@ -279,7 +279,7 @@ export function DebtTab() {
   return (
     <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 lg:pt-0 px-1">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1 lg:pt-0 px-0.5">
         <div>
           <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight flex items-center gap-2.5">
             <span>Utang & Cicilan</span>
@@ -292,32 +292,40 @@ export function DebtTab() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="grid grid-cols-2 sm:flex items-center gap-2.5 w-full sm:w-auto shrink-0">
           <button
             type="button"
             onClick={() => handleOpenAdd('payable')}
-            className={`h-10 px-4 rounded-2xl ${brandAccentBg} flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95`}
+            className={`h-10 px-4 rounded-full ${brandAccentBg} flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap`}
           >
-            <Plus size={18} strokeWidth={2.8} />
+            <Plus size={16} strokeWidth={2.8} className="shrink-0" />
             <span>Catat Utang</span>
           </button>
           <button
             type="button"
             onClick={() => handleOpenAdd('receivable')}
-            className="h-10 px-3.5 rounded-2xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 flex items-center justify-center gap-1.5 font-bold text-xs cursor-pointer transition-transform active:scale-95"
+            className="h-10 px-4 rounded-full bg-white dark:bg-[#16181D] hover:bg-gray-100 dark:hover:bg-gray-800 border border-gray-200/80 dark:border-gray-800 text-gray-800 dark:text-gray-200 flex items-center justify-center gap-1.5 font-extrabold text-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
             title="Catat piutang (orang yang berutang ke Anda)"
           >
-            <ArrowDownLeft size={16} />
-            <span className="hidden sm:inline">Catat Piutang</span>
-            <span className="sm:hidden">Piutang</span>
+            <ArrowDownLeft size={16} className="shrink-0" />
+            <span>Catat Piutang</span>
           </button>
         </div>
       </div>
 
       {/* Hero Overview Card */}
-      <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 text-white shadow-xl border border-white/5 relative overflow-hidden">
+      <div className="w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 text-white shadow-xl border border-white/10 relative overflow-hidden">
         {/* Subtle decorative glow */}
-        <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-bl from-[#D4F826]/10 via-emerald-500/5 to-transparent rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
+        <div
+          className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
+            settings.accentColor === 'orange'
+              ? 'bg-[#FF6B2B]/15'
+              : settings.accentColor === 'pink'
+              ? 'bg-[#FFA4A4]/15'
+              : 'bg-[#D4F826]/15'
+          }`}
+        />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center relative z-10">
           {/* Left Column: Total Utang & Piutang */}

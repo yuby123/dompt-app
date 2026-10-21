@@ -264,13 +264,23 @@ export function HealthScoreTab() {
         </div>
       </div>
 
-      {/* Full-Width Black Score Hero Card */}
+      {/* Full-Width Dark Score Hero Card */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full bg-[#121316] text-white p-5 lg:px-9 lg:py-7 rounded-[28px] lg:rounded-[32px] shadow-xl border border-white/5 space-y-4"
+        className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white p-5 lg:px-9 lg:py-7 rounded-[28px] lg:rounded-[32px] shadow-xl border border-white/10 space-y-4"
       >
-        <div className="flex items-center justify-between">
+        <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
+        <div
+          className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
+            settings.accentColor === 'orange'
+              ? 'bg-[#FF6B2B]/15'
+              : settings.accentColor === 'pink'
+              ? 'bg-[#FFA4A4]/15'
+              : 'bg-[#D4F826]/15'
+          }`}
+        />
+        <div className="relative z-10 flex items-center justify-between">
           <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider flex items-center gap-1.5">
             <Activity size={13} />
             <span>FINANCIAL HEALTH SCORE</span>

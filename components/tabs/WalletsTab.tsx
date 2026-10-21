@@ -87,19 +87,19 @@ export function WalletsTab() {
   return (
     <div className="space-y-5 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
-      <div className="flex items-center justify-between pt-2 lg:pt-0 px-1">
-        <div>
-          <h1 className="font-display text-2xl lg:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            Arsitektur Multi-Dompet
+      <div className="flex items-center justify-between gap-3 pt-1 lg:pt-0 px-0.5">
+        <div className="min-w-0 flex-1">
+          <h1 className="font-display text-2xl lg:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight truncate">
+            Dompet & Rekening
           </h1>
-          <p className="text-xs lg:text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5">
-            Kelola seluruh sumber likuiditas, rekening bank, e-wallet, dan dana cadangan.
+          <p className="text-xs lg:text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5 truncate">
+            Kelola rekening bank, e-wallet, dan dana cadangan.
           </p>
         </div>
         <button
           type="button"
           onClick={openAddWallet}
-          className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-bold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap shrink-0"
+          className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-1.5 font-extrabold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap shrink-0"
           title="Tambah Dompet"
         >
           <Plus size={16} strokeWidth={2.8} />
@@ -108,7 +108,7 @@ export function WalletsTab() {
       </div>
 
       {/* Bespoke Deep Indigo & Obsidian Hero Card */}
-      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-6 lg:px-9 lg:py-8 text-white border border-white/10 space-y-5">
+      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 sm:p-6 lg:px-9 lg:py-8 text-white border border-white/10 space-y-5">
         <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
         <div
           className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
@@ -120,7 +120,7 @@ export function WalletsTab() {
           }`}
         />
 
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 lg:gap-6">
           {/* Left: Total Saldo & Tabungan */}
           <div className="space-y-2">
             <div className="flex items-center gap-2 text-xs text-slate-300">
@@ -131,34 +131,34 @@ export function WalletsTab() {
             <div className="font-display font-mono-num text-3xl sm:text-4xl lg:text-[42px] font-extrabold tracking-tight leading-none">
               {formatRupiah(totalBalance, hide)}
             </div>
-            <p className="text-xs text-slate-300/90 max-w-lg">
+            <p className="text-xs text-slate-300/90 max-w-lg leading-relaxed">
               Klik kartu dompet di bawah untuk memverifikasi saldo aktual atau melihat rincian mutasi.
             </p>
           </div>
 
-          {/* Right: 3 Summary Metrics */}
-          <div className="grid grid-cols-3 gap-4 lg:gap-8 pt-4 lg:pt-0 border-t lg:border-t-0 border-white/10">
-            <div>
-              <span className="text-[11px] font-medium text-slate-400 block">
+          {/* Right: 3 Symmetrical Summary Metric Boxes */}
+          <div className="grid grid-cols-3 gap-2.5 sm:gap-4 shrink-0">
+            <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3 sm:px-4 sm:py-3.5 min-w-0 text-center sm:text-left">
+              <span className="text-[10px] sm:text-[11px] font-semibold text-slate-400 block truncate">
                 Siap Pakai
               </span>
-              <span className="font-mono-num text-sm lg:text-lg font-bold text-[#D4F826] mt-1 block">
+              <span className="font-mono-num text-xs sm:text-base lg:text-lg font-bold text-[#D4F826] mt-1 block truncate">
                 {formatRupiah(totalAvailable, hide)}
               </span>
             </div>
-            <div>
-              <span className="text-[11px] font-medium text-slate-400 block">
+            <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3 sm:px-4 sm:py-3.5 min-w-0 text-center sm:text-left">
+              <span className="text-[10px] sm:text-[11px] font-semibold text-slate-400 block truncate">
                 Dicadangkan
               </span>
-              <span className="font-mono-num text-sm lg:text-lg font-bold text-white mt-1 block">
+              <span className="font-mono-num text-xs sm:text-base lg:text-lg font-bold text-white mt-1 block truncate">
                 {formatRupiah(totalReserved, hide)}
               </span>
             </div>
-            <div>
-              <span className="text-[11px] font-medium text-slate-400 block">
+            <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3 sm:px-4 sm:py-3.5 min-w-0 text-center sm:text-left">
+              <span className="text-[10px] sm:text-[11px] font-semibold text-slate-400 block truncate">
                 Tagihan Kredit
               </span>
-              <span className="font-mono-num text-sm lg:text-lg font-bold text-[#FF6B2B] mt-1 block">
+              <span className="font-mono-num text-xs sm:text-base lg:text-lg font-bold text-[#FF6B2B] mt-1 block truncate">
                 {formatRupiah(totalCreditLiability, hide)}
               </span>
             </div>

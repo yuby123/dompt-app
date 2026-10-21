@@ -1,71 +1,112 @@
 'use client';
 
 import React from 'react';
-import { Plus } from 'lucide-react';
+import { BookOpen, Moon, Sun, ArrowLeft } from 'lucide-react';
 import { TabType, useApp } from './AppContext';
 
+const emptySubscribe = () => () => {};
+
+const MAIN_BOTTOM_TABS: TabType[] = ['dashboard', 'wallets', 'transactions', 'settings'];
+
 export function Header() {
-  const { settings, setActiveTab, activeTab, openAddTransaction } = useApp();
+  const { settings, setActiveTab, activeTab, setThemeMode } = useApp();
+
+  const mounted = React.useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+
+  const isDarkMode = mounted
+    ? settings.themeMode === 'dark' ||
+      (settings.themeMode === 'system' &&
+        window.matchMedia('(prefers-color-scheme: dark)').matches)
+    : settings.themeMode === 'dark';
+
+  const toggleTheme = () => {
+    setThemeMode(isDarkMode ? 'light' : 'dark');
+  };
 
   const isPink = settings.accentColor === 'pink';
   const isOrange = settings.accentColor === 'orange';
-  const primaryBtnClass = isOrange
-    ? 'bg-[#FF6B00] hover:bg-[#ea5e00] text-white shadow-[#FF6B00]/25'
+  const badgeClass = isOrange
+    ? 'bg-[#FF6B00] text-white'
     : isPink
-    ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] text-black'
-    : 'bg-[#D4F826] hover:bg-[#cbf11e] text-black';
+    ? 'bg-[#FFA4A4] text-black'
+    : 'bg-[#D4F826] text-black';
 
-  const topNavLinks: { id: TabType; label: string }[] = [
-    { id: 'dashboard', label: 'Ikhtisar' },
-    { id: 'wallets', label: 'Dompet' },
-    { id: 'transactions', label: 'Transaksi' },
-    { id: 'budget', label: 'Anggaran' },
-    { id: 'reports', label: 'Laporan' },
-  ];
+  const isTutorialActive = activeTab === 'tutorial';
+  const showBackButton = !MAIN_BOTTOM_TABS.includes(activeTab);
 
   return (
-    <header className="lg:hidden sticky top-0 z-30 backdrop-blur-xl bg-[#F6F7FB]/85 dark:bg-[#08090F]/85 border-b border-slate-200/80 dark:border-white/[0.08] px-3 sm:px-6 py-3.5 mb-4 flex items-center justify-between gap-8">
-      {/* Zone 1: Single text element wordmark */}
-      <button
-        type="button"
-        onClick={() => setActiveTab('dashboard')}
-        className="font-display text-xl font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0 cursor-pointer"
-      >
-        Dompt.
-      </button>
-
-      {/* Zone 2: 5 clean single-line text navigation links */}
-      <nav className="hidden md:flex items-center gap-6 text-xs font-semibold text-slate-500 dark:text-slate-400">
-        {topNavLinks.map((link) => {
-          const isActive = activeTab === link.id;
-          return (
-            <button
-              key={link.id}
-              type="button"
-              onClick={() => setActiveTab(link.id)}
-              className={`py-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 ${
-                isActive
-                  ? 'text-slate-900 dark:text-white border-indigo-600 dark:border-[#D4F826] font-bold'
-                  : 'border-transparent hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              {link.label}
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* Zone 3: 1 primary action */}
-      <div className="flex items-center shrink-0">
+    <header className="lg:hidden sticky top-0 z-30 -mx-3 sm:-mx-4 px-4 sm:px-5 h-15 mb-2 backdrop-blur-xl bg-[#F6F7FB]/95 dark:bg-[#08090F]/95 border-b border-slate-200/80 dark:border-white/[0.08] flex items-center justify-between gap-2">
+      {/* Left: Brand Logo (and Back to Home when inside a sub-menu) */}
+      <div className="flex items-center gap-2 min-w-0">
+        {showBackButton && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('dashboard')}
+            className="w-9 h-9 rounded-full bg-white dark:bg-[#16181D] border border-slate-200/80 dark:border-white/10 flex items-center justify-center text-slate-700 dark:text-slate-200 active:scale-95 transition-all cursor-pointer shrink-0 shadow-2xs"
+            title="Kembali ke Dashboard"
+            aria-label="Kembali ke Dashboard"
+          >
+            <ArrowLeft size={16} strokeWidth={2.5} />
+          </button>
+        )}
         <button
           type="button"
-          onClick={() => openAddTransaction()}
-          className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 shadow-xs cursor-pointer whitespace-nowrap shrink-0 ${primaryBtnClass}`}
+          onClick={() => setActiveTab('dashboard')}
+          className="flex items-center gap-2 cursor-pointer group text-left shrink-0"
         >
-          <Plus size={14} strokeWidth={2.8} />
-          <span>Catat Transaksi</span>
+          <div
+            className={`w-8 h-8 rounded-xl ${badgeClass} font-display font-black flex items-center justify-center text-xs shadow-2xs transition-transform active:scale-95 shrink-0`}
+          >
+            D.
+          </div>
+          <span className="font-display text-xl font-black tracking-tight text-slate-900 dark:text-white leading-none whitespace-nowrap">
+            Dompt.
+          </span>
+        </button>
+      </div>
+
+      {/* Right: Dark/Light Mode Toggle & Tutorial Button (No Add Transaction button) */}
+      <div className="flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={toggleTheme}
+          className="h-9 px-3 rounded-full bg-white dark:bg-[#16181D] border border-slate-200/80 dark:border-white/10 text-slate-700 dark:text-slate-200 hover:border-[#D4F826] flex items-center justify-center gap-1.5 text-xs font-extrabold transition-all active:scale-95 cursor-pointer shrink-0 shadow-2xs"
+          title={isDarkMode ? 'Beralih ke Mode Terang' : 'Beralih ke Mode Gelap'}
+          aria-label="Mode Gelap / Terang"
+        >
+          {isDarkMode ? (
+            <>
+              <Sun size={14} strokeWidth={2.4} className="text-amber-400 shrink-0" />
+              <span>Terang</span>
+            </>
+          ) : (
+            <>
+              <Moon size={14} strokeWidth={2.4} className="text-slate-700 shrink-0" />
+              <span>Gelap</span>
+            </>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('tutorial')}
+          className={`h-9 px-3.5 rounded-full text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap border shadow-2xs ${
+            isTutorialActive
+              ? `${badgeClass} border-transparent`
+              : 'bg-white dark:bg-[#16181D] text-slate-700 dark:text-slate-200 border-slate-200/80 dark:border-white/10 hover:border-[#D4F826]'
+          }`}
+          title="Panduan & Tutorial"
+          aria-label="Tutorial"
+        >
+          <BookOpen size={14} strokeWidth={2.4} className="shrink-0" />
+          <span>Tutorial</span>
         </button>
       </div>
     </header>
   );
 }
+

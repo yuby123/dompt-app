@@ -19,6 +19,7 @@ import { TabType, useApp } from '../AppContext';
 
 export function TutorialTab() {
   const {
+    settings,
     wallets,
     budgetConfig,
     transactions,
@@ -126,9 +127,19 @@ export function TutorialTab() {
         </div>
       </div>
 
-      {/* Interactive Quick Start Checklist (Full-Width Black Hero Card) */}
-      <div className="w-full bg-[#121316] text-white rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 shadow-xl border border-white/5 space-y-4">
-        <div className="flex items-center justify-between">
+      {/* Interactive Quick Start Checklist (Full-Width Dark Hero Card) */}
+      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 shadow-xl border border-white/10 space-y-4">
+        <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
+        <div
+          className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
+            settings.accentColor === 'orange'
+              ? 'bg-[#FF6B2B]/15'
+              : settings.accentColor === 'pink'
+              ? 'bg-[#FFA4A4]/15'
+              : 'bg-[#D4F826]/15'
+          }`}
+        />
+        <div className="relative z-10 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Compass size={16} className="text-[#D4F826]" />
             <span className="text-[11px] font-black uppercase tracking-wider text-[#D4F826]">

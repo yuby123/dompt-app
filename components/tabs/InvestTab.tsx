@@ -43,29 +43,39 @@ export function InvestTab() {
   return (
     <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
-      <div className="flex items-center justify-between pt-2 lg:pt-0 px-1">
-        <div>
-          <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
+      <div className="flex items-center justify-between gap-3 pt-1 lg:pt-0 px-0.5">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight truncate">
             Investasi
           </h1>
-          <p className="text-xs lg:text-sm font-semibold text-gray-400 mt-0.5">
+          <p className="text-xs lg:text-sm font-semibold text-gray-400 mt-0.5 truncate">
             Biarkan uang bekerja untuk masa depanmu.
           </p>
         </div>
         <button
           type="button"
           onClick={() => setIsAddOpen(true)}
-          className="h-10 px-3.5 lg:px-4 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95"
+          className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-1.5 font-extrabold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap shrink-0"
           title="Tambah Investasi"
         >
-          <Plus size={18} strokeWidth={2.8} />
-          <span className="hidden sm:inline">Tambah Portofolio</span>
+          <Plus size={16} strokeWidth={2.8} />
+          <span>Tambah Portofolio</span>
         </button>
       </div>
 
-      {/* Full-Width Black Hero Card */}
-      <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl border border-white/5">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+      {/* Full-Width Dark Hero Card with Theme-Adaptive Glow */}
+      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl border border-white/10">
+        <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
+        <div
+          className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
+            settings.accentColor === 'orange'
+              ? 'bg-[#FF6B2B]/15'
+              : settings.accentColor === 'pink'
+              ? 'bg-[#FFA4A4]/15'
+              : 'bg-[#D4F826]/15'
+          }`}
+        />
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
           <div className="space-y-1.5">
             <div className="flex items-center gap-2">
               <span className="text-[11px] font-black text-[#D4F826] uppercase tracking-widest">

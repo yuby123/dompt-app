@@ -257,7 +257,8 @@ export function DashboardTab() {
     { id: 'subscriptions', label: 'Langganan', icon: CalendarClock, action: () => setActiveTab('subscriptions') },
     { id: 'utang', label: 'Utang', icon: CreditCard, action: () => setActiveTab('debt') },
     { id: 'investasi', label: 'Investasi', icon: TrendingUp, action: () => setActiveTab('invest') },
-    { id: 'health-score', label: 'Skor Sehat', icon: Activity, action: () => setActiveTab('health-score') },
+    { id: 'analytics', label: 'Analisis', icon: Activity, action: () => setActiveTab('analytics') },
+    { id: 'health-score', label: 'Skor Sehat', icon: Eye, action: () => setActiveTab('health-score') },
     { id: 'ai-advisor', label: 'AI Advisor', icon: Sparkles, action: () => setActiveTab('ai-advisor') },
     { id: 'laporan', label: 'Laporan', icon: FileText, action: () => setActiveTab('reports') },
   ];
@@ -287,23 +288,23 @@ export function DashboardTab() {
 
   return (
     <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-12">
-      {/* 1. Header Greeting + Active Period Pill */}
-      <div className="pt-2 lg:pt-1 px-1 flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl lg:text-[28px] font-black text-gray-900 dark:text-white tracking-tight leading-tight">
-            Dashboard
-          </h1>
-          <div className="flex items-center gap-2 mt-0.5">
-            <p className="text-xs lg:text-sm font-semibold text-gray-400 dark:text-gray-400">
-              Halo, {userName} {greetingEmoji}
-            </p>
+      {/* 1. Header Greeting + Active Period Pill (Symmetrical single-line layout on mobile) */}
+      <div className="pt-1 lg:pt-1 px-0.5 flex items-center justify-between gap-2.5">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl lg:text-[28px] font-black text-gray-900 dark:text-white tracking-tight leading-none truncate">
+              Dashboard
+            </h1>
             {user && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Cloud Sync
+              <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20 whitespace-nowrap shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                <span>Cloud Sync</span>
               </span>
             )}
           </div>
+          <p className="text-xs lg:text-sm font-semibold text-gray-500 dark:text-gray-400 mt-1 whitespace-nowrap truncate">
+            Halo, {userName} {greetingEmoji}
+          </p>
         </div>
 
         {/* Active Period Pill Badge (clickable to open Budget Period settings) */}
@@ -311,18 +312,18 @@ export function DashboardTab() {
           type="button"
           onClick={() => setActiveTab('budget')}
           title="Klik untuk mengatur Periode & Tanggal Gajian"
-          className="flex items-center gap-2 sm:gap-2.5 bg-white dark:bg-[#16181D] hover:border-[#D4F826] border border-gray-100 dark:border-gray-800 rounded-2xl px-3 py-1.5 sm:px-4 sm:py-2 shadow-xs transition-colors cursor-pointer text-left"
+          className="flex items-center gap-2 bg-white dark:bg-[#16181D] hover:border-[#D4F826] border border-gray-200/80 dark:border-gray-800 rounded-2xl px-3 py-2 sm:px-4 sm:py-2.5 shadow-2xs transition-colors cursor-pointer text-left shrink-0"
         >
-          <div className="w-6 h-6 rounded-full bg-[#D4F826]/30 flex items-center justify-center text-[#658500] dark:text-[#D4F826] shrink-0">
-            <CalendarClock size={13} strokeWidth={2.5} />
+          <div className="w-7 h-7 rounded-full bg-[#D4F826]/30 flex items-center justify-center text-[#658500] dark:text-[#D4F826] shrink-0">
+            <CalendarClock size={14} strokeWidth={2.5} />
           </div>
-          <div>
-            <span className="text-[8px] font-extrabold uppercase tracking-widest text-gray-400 block leading-none">
+          <div className="whitespace-nowrap">
+            <span className="text-[9px] font-extrabold uppercase tracking-wider text-gray-400 block leading-none">
               {budgetPeriod.paydayDay > 1
-                ? `PERIODE GAJIAN (TGL ${budgetPeriod.paydayDay})`
+                ? `GAJIAN TGL ${budgetPeriod.paydayDay}`
                 : 'PERIODE AKTIF'}
             </span>
-            <span className="text-[11px] font-black text-gray-900 dark:text-white mt-0.5 block leading-none">
+            <span className="text-xs font-black text-gray-900 dark:text-white mt-1 block leading-none">
               {activePeriodLabel}
             </span>
           </div>
@@ -361,7 +362,7 @@ export function DashboardTab() {
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[24px] sm:rounded-[28px] lg:rounded-[32px] p-4 sm:p-7 lg:px-10 lg:py-8 bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white shadow-xl border border-white/10 flex flex-col justify-between"
+          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[28px] lg:rounded-[32px] p-5 sm:p-7 lg:px-10 lg:py-8 bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white shadow-xl border border-white/10 flex flex-col justify-between"
         >
           {/* Ambient Mesh Gradient Glows (theme-adaptive: Neon Green, Orange, or Pink) */}
           <div className="absolute -top-24 -right-16 w-80 h-80 lg:w-96 lg:h-96 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
@@ -386,7 +387,7 @@ export function DashboardTab() {
 
           {/* Top Row: Sekilas Hari Ini • Kuota Operasional Harian | Hari X/Y + Eye */}
           <div className="relative z-10 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-sm min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm min-w-0">
               <span className="font-extrabold text-[#D4F826] whitespace-nowrap shrink-0">
                 Sekilas Hari Ini
               </span>
@@ -397,7 +398,7 @@ export function DashboardTab() {
               </span>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-              <span className="text-[11px] sm:text-sm font-mono font-semibold text-slate-300 tracking-wide whitespace-nowrap">
+              <span className="text-xs sm:text-sm font-mono font-semibold text-slate-300 tracking-wide whitespace-nowrap">
                 Hari {periodCurrentDay}/{periodTotalDays}
               </span>
               <button
@@ -412,26 +413,26 @@ export function DashboardTab() {
           </div>
 
           {/* Middle Row: Left Big Monospace Balance + Right Outlined Cards */}
-          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5 sm:gap-6 mt-3 sm:mt-5 lg:mt-6">
+          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 sm:gap-6 mt-4 sm:mt-5 lg:mt-6">
             <div>
-              <div className="text-[28px] sm:text-5xl lg:text-[54px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
+              <div className="text-3xl sm:text-5xl lg:text-[54px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
                 {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.dailyBudgetRemaining, false)}
               </div>
-              <p className="text-[11px] sm:text-sm text-slate-300/90 font-medium mt-1.5 sm:mt-3 leading-snug">
+              <p className="text-xs sm:text-sm text-slate-300/90 font-medium mt-2 sm:mt-3 leading-snug">
                 {dashboardSummary.dailyOverbudget
                   ? `Melebihi kuota harian (${formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari`
                   : `Tersedia dari kuota harian ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari di luar tagihan tetap`}
               </p>
               {dashboardSummary.hasMonthlyBudget && (
-                <p className="text-[10px] sm:text-xs text-[#D4F826] font-semibold mt-1">
+                <p className="text-[11px] sm:text-xs text-[#D4F826] font-semibold mt-1">
                   Jatah aman s/d {budgetPeriod.endShortLabel} ({budgetPeriod.daysRemainingUntilPayday} hari lagi): Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
                 </p>
               )}
             </div>
 
-            {/* Right: 2 Outlined Box Cards (PEMASUKAN HARI INI & PENGELUARAN HARI INI) */}
-            <div className="grid grid-cols-2 gap-2.5 sm:gap-4 shrink-0">
-              <div className="rounded-xl sm:rounded-2xl bg-white/[0.03] backdrop-blur-xs border border-white/10 px-3 py-2.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
+            {/* Right: 2 Symmetrical Outlined Box Cards (PEMASUKAN HARI INI & PENGELUARAN HARI INI) */}
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 shrink-0">
+              <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
                 <span className="text-[9px] sm:text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block whitespace-nowrap truncate">
                   PEMASUKAN HARI INI
                 </span>
@@ -440,7 +441,7 @@ export function DashboardTab() {
                 </div>
               </div>
 
-              <div className="rounded-xl sm:rounded-2xl bg-white/[0.03] backdrop-blur-xs border border-white/10 px-3 py-2.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
+              <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
                 <span className="text-[9px] sm:text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block whitespace-nowrap truncate">
                   PENGELUARAN HARI INI
                 </span>
@@ -452,8 +453,8 @@ export function DashboardTab() {
           </div>
 
           {/* Progress Section: Kapasitas Kuota Harian + Gradient Bar */}
-          <div className="relative z-10 mt-3.5 sm:mt-6 lg:mt-7">
-            <div className="flex items-center justify-between text-[11px] sm:text-xs mb-1.5 sm:mb-2">
+          <div className="relative z-10 mt-4 sm:mt-6 lg:mt-7">
+            <div className="flex items-center justify-between text-xs mb-1.5 sm:mb-2">
               <span className="text-slate-400 font-medium">Kapasitas Kuota Harian</span>
               <span className="text-white font-extrabold tabular-nums">{dailyCapacityPct}%</span>
             </div>
@@ -473,31 +474,31 @@ export function DashboardTab() {
             </div>
           </div>
 
-          {/* Bottom Action Buttons */}
-          <div className="relative z-10 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3 mt-4 sm:mt-6">
+          {/* Bottom Action Buttons (Symmetrical 2-col grid on mobile) */}
+          <div className="relative z-10 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-3 mt-4 sm:mt-6">
             <button
               type="button"
               onClick={() => openAddTransaction()}
-              className="px-3.5 py-2.5 sm:px-5 sm:py-3 rounded-full bg-[#D4F826] hover:bg-[#c8ed1d] text-black font-extrabold text-[11px] sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-md transition-transform active:scale-95 cursor-pointer whitespace-nowrap"
+              className="h-11 sm:h-12 px-4 sm:px-5 rounded-full bg-[#D4F826] hover:bg-[#c8ed1d] text-black font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-md transition-transform active:scale-95 cursor-pointer whitespace-nowrap"
             >
-              <Plus size={14} strokeWidth={2.5} className="shrink-0" />
+              <Plus size={15} strokeWidth={2.6} className="shrink-0" />
               <span>Catat Transaksi</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('wallets')}
-              className="px-3.5 py-2.5 sm:px-5 sm:py-3 rounded-full bg-white/[0.03] hover:bg-white/[0.08] border border-white/15 text-white font-bold text-[11px] sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              className="h-11 sm:h-12 px-4 sm:px-5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/15 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-colors cursor-pointer whitespace-nowrap"
             >
               <span>Lihat Saldo Dompet</span>
-              <ArrowUpRight size={14} className="text-slate-400 shrink-0" />
+              <ArrowUpRight size={15} className="text-slate-400 shrink-0" />
             </button>
           </div>
         </motion.div>
 
-        {/* 3. Menu Utama (Mobile Only - hidden on Desktop since Sidebar has all links) */}
-        <div className="order-2 lg:hidden bg-white dark:bg-[#16181D] rounded-3xl p-4 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3.5">
-          <div className="flex items-center justify-between px-1">
+        {/* 3. Menu Utama (Mobile Only - Symmetrical 5x2 Grid of 10 Features) */}
+        <div className="order-2 lg:hidden bg-white dark:bg-[#16181D] rounded-[28px] p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
+          <div className="flex items-center justify-between">
             <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">Menu Utama</h3>
             <button
               type="button"
@@ -505,11 +506,11 @@ export function DashboardTab() {
               className="text-[11px] font-bold text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 flex items-center gap-1 cursor-pointer"
             >
               <Pencil size={11} />
-              <span>Ubah</span>
+              <span>Pengaturan</span>
             </button>
           </div>
 
-          <div className="grid grid-cols-5 gap-y-4 gap-x-1.5 text-center">
+          <div className="grid grid-cols-5 gap-y-4 gap-x-2 text-center">
             {menuItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -517,12 +518,12 @@ export function DashboardTab() {
                   key={item.id}
                   type="button"
                   onClick={item.action}
-                  className="flex flex-col items-center gap-1.5 group cursor-pointer"
+                  className="flex flex-col items-center justify-start gap-1.5 group cursor-pointer min-w-0"
                 >
-                  <div className="w-12 h-12 sm:w-13 sm:h-13 rounded-2xl bg-gray-50 dark:bg-gray-800/80 border border-gray-100 dark:border-gray-700/60 flex items-center justify-center text-gray-800 dark:text-gray-200 group-hover:scale-105 group-hover:border-[#D4F826] transition-all relative">
-                    <Icon size={20} strokeWidth={2} />
+                  <div className="w-12 h-12 rounded-2xl bg-gray-50 dark:bg-gray-800/80 border border-gray-100 dark:border-gray-700/60 flex items-center justify-center text-gray-800 dark:text-gray-200 group-hover:scale-105 group-hover:border-[#D4F826] transition-all shrink-0">
+                    <Icon size={20} strokeWidth={2.1} />
                   </div>
-                  <span className="text-[10px] sm:text-[11px] font-bold text-gray-700 dark:text-gray-300 truncate max-w-full">
+                  <span className="text-[10px] font-bold text-gray-700 dark:text-gray-300 leading-tight truncate w-full">
                     {item.label}
                   </span>
                 </button>
@@ -536,13 +537,13 @@ export function DashboardTab() {
               onClick={() => setActiveTab('tutorial')}
               className="w-full py-2.5 px-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/60 hover:bg-[#D4F826]/20 dark:hover:bg-[#D4F826]/15 border border-gray-100 dark:border-gray-700/60 flex items-center justify-between text-xs font-extrabold text-gray-800 dark:text-gray-200 transition-colors cursor-pointer"
             >
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-lg bg-[#D4F826] text-black flex items-center justify-center">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-6 h-6 rounded-lg bg-[#D4F826] text-black flex items-center justify-center shrink-0">
                   <BookOpen size={13} strokeWidth={2.5} />
                 </div>
-                <span>Panduan Lengkap Semua Fitur & Cara Pakai</span>
+                <span className="truncate">Panduan Lengkap Semua Fitur & Cara Pakai</span>
               </div>
-              <ChevronRight size={15} className="text-gray-400" />
+              <ChevronRight size={15} className="text-gray-400 shrink-0" />
             </button>
           </div>
         </div>
@@ -1064,21 +1065,21 @@ export function DashboardTab() {
               Belum ada tagihan mendatang yang tercatat
             </div>
           ) : (
-            <div className="flex flex-wrap gap-3.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {upcomingBills.map((bill) => (
                 <div
                   key={bill.id}
-                  className="w-[calc(50%-0.45rem)] sm:w-[195px] bg-[#1A1C20] rounded-2xl p-4 border border-white/[0.06] space-y-2.5"
+                  className="bg-[#1A1C20] rounded-2xl p-4 border border-white/[0.06] space-y-2.5"
                 >
                   <span className="text-2xl block leading-none">{bill.iconEmoji}</span>
                   <div>
                     <p className="text-xs font-extrabold text-white truncate">{bill.name}</p>
-                    <span className="text-[10px] text-gray-400 font-medium block mt-0.5">
+                    <span className="text-[10px] text-gray-400 font-medium block mt-0.5 truncate">
                       Jatuh tempo {bill.dueDate}
                     </span>
                   </div>
                   <div className="pt-0.5">
-                    <span className="text-xs lg:text-sm font-black text-[#D4F826] tabular-nums block">
+                    <span className="text-xs lg:text-sm font-black text-[#D4F826] tabular-nums block truncate">
                       {formatRupiah(bill.amount, hide)}
                     </span>
                   </div>

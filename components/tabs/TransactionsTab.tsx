@@ -113,39 +113,39 @@ export function TransactionsTab() {
   return (
     <div className="space-y-5 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 lg:pt-0 px-1">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 lg:pt-0 px-0.5">
         <div>
           <h1 className="font-display text-2xl lg:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            Buku Besar Transaksi
+            Riwayat Transaksi
           </h1>
           <p className="text-xs lg:text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5">
-            Telusuri, filter, dan audit seluruh arus kas masuk maupun keluar per dompet.
+            Telusuri, filter, dan pantau seluruh arus kas masuk maupun keluar.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="grid grid-cols-2 sm:flex items-center gap-2.5 w-full sm:w-auto shrink-0">
           <button
             type="button"
             onClick={() => openScanModal()}
-            className="h-10 px-4 rounded-full bg-white dark:bg-[#11131E] hover:bg-slate-50 dark:hover:bg-white/[0.06] border border-slate-200/90 dark:border-white/10 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-2 font-semibold text-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap shrink-0"
+            className="h-10 px-4 rounded-full bg-white dark:bg-[#11131E] hover:bg-slate-50 dark:hover:bg-white/[0.06] border border-slate-200/90 dark:border-white/10 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-2 font-bold text-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
             title="Scan Struk & Bukti Transfer"
           >
-            <Camera size={15} className="text-indigo-600 dark:text-[#D4F826]" />
+            <Camera size={15} className="text-indigo-600 dark:text-[#D4F826] shrink-0" />
             <span>Scan Struk AI</span>
           </button>
           <button
             type="button"
             onClick={() => openAddTransaction()}
-            className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-bold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap shrink-0"
+            className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-extrabold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
             title="Catat Transaksi Manual"
           >
-            <Plus size={16} strokeWidth={2.8} />
+            <Plus size={16} strokeWidth={2.8} className="shrink-0" />
             <span>Catat Transaksi</span>
           </button>
         </div>
       </div>
 
       {/* Bespoke Deep Indigo & Obsidian Summary Card */}
-      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-6 lg:px-9 lg:py-7 text-white border border-white/10">
+      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 sm:p-6 lg:px-9 lg:py-7 text-white border border-white/10">
         <div className="absolute -top-20 -right-16 w-64 h-64 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
         <div
           className={`absolute -bottom-24 -left-16 w-64 h-64 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
@@ -169,20 +169,20 @@ export function TransactionsTab() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-6 lg:gap-10 pt-3 lg:pt-0 border-t lg:border-t-0 border-white/10">
-            <div>
-              <span className="text-[11px] font-medium text-slate-400 block">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 shrink-0">
+            <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">
                 Total Pemasukan
               </span>
-              <span className="font-mono-num text-sm lg:text-lg font-bold text-[#D4F826] mt-0.5 block">
+              <span className="font-mono-num text-sm sm:text-lg font-bold text-[#D4F826] mt-1 block truncate">
                 +{formatRupiah(filteredSummary.income, hide)}
               </span>
             </div>
-            <div>
-              <span className="text-[11px] font-medium text-slate-400 block">
+            <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">
                 Total Pengeluaran
               </span>
-              <span className="font-mono-num text-sm lg:text-lg font-bold text-[#FF6B2B] mt-0.5 block">
+              <span className="font-mono-num text-sm sm:text-lg font-bold text-[#FF6B2B] mt-1 block truncate">
                 -{formatRupiah(filteredSummary.expense, hide)}
               </span>
             </div>
@@ -190,8 +190,8 @@ export function TransactionsTab() {
         </div>
       </div>
 
-      {/* Search + Filter Bar (Stacked on Mobile, Single Horizontal Row on Desktop) */}
-      <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+      {/* Search + Filter Bar (Symmetrical 3-column filter row on Mobile, Single Horizontal Row on Desktop) */}
+      <div className="flex flex-col lg:flex-row lg:items-center gap-2.5 lg:gap-3">
         {/* Search Input */}
         <div className="relative lg:flex-1">
           <Search
@@ -202,7 +202,7 @@ export function TransactionsTab() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Cari catatan..."
+            placeholder="Cari catatan transaksi..."
             className="w-full pl-10 pr-10 py-3 bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl text-xs font-semibold text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#D4F826] shadow-xs"
           />
           {searchQuery && (
@@ -216,13 +216,13 @@ export function TransactionsTab() {
           )}
         </div>
 
-        {/* Filter Chips Bar */}
-        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 lg:pb-0 text-xs font-bold text-gray-600 dark:text-gray-300 shrink-0">
+        {/* Filter Chips Bar: 3 equal columns on mobile */}
+        <div className="grid grid-cols-3 lg:flex gap-2 text-xs font-bold text-gray-600 dark:text-gray-300 shrink-0">
           {/* Wallet filter */}
           <select
             value={selectedWalletId}
             onChange={(e) => setSelectedWalletId(e.target.value)}
-            className="bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-3.5 py-3 text-xs font-bold text-gray-800 dark:text-gray-200 shadow-xs focus:outline-none cursor-pointer"
+            className="w-full lg:w-auto bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-2.5 sm:px-3.5 py-3 text-[11px] sm:text-xs font-bold text-gray-800 dark:text-gray-200 shadow-xs focus:outline-none cursor-pointer truncate"
           >
             <option value="all">Semua Dompet</option>
             {wallets.map((w) => (
@@ -236,7 +236,7 @@ export function TransactionsTab() {
           <select
             value={selectedType}
             onChange={(e) => setSelectedType(e.target.value)}
-            className="bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-3.5 py-3 text-xs font-bold text-gray-800 dark:text-gray-200 shadow-xs focus:outline-none cursor-pointer"
+            className="w-full lg:w-auto bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-2.5 sm:px-3.5 py-3 text-[11px] sm:text-xs font-bold text-gray-800 dark:text-gray-200 shadow-xs focus:outline-none cursor-pointer truncate"
           >
             <option value="all">Semua Tipe</option>
             <option value="expense">Pengeluaran</option>
@@ -248,9 +248,9 @@ export function TransactionsTab() {
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
-            className="bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-3.5 py-3 text-xs font-bold text-gray-800 dark:text-gray-200 shadow-xs focus:outline-none cursor-pointer"
+            className="w-full lg:w-auto bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-2.5 sm:px-3.5 py-3 text-[11px] sm:text-xs font-bold text-gray-800 dark:text-gray-200 shadow-xs focus:outline-none cursor-pointer truncate"
           >
-            <option value="all">Semua Subkategori</option>
+            <option value="all">Semua Kategori</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.emoji || ''} {c.name}

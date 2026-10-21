@@ -271,7 +271,7 @@ export function ReportsTab() {
   return (
     <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header Row */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 lg:pt-0 px-1">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 lg:pt-0 px-0.5">
         <div>
           <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
             Laporan Keuangan
@@ -281,23 +281,23 @@ export function ReportsTab() {
           </p>
         </div>
 
-        {/* Month Selector + Export Button (matching desktop demo video at 1:17) */}
-        <div className="flex items-center gap-2.5 self-start sm:self-auto">
-          <div className="flex items-center gap-2 bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-3 py-2 shadow-xs">
+        {/* Month Selector + Export Button (Symmetrical full-width row on mobile) */}
+        <div className="grid grid-cols-2 sm:flex items-center gap-2.5 w-full sm:w-auto shrink-0">
+          <div className="h-10 flex items-center justify-between gap-1 bg-white dark:bg-[#16181D] border border-gray-200/80 dark:border-gray-800 rounded-full px-2.5 shadow-2xs">
             <button
               type="button"
               onClick={handlePrevMonth}
-              className="p-1 text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"
+              className="p-1 text-gray-400 hover:text-black dark:hover:text-white cursor-pointer shrink-0"
             >
               <ChevronLeft size={15} />
             </button>
-            <span className="text-xs font-black text-gray-800 dark:text-gray-200 tracking-wider min-w-[110px] text-center">
+            <span className="text-[11px] sm:text-xs font-black text-gray-800 dark:text-gray-200 tracking-wider text-center truncate">
               {monthLabel}
             </span>
             <button
               type="button"
               onClick={handleNextMonth}
-              className="p-1 text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"
+              className="p-1 text-gray-400 hover:text-black dark:hover:text-white cursor-pointer shrink-0"
             >
               <ChevronRight size={15} />
             </button>
@@ -306,10 +306,10 @@ export function ReportsTab() {
           <button
             type="button"
             onClick={() => setIsExportModalOpen(true)}
-            className="px-4 py-2.5 rounded-2xl bg-[#14161C] hover:bg-black text-white dark:bg-white dark:text-black font-black text-xs flex items-center gap-2 shadow-xs cursor-pointer transition-transform active:scale-95"
+            className="h-10 px-4 rounded-full bg-[#14161C] hover:bg-black text-white dark:bg-white dark:text-black font-black text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
           >
-            <Download size={15} />
-            <span>Export</span>
+            <Download size={15} className="shrink-0" />
+            <span>Export Laporan</span>
           </button>
         </div>
       </div>

@@ -11,10 +11,13 @@ import {
   HelpCircle,
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Eye,
   Check,
   AlertTriangle,
   Calendar,
+  CalendarClock,
   Trash2,
   Smile,
 } from 'lucide-react';
@@ -23,7 +26,12 @@ import { useApp } from '../AppContext';
 import { EmojiPickerModal } from '../EmojiPickerModal';
 import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
 import { BudgetGroup, BudgetSubcategory } from '@/lib/types';
-import { FIXED_CATEGORY_IDS, FIXED_EXPENSE_KEYWORDS_REGEX } from '@/lib/budgetUtils';
+import {
+  FIXED_CATEGORY_IDS,
+  FIXED_EXPENSE_KEYWORDS_REGEX,
+  getBudgetPeriodInfo,
+  isDateInBudgetPeriod,
+} from '@/lib/budgetUtils';
 
 export function BudgetTab() {
   const {
@@ -41,6 +49,12 @@ export function BudgetTab() {
     categories,
     activeYear,
     activeMonth,
+    activeDay,
+    setActiveDate,
+    budgetPeriod,
+    goToPrevPeriod,
+    goToNextPeriod,
+    goToCurrentPeriod,
   } = useApp();
 
   const hide = settings.hideBalance;
@@ -48,6 +62,10 @@ export function BudgetTab() {
   // Modals state
   const [isEditIncomeOpen, setIsEditIncomeOpen] = useState(false);
   const [tempIncomeInput, setTempIncomeInput] = useState(String(budgetConfig.estimatedIncome));
+
+  const [isEditPeriodOpen, setIsEditPeriodOpen] = useState(false);
+  const [tempPaydayDay, setTempPaydayDay] = useState<number>(budgetPeriod.paydayDay || 1);
+  const [tempCycleMode, setTempCycleMode] = useState<'auto' | 'thisMonthStart'>('auto');
 
   const [isEditPercentagesOpen, setIsEditPercentagesOpen] = useState(false);
   const [needsPercent, setNeedsPercent] = useState(budgetConfig.needsPercent);
@@ -95,14 +113,14 @@ export function BudgetTab() {
   const daysInCurMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
   const curMonthShort = curMonthDate.toLocaleString('id-ID', { month: 'short' });
 
-  // Merge subcategories with any payable debt payments made this month not yet in budgetConfig.subcategories
+  // Merge subcategories with any payable debt payments made in the active period not yet in budgetConfig.subcategories
   const effectiveSubcategories = useMemo<BudgetSubcategory[]>(() => {
     const base = [...(budgetConfig.subcategories || [])];
     (debts || []).forEach((debt) => {
       if (debt.type !== 'payable') return;
       const paidThisMonth = (debt.payments || []).reduce((sum, p) => {
         const pd = new Date(p.date);
-        if (pd.getFullYear() === activeYear && pd.getMonth() === activeMonth) {
+        if (isDateInBudgetPeriod(pd, budgetPeriod)) {
           return sum + p.amount;
         }
         return sum;
@@ -127,14 +145,14 @@ export function BudgetTab() {
       }
     });
     return base;
-  }, [budgetConfig.subcategories, debts, activeYear, activeMonth]);
+  }, [budgetConfig.subcategories, debts, budgetPeriod]);
 
   // Filter subcategories
   const needsSubs = effectiveSubcategories.filter((s) => s.group === 'kebutuhan');
   const wantsSubs = effectiveSubcategories.filter((s) => s.group === 'keinginan');
   const savingsSubs = effectiveSubcategories.filter((s) => s.group === 'tabungan');
 
-  // Dynamic subcategory spent amounts calculated from transactions & debt payments this month
+  // Dynamic subcategory spent amounts calculated from transactions & debt payments in the active period
   const { subSpentMap, unallocatedGroupSpent } = useMemo(() => {
     const map: Record<string, number> = {};
     const unallocatedMap: Record<BudgetGroup, number> = {
@@ -151,7 +169,7 @@ export function BudgetTab() {
     transactions.forEach((tx) => {
       recordedTxIds.add(tx.id);
       const d = new Date(tx.date);
-      if (d.getFullYear() === activeYear && d.getMonth() === activeMonth) {
+      if (isDateInBudgetPeriod(d, budgetPeriod)) {
         if (tx.type === 'expense') {
           const catInfo = tx.categoryId ? catMap.get(tx.categoryId) : undefined;
           const catName = catInfo?.name || '';
@@ -249,13 +267,13 @@ export function BudgetTab() {
       }
     });
 
-    // Also include payable debt payments recorded in DebtTab this month that did not create a wallet transaction
+    // Also include payable debt payments recorded in DebtTab during this period that did not create a wallet transaction
     (debts || []).forEach((debt) => {
       if (debt.type !== 'payable') return;
       (debt.payments || []).forEach((p) => {
         if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
         const pd = new Date(p.date);
-        if (pd.getFullYear() === activeYear && pd.getMonth() === activeMonth) {
+        if (isDateInBudgetPeriod(pd, budgetPeriod)) {
           const debtSubId = `sub-debt-${debt.id}`;
           const cleanDebtName = debt.name.toLowerCase().trim();
           const matchSub = effectiveSubcategories.find((s) => {
@@ -276,7 +294,7 @@ export function BudgetTab() {
     });
 
     return { subSpentMap: map, unallocatedGroupSpent: unallocatedMap };
-  }, [transactions, categories, effectiveSubcategories, debts, activeYear, activeMonth]);
+  }, [transactions, categories, effectiveSubcategories, debts, budgetPeriod]);
 
   // Subcategories recognized as fixed monthly obligations (Wi-Fi, Netflix, Listrik, Cicilan Utang, etc.)
   const fixedSubcategories = useMemo(() => {
@@ -338,6 +356,32 @@ export function BudgetTab() {
     const val = parseNominalInput(tempIncomeInput);
     updateBudgetConfig({ estimatedIncome: val });
     setIsEditIncomeOpen(false);
+  };
+
+  const openPeriodModal = () => {
+    setTempPaydayDay(budgetPeriod.paydayDay || 1);
+    setTempCycleMode('auto');
+    setIsEditPeriodOpen(true);
+  };
+
+  const handleSavePeriod = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanDay = Math.max(1, Math.min(31, Math.round(Number(tempPaydayDay) || 1)));
+    updateBudgetConfig({ paydayDay: cleanDay });
+
+    if (cleanDay > 1 && tempCycleMode === 'thisMonthStart') {
+      const today = new Date();
+      const maxD = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+      const clampedD = Math.min(cleanDay, maxD);
+      const y = today.getFullYear();
+      const m = String(today.getMonth() + 1).padStart(2, '0');
+      const d = String(clampedD).padStart(2, '0');
+      setActiveDate(`${y}-${m}-${d}`);
+    } else if (tempCycleMode === 'auto') {
+      goToCurrentPeriod();
+    }
+
+    setIsEditPeriodOpen(false);
   };
 
   const handleSavePercentages = () => {
@@ -663,9 +707,19 @@ export function BudgetTab() {
         </p>
       </div>
 
-      {/* Full-Width Black Hero Card (matching Dashboard full-width style) */}
-      <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl space-y-5 border border-white/5">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+      {/* Full-Width Dark Hero Card (matching Dashboard & Wallets theme-adaptive gradient style) */}
+      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl space-y-5 border border-white/10">
+        <div className="absolute -top-24 -right-16 w-80 h-80 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
+        <div
+          className={`absolute -bottom-24 -left-16 w-80 h-80 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
+            settings.accentColor === 'orange'
+              ? 'bg-[#FF6B2B]/15'
+              : settings.accentColor === 'pink'
+              ? 'bg-[#FFA4A4]/15'
+              : 'bg-[#D4F826]/15'
+          }`}
+        />
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
           {/* Left: Perkiraan Pemasukan + Nominal + Badges */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
@@ -689,13 +743,24 @@ export function BudgetTab() {
               {formatRupiah(totalIncome, hide)}
             </div>
 
-            <div className="flex flex-wrap gap-2 text-[10px] font-bold pt-1">
+            <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold pt-1">
               <span className="bg-white/10 px-3 py-1 rounded-xl text-gray-300">
                 BERBASIS PERSENTASE
               </span>
-              <span className="bg-white/10 px-3 py-1 rounded-xl text-gray-300">
-                BULANAN
-              </span>
+              <button
+                type="button"
+                onClick={openPeriodModal}
+                className="bg-[#D4F826]/15 hover:bg-[#D4F826]/25 border border-[#D4F826]/40 px-3 py-1 rounded-xl text-[#D4F826] flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Atur Tanggal Gajian & Siklus Periode Budget"
+              >
+                <CalendarClock size={12} />
+                <span>
+                  {budgetPeriod.paydayDay === 1
+                    ? 'SIKLUS: AWAL BULAN (TGL 1)'
+                    : `GAJIAN TIAP TGL ${budgetPeriod.paydayDay}`}
+                </span>
+                <Pencil size={10} />
+              </button>
             </div>
           </div>
 
@@ -754,7 +819,7 @@ export function BudgetTab() {
               </div>
             </div>
 
-            <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex flex-col justify-between gap-1.5">
+            <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex flex-col justify-between gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-xl">🥪</span>
@@ -769,24 +834,82 @@ export function BudgetTab() {
                   </span>
                 </div>
               </div>
-              <div className="text-[11px] text-gray-400 font-medium pl-7">
-                Makan, jajan, transportasi (dasar perhitungan budget harian)
+              <div className="text-[11px] text-gray-400 font-medium pl-7 flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  Agar cukup s/d <strong className="text-white">{budgetPeriod.endShortLabel}</strong> ({budgetPeriod.daysRemainingUntilPayday} hari lagi):
+                </span>
+                <span className="text-[#D4F826] font-extrabold tabular-nums bg-[#D4F826]/10 px-2 py-0.5 rounded-lg border border-[#D4F826]/25">
+                  Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
+                </span>
               </div>
             </div>
           </div>
         )}
 
-        {/* Bottom Bar: Periode Aktif */}
-        <div className="pt-4 border-t border-white/10 flex items-center justify-between text-xs">
+        {/* Bottom Bar: Periode Aktif & Pengaturan Tanggal Gajian */}
+        <div className="pt-4 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-3">
-            <div>
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                PERIODE AKTIF
-              </span>
-              <span className="font-extrabold text-white mt-0.5 block">
-                01 {curMonthShort} - {daysInCurMonth} {curMonthShort}
-              </span>
+            <div className="w-9 h-9 rounded-2xl bg-[#D4F826]/15 border border-[#D4F826]/30 flex items-center justify-center text-[#D4F826] shrink-0">
+              <Calendar size={17} />
             </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  PERIODE AKTIF
+                </span>
+                <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-white/10 text-[#D4F826] uppercase tracking-wider">
+                  {budgetPeriod.paydayDay === 1
+                    ? 'Tgl 1 - Akhir Bulan'
+                    : `Gajian Tgl ${budgetPeriod.paydayDay}`}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                <span className="font-extrabold text-white text-sm">
+                  {budgetPeriod.periodFullLabel}
+                </span>
+                <span className="text-[11px] text-gray-400 font-medium">
+                  • Hari ke-{budgetPeriod.currentDayOfPeriod} dari {budgetPeriod.totalDays} ({budgetPeriod.daysRemainingUntilPayday} hari menuju gajian)
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+            <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-0.5">
+              <button
+                type="button"
+                onClick={goToPrevPeriod}
+                className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                title="Periode Sebelumnya"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={goToCurrentPeriod}
+                className="px-2.5 py-1 text-[10px] font-extrabold text-gray-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                title="Kembali ke Periode Saat Ini"
+              >
+                Periode Ini
+              </button>
+              <button
+                type="button"
+                onClick={goToNextPeriod}
+                className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                title="Periode Berikutnya"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={openPeriodModal}
+              className="px-3.5 py-2 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black font-black text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0"
+            >
+              <CalendarClock size={13} strokeWidth={2.5} />
+              <span>Atur Tgl Gajian</span>
+            </button>
           </div>
         </div>
       </div>
@@ -899,6 +1022,219 @@ export function BudgetTab() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal: Atur Periode & Tanggal Gajian */}
+      <AnimatePresence>
+        {isEditPeriodOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white dark:bg-[#16181D] rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
+                    Atur Periode & Tanggal Gajian
+                  </h3>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                    Sesuaikan siklus budget agar cukup sampai tanggal gajian berikutnya.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsEditPeriodOpen(false)}
+                  className="p-1 text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {(() => {
+                const today = new Date();
+                const previewDay = Math.max(1, Math.min(31, Number(tempPaydayDay) || 1));
+                const autoPeriod = getBudgetPeriodInfo(
+                  today.getFullYear(),
+                  today.getMonth(),
+                  today.getDate(),
+                  previewDay
+                );
+                const maxDayThisMonth = new Date(
+                  today.getFullYear(),
+                  today.getMonth() + 1,
+                  0
+                ).getDate();
+                const thisMonthStartPeriod = getBudgetPeriodInfo(
+                  today.getFullYear(),
+                  today.getMonth(),
+                  Math.min(previewDay, maxDayThisMonth),
+                  previewDay
+                );
+                const selectedPreview =
+                  previewDay > 1 && tempCycleMode === 'thisMonthStart'
+                    ? thisMonthStartPeriod
+                    : autoPeriod;
+
+                const previewDailyQuota =
+                  selectedPreview.totalDays > 0
+                    ? Math.round(dashboardSummary.monthlyVariableBudget / selectedPreview.totalDays)
+                    : 0;
+
+                const presets = [
+                  { day: 1, label: 'Tgl 1 (Awal Bulan)' },
+                  { day: 5, label: 'Tgl 5' },
+                  { day: 10, label: 'Tgl 10' },
+                  { day: 15, label: 'Tgl 15' },
+                  { day: 20, label: 'Tgl 20' },
+                  { day: 25, label: 'Tgl 25 (Umum)' },
+                  { day: 28, label: 'Tgl 28 (Akhir Bulan)' },
+                ];
+
+                return (
+                  <form onSubmit={handleSavePeriod} className="space-y-4">
+                    {/* Quick Presets */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
+                        Pilihan Cepat Tanggal Gajian
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {presets.map((p) => (
+                          <button
+                            key={p.day}
+                            type="button"
+                            onClick={() => setTempPaydayDay(p.day)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer border ${
+                              previewDay === p.day
+                                ? 'bg-[#D4F826] text-black border-[#D4F826] shadow-xs'
+                                : 'bg-gray-50 dark:bg-gray-800/80 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-gray-400'
+                            }`}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 1-31 Calendar Date Selector Grid */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
+                        Atau Pilih Tanggal Gajian (1 - 31)
+                      </label>
+                      <div className="grid grid-cols-7 gap-1.5 bg-gray-50 dark:bg-gray-800/40 p-2.5 rounded-2xl border border-gray-100 dark:border-gray-800">
+                        {Array.from({ length: 31 }, (_, i) => i + 1).map((dayNum) => (
+                          <button
+                            key={dayNum}
+                            type="button"
+                            onClick={() => setTempPaydayDay(dayNum)}
+                            className={`h-9 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                              previewDay === dayNum
+                                ? 'bg-[#D4F826] text-black shadow-xs scale-105 ring-2 ring-black/10 dark:ring-white/20'
+                                : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                            }`}
+                          >
+                            {dayNum}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Option to choose active cycle if today is before paydayDay */}
+                    {previewDay > 1 && autoPeriod.periodFullLabel !== thisMonthStartPeriod.periodFullLabel && (
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
+                          Tampilkan Siklus Periode
+                        </label>
+                        <div className="grid grid-cols-1 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setTempCycleMode('auto')}
+                            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                              tempCycleMode === 'auto'
+                                ? 'bg-[#D4F826]/15 border-[#D4F826] text-gray-900 dark:text-white'
+                                : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
+                            }`}
+                          >
+                            <div>
+                              <span className="text-xs font-black block">
+                                Siklus Berjalan Saat Ini ({autoPeriod.periodShortLabel})
+                              </span>
+                              <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                                Hari ini masuk di siklus {autoPeriod.periodFullLabel}
+                              </span>
+                            </div>
+                            {tempCycleMode === 'auto' && <Check size={16} className="text-lime-600 dark:text-[#D4F826]" />}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setTempCycleMode('thisMonthStart')}
+                            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                              tempCycleMode === 'thisMonthStart'
+                                ? 'bg-[#D4F826]/15 border-[#D4F826] text-gray-900 dark:text-white'
+                                : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
+                            }`}
+                          >
+                            <div>
+                              <span className="text-xs font-black block">
+                                Siklus Gajian Tgl {previewDay} Bulan Ini ({thisMonthStartPeriod.periodShortLabel})
+                              </span>
+                              <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                                Atur budget untuk {thisMonthStartPeriod.periodFullLabel}
+                              </span>
+                            </div>
+                            {tempCycleMode === 'thisMonthStart' && <Check size={16} className="text-lime-600 dark:text-[#D4F826]" />}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Live Preview Box */}
+                    <div className="p-4 rounded-2xl bg-[#121316] text-white space-y-2.5 border border-white/10">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-400 font-bold">Simulasi Periode:</span>
+                        <span className="font-black text-[#D4F826]">
+                          {selectedPreview.periodFullLabel}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-400 font-bold">Durasi Siklus:</span>
+                        <span className="font-extrabold text-white">
+                          {selectedPreview.totalDays} Hari (cukup s/d {selectedPreview.endShortLabel})
+                        </span>
+                      </div>
+                      {budgetConfig.estimatedIncome > 0 && (
+                        <div className="flex items-center justify-between text-xs pt-2 border-t border-white/10">
+                          <span className="text-gray-400 font-bold">Jatah Harian Operasional:</span>
+                          <span className="font-black text-[#D4F826] tabular-nums">
+                            ~{formatRupiah(previewDailyQuota, hide)} / hari
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditPeriodOpen(false)}
+                        className="flex-1 py-3 rounded-2xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="submit"
+                        className="flex-1 py-3 rounded-2xl bg-[#D4F826] text-black text-xs font-black shadow-xs cursor-pointer hover:bg-[#c6ec15]"
+                      >
+                        Simpan Periode
+                      </button>
+                    </div>
+                  </form>
+                );
+              })()}
             </motion.div>
           </div>
         )}

@@ -27,6 +27,7 @@ import {
 import { motion } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatCompactRupiah, formatRupiah, formatFullDateIndo } from '@/lib/formatters';
+import { isDateInBudgetPeriod } from '@/lib/budgetUtils';
 
 export function DashboardTab() {
   const {
@@ -48,6 +49,7 @@ export function DashboardTab() {
     activeDay,
     activeDate,
     setActiveDate,
+    budgetPeriod,
     user,
     openLoginModal,
   } = useApp();
@@ -184,7 +186,7 @@ export function DashboardTab() {
 
     transactions.forEach((tx) => {
       const d = new Date(tx.date);
-      if (d.getFullYear() === activeYear && d.getMonth() === activeMonth) {
+      if (isDateInBudgetPeriod(d, budgetPeriod)) {
         const group = tx.budgetGroup || (tx.categoryId ? catMap.get(tx.categoryId) : undefined);
         if (tx.type === 'expense') {
           if (group === 'kebutuhan') nSpent += tx.amount;
@@ -202,7 +204,7 @@ export function DashboardTab() {
       wantsPct: Math.min(100, Math.round((wSpent / (wantsBudget || 1)) * 100)),
       savingsPct: Math.min(100, Math.round((sSpent / (savingsBudget || 1)) * 100)),
     };
-  }, [transactions, budgetConfig, categories, activeYear, activeMonth]);
+  }, [transactions, budgetConfig, categories, budgetPeriod]);
 
   // Dynamic top expense categories
   const topExpenses = useMemo(() => {
@@ -211,7 +213,7 @@ export function DashboardTab() {
     transactions.forEach((tx) => {
       if (tx.type === 'expense') {
         const d = new Date(tx.date);
-        if (d.getFullYear() === activeYear && d.getMonth() === activeMonth) {
+        if (isDateInBudgetPeriod(d, budgetPeriod)) {
           const key = tx.categoryId || 'cat-lainnya';
           catTotalMap.set(key, (catTotalMap.get(key) || 0) + tx.amount);
         }
@@ -242,7 +244,7 @@ export function DashboardTab() {
     }
 
     return list;
-  }, [transactions, categories, activeYear, activeMonth]);
+  }, [transactions, categories, budgetPeriod]);
 
   const budgetLimit = dashboardSummary.budgetLimit ?? 0;
   const budgetSpent = dashboardSummary.budgetSpent || 0;
@@ -264,7 +266,9 @@ export function DashboardTab() {
     'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
     'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des',
   ];
-  const activePeriodLabel = `01 ${SHORT_MONTHS_ID[activeMonth] || 'Mar'} - ${daysInMonth} ${SHORT_MONTHS_ID[activeMonth] || 'Mar'}`;
+  const activePeriodLabel = budgetPeriod.periodShortLabel;
+  const periodCurrentDay = budgetPeriod.currentDayOfPeriod;
+  const periodTotalDays = budgetPeriod.totalDays;
 
   const dailyCapacityPct =
     dashboardSummary.dailyBudgetQuota > 0
@@ -279,7 +283,7 @@ export function DashboardTab() {
         )
       : 0;
 
-  const dayRingPct = Math.min(100, Math.round((currentDay / (daysInMonth || 31)) * 100));
+  const dayRingPct = Math.min(100, Math.round((periodCurrentDay / (periodTotalDays || 31)) * 100));
 
   return (
     <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-12">
@@ -302,20 +306,27 @@ export function DashboardTab() {
           </div>
         </div>
 
-        {/* Active Period Pill Badge (matching screenshot top-right) */}
-        <div className="hidden sm:flex items-center gap-2.5 bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-4 py-2 shadow-xs">
-          <div className="w-6 h-6 rounded-full bg-[#D4F826]/30 flex items-center justify-center text-[#658500] dark:text-[#D4F826]">
+        {/* Active Period Pill Badge (clickable to open Budget Period settings) */}
+        <button
+          type="button"
+          onClick={() => setActiveTab('budget')}
+          title="Klik untuk mengatur Periode & Tanggal Gajian"
+          className="flex items-center gap-2 sm:gap-2.5 bg-white dark:bg-[#16181D] hover:border-[#D4F826] border border-gray-100 dark:border-gray-800 rounded-2xl px-3 py-1.5 sm:px-4 sm:py-2 shadow-xs transition-colors cursor-pointer text-left"
+        >
+          <div className="w-6 h-6 rounded-full bg-[#D4F826]/30 flex items-center justify-center text-[#658500] dark:text-[#D4F826] shrink-0">
             <CalendarClock size={13} strokeWidth={2.5} />
           </div>
           <div>
             <span className="text-[8px] font-extrabold uppercase tracking-widest text-gray-400 block leading-none">
-              ACTIVE PERIOD
+              {budgetPeriod.paydayDay > 1
+                ? `PERIODE GAJIAN (TGL ${budgetPeriod.paydayDay})`
+                : 'PERIODE AKTIF'}
             </span>
             <span className="text-[11px] font-black text-gray-900 dark:text-white mt-0.5 block leading-none">
               {activePeriodLabel}
             </span>
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Multi-user Cloud Sync Prompt Banner if in Guest mode (Mobile only or compact) */}
@@ -346,32 +357,53 @@ export function DashboardTab() {
 
       {/* Responsive Grid Container: Stacked on Mobile (<lg), Full-width Black Hero + Bento on Desktop (lg+) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 items-stretch">
-        {/* 2. Sekilas Hari Ini (Full-Width Dark Banner matching reference screenshot) */}
+        {/* 2. Sekilas Hari Ini (Full-Width Dark Banner with Wallets-style Gradient Glow) */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[24px] sm:rounded-[28px] lg:rounded-[32px] p-4 sm:p-7 lg:px-10 lg:py-8 bg-gradient-to-br from-[#110F18] via-[#14111F] to-[#1C162E] text-white shadow-xl border border-white/5 flex flex-col justify-between"
+          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[24px] sm:rounded-[28px] lg:rounded-[32px] p-4 sm:p-7 lg:px-10 lg:py-8 bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white shadow-xl border border-white/10 flex flex-col justify-between"
         >
+          {/* Ambient Mesh Gradient Glows (theme-adaptive: Neon Green, Orange, or Pink) */}
+          <div className="absolute -top-24 -right-16 w-80 h-80 lg:w-96 lg:h-96 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
+          <div
+            className={`absolute -bottom-24 -left-16 w-80 h-80 lg:w-96 lg:h-96 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
+              settings.accentColor === 'orange'
+                ? 'bg-[#FF6B2B]/15'
+                : settings.accentColor === 'pink'
+                ? 'bg-[#FFA4A4]/15'
+                : 'bg-[#D4F826]/15'
+            }`}
+          />
+          <div
+            className={`absolute -top-20 -left-20 w-64 h-64 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
+              settings.accentColor === 'orange'
+                ? 'bg-[#FF6B2B]/10'
+                : settings.accentColor === 'pink'
+                ? 'bg-[#FFA4A4]/10'
+                : 'bg-[#D4F826]/10'
+            }`}
+          />
+
           {/* Top Row: Sekilas Hari Ini • Kuota Operasional Harian | Hari X/Y + Eye */}
-          <div className="flex items-center justify-between gap-2">
+          <div className="relative z-10 flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-sm min-w-0">
               <span className="font-extrabold text-[#D4F826] whitespace-nowrap shrink-0">
                 Sekilas Hari Ini
               </span>
-              <span className="text-gray-500 shrink-0">•</span>
-              <span className="font-medium text-gray-300 truncate">
+              <span className="text-slate-400 shrink-0">•</span>
+              <span className="font-medium text-slate-300 truncate">
                 <span className="sm:hidden">Kuota Harian</span>
                 <span className="hidden sm:inline">Kuota Operasional Harian</span>
               </span>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-              <span className="text-[11px] sm:text-sm font-mono font-semibold text-gray-300 tracking-wide whitespace-nowrap">
-                Hari {currentDay}/{daysInMonth}
+              <span className="text-[11px] sm:text-sm font-mono font-semibold text-slate-300 tracking-wide whitespace-nowrap">
+                Hari {periodCurrentDay}/{periodTotalDays}
               </span>
               <button
                 type="button"
                 onClick={toggleHideBalance}
-                className="p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer"
                 title={hide ? 'Tampilkan Saldo' : 'Sembunyikan Saldo'}
               >
                 {hide ? <Eye size={15} /> : <EyeOff size={15} />}
@@ -380,22 +412,27 @@ export function DashboardTab() {
           </div>
 
           {/* Middle Row: Left Big Monospace Balance + Right Outlined Cards */}
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5 sm:gap-6 mt-3 sm:mt-5 lg:mt-6">
+          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5 sm:gap-6 mt-3 sm:mt-5 lg:mt-6">
             <div>
               <div className="text-[28px] sm:text-5xl lg:text-[54px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
                 {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.dailyBudgetRemaining, false)}
               </div>
-              <p className="text-[11px] sm:text-sm text-gray-400 font-medium mt-1.5 sm:mt-3 leading-snug">
+              <p className="text-[11px] sm:text-sm text-slate-300/90 font-medium mt-1.5 sm:mt-3 leading-snug">
                 {dashboardSummary.dailyOverbudget
                   ? `Melebihi kuota harian (${formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari`
                   : `Tersedia dari kuota harian ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari di luar tagihan tetap`}
               </p>
+              {dashboardSummary.hasMonthlyBudget && (
+                <p className="text-[10px] sm:text-xs text-[#D4F826] font-semibold mt-1">
+                  Jatah aman s/d {budgetPeriod.endShortLabel} ({budgetPeriod.daysRemainingUntilPayday} hari lagi): Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
+                </p>
+              )}
             </div>
 
             {/* Right: 2 Outlined Box Cards (PEMASUKAN HARI INI & PENGELUARAN HARI INI) */}
             <div className="grid grid-cols-2 gap-2.5 sm:gap-4 shrink-0">
-              <div className="rounded-xl sm:rounded-2xl bg-white/[0.03] border border-white/10 px-3 py-2.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
-                <span className="text-[9px] sm:text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block whitespace-nowrap truncate">
+              <div className="rounded-xl sm:rounded-2xl bg-white/[0.03] backdrop-blur-xs border border-white/10 px-3 py-2.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
+                <span className="text-[9px] sm:text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block whitespace-nowrap truncate">
                   PEMASUKAN HARI INI
                 </span>
                 <div className="text-sm sm:text-xl font-mono font-bold text-[#D4F826] mt-1 sm:mt-1.5 tabular-nums truncate">
@@ -403,8 +440,8 @@ export function DashboardTab() {
                 </div>
               </div>
 
-              <div className="rounded-xl sm:rounded-2xl bg-white/[0.03] border border-white/10 px-3 py-2.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
-                <span className="text-[9px] sm:text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block whitespace-nowrap truncate">
+              <div className="rounded-xl sm:rounded-2xl bg-white/[0.03] backdrop-blur-xs border border-white/10 px-3 py-2.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
+                <span className="text-[9px] sm:text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block whitespace-nowrap truncate">
                   PENGELUARAN HARI INI
                 </span>
                 <div className="text-sm sm:text-xl font-mono font-bold text-[#FB7185] mt-1 sm:mt-1.5 tabular-nums truncate">
@@ -415,9 +452,9 @@ export function DashboardTab() {
           </div>
 
           {/* Progress Section: Kapasitas Kuota Harian + Gradient Bar */}
-          <div className="mt-3.5 sm:mt-6 lg:mt-7">
+          <div className="relative z-10 mt-3.5 sm:mt-6 lg:mt-7">
             <div className="flex items-center justify-between text-[11px] sm:text-xs mb-1.5 sm:mb-2">
-              <span className="text-gray-400 font-medium">Kapasitas Kuota Harian</span>
+              <span className="text-slate-400 font-medium">Kapasitas Kuota Harian</span>
               <span className="text-white font-extrabold tabular-nums">{dailyCapacityPct}%</span>
             </div>
             <div className="w-full h-2 sm:h-2.5 bg-white/10 rounded-full overflow-hidden">
@@ -437,7 +474,7 @@ export function DashboardTab() {
           </div>
 
           {/* Bottom Action Buttons */}
-          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3 mt-4 sm:mt-6">
+          <div className="relative z-10 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3 mt-4 sm:mt-6">
             <button
               type="button"
               onClick={() => openAddTransaction()}
@@ -453,7 +490,7 @@ export function DashboardTab() {
               className="px-3.5 py-2.5 sm:px-5 sm:py-3 rounded-full bg-white/[0.03] hover:bg-white/[0.08] border border-white/15 text-white font-bold text-[11px] sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-colors cursor-pointer whitespace-nowrap"
             >
               <span>Lihat Saldo Dompet</span>
-              <ArrowUpRight size={14} className="text-gray-400 shrink-0" />
+              <ArrowUpRight size={14} className="text-slate-400 shrink-0" />
             </button>
           </div>
         </motion.div>
@@ -542,7 +579,7 @@ export function DashboardTab() {
                   HARI
                 </span>
                 <span className="text-sm font-black text-gray-900 dark:text-white leading-tight">
-                  {currentDay}
+                  {periodCurrentDay}
                 </span>
               </div>
             </div>
@@ -551,7 +588,7 @@ export function DashboardTab() {
                 Progres Pengeluaran
               </h3>
               <p className="text-xs text-gray-400 mt-0.5">
-                Hari {currentDay} dari {daysInMonth}
+                Hari {periodCurrentDay} dari {periodTotalDays} ({activePeriodLabel})
               </p>
             </div>
           </div>

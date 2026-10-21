@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../AppContext';
 import { formatRupiah } from '@/lib/formatters';
+import { isDateInBudgetPeriod } from '@/lib/budgetUtils';
 
 export function AnalyticsTab() {
   const {
@@ -32,12 +33,16 @@ export function AnalyticsTab() {
     settings,
     activeYear,
     activeMonth,
+    budgetPeriod,
   } = useApp();
   const hide = settings.hideBalance;
 
   const monthLabel = useMemo(() => {
+    if (budgetPeriod.isCustomPayday) {
+      return budgetPeriod.periodShortLabel;
+    }
     return new Date(activeYear, activeMonth, 1).toLocaleString('id-ID', { month: 'short', year: 'numeric' });
-  }, [activeYear, activeMonth]);
+  }, [activeYear, activeMonth, budgetPeriod]);
 
   const {
     savedAmount,
@@ -54,13 +59,13 @@ export function AnalyticsTab() {
     let explicitSaved = 0;
     let txCount = 0;
     const catMap = new Map<string, number>();
-    const dayExpenseMap = new Map<number, number>();
-    const daysInMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
+    const dayExpenseMap = new Map<string, { label: string; amount: number }>();
+    const daysInMonth = budgetPeriod.totalDays;
     const walletTypeMap = new Map(wallets.map((w) => [w.id, w.type]));
 
     transactions.forEach((tx) => {
       const d = new Date(tx.date);
-      if (d.getFullYear() === activeYear && d.getMonth() === activeMonth) {
+      if (isDateInBudgetPeriod(d, budgetPeriod)) {
         txCount += 1;
         const targetWalletType = tx.transferWalletId
           ? walletTypeMap.get(tx.transferWalletId)
@@ -78,8 +83,14 @@ export function AnalyticsTab() {
         if (tx.type === 'expense') {
           const key = tx.categoryId || 'cat-lainnya';
           catMap.set(key, (catMap.get(key) || 0) + tx.amount);
-          const dayNum = d.getDate();
-          dayExpenseMap.set(dayNum, (dayExpenseMap.get(dayNum) || 0) + tx.amount);
+          const dateKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+          const mShort = d.toLocaleString('id-ID', { month: 'short' });
+          const dLabel = `${String(d.getDate()).padStart(2, '0')} ${mShort}`;
+          const prev = dayExpenseMap.get(dateKey);
+          dayExpenseMap.set(dateKey, {
+            label: dLabel,
+            amount: (prev?.amount || 0) + tx.amount,
+          });
         }
       }
     });
@@ -111,21 +122,18 @@ export function AnalyticsTab() {
 
     const avgDaily = Math.round(totalExpense / Math.max(1, daysInMonth));
 
-    let maxDay = 0;
+    let maxDayLabel = '';
     let maxDayAmt = 0;
-    dayExpenseMap.forEach((amt, day) => {
-      if (amt > maxDayAmt) {
-        maxDayAmt = amt;
-        maxDay = day;
+    dayExpenseMap.forEach((info) => {
+      if (info.amount > maxDayAmt) {
+        maxDayAmt = info.amount;
+        maxDayLabel = info.label;
       }
     });
 
-    const shortMonth = new Date(activeYear, activeMonth, 1).toLocaleString('id-ID', {
-      month: 'short',
-    });
     const maxDayStr =
-      maxDay > 0
-        ? `${String(maxDay).padStart(2, '0')} ${shortMonth} – ${formatRupiah(maxDayAmt, hide)}`
+      maxDayAmt > 0
+        ? `${maxDayLabel} – ${formatRupiah(maxDayAmt, hide)}`
         : 'Belum ada pengeluaran';
 
     const zeroDays = Math.max(0, daysInMonth - dayExpenseMap.size);
@@ -218,6 +226,7 @@ export function AnalyticsTab() {
     totalExpense,
     activeYear,
     activeMonth,
+    budgetPeriod,
     hide,
   ]);
 

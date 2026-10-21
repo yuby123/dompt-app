@@ -91,6 +91,7 @@ export interface BudgetConfig {
   needsPercent: number; // 50%
   wantsPercent: number; // 30%
   savingsPercent: number; // 20%
+  paydayDay?: number; // Tanggal gajian / mulai siklus budget (1-31, default 1)
   subcategories: BudgetSubcategory[];
   subscriptions?: RecurringItem[];
   liquidAssets?: AssetItem[];
@@ -206,6 +207,7 @@ export interface AppSettings {
   pinLength?: number;
   autoLockMinutes?: number;
   avatarUrl?: string;
+  paydayDay?: number; // Tanggal gajian / mulai siklus budget (1-31)
 }
 
 export interface WalletWithBalance extends Wallet {
@@ -250,4 +252,14 @@ export interface DashboardSummary {
   todayFixedExpense: number;
   dailyOverbudget: boolean;
   dailyOverbudgetAmount: number;
+  // Siklus Periode Gajian (Payday Cycle)
+  paydayDay: number;
+  periodTotalDays: number;
+  currentPeriodDay: number;
+  daysRemainingUntilPayday: number;
+  safeDailyBudgetUntilPayday: number;
+  remainingVariableBudget: number;
+  periodShortLabel: string;
+  periodFullLabel: string;
+  endShortLabel: string;
 }

@@ -21,7 +21,7 @@ import { useApp } from '../AppContext';
 import { EmojiPickerModal } from '../EmojiPickerModal';
 import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
 import { BudgetGroup, RecurringItem } from '@/lib/types';
-import { getMonthlySubscriptionAmount } from '@/lib/budgetUtils';
+import { getMonthlySubscriptionAmount, isDateInBudgetPeriod } from '@/lib/budgetUtils';
 
 export type { RecurringItem };
 
@@ -46,6 +46,7 @@ export function SubscriptionsTab() {
     activeYear,
     activeMonth,
     activeDay,
+    budgetPeriod,
   } = useApp();
 
   const hide = settings.hideBalance;
@@ -79,7 +80,7 @@ export function SubscriptionsTab() {
     { name: 'Gaji Bulanan', emoji: '💰', type: 'income' as const, cat: 'cat-gaji', group: 'kebutuhan' as BudgetGroup, day: '25' },
   ];
 
-  // Map each subscription to its linked BudgetSubcategory & actual transactions spent this month
+  // Map each subscription to its linked BudgetSubcategory & actual transactions spent in the active period
   const itemBudgetStatusMap = useMemo(() => {
     const map: Record<
       string,
@@ -93,7 +94,7 @@ export function SubscriptionsTab() {
     const monthlyExpenseTxs = transactions.filter((tx) => {
       if (tx.type !== 'expense') return false;
       const d = new Date(tx.date);
-      return d.getFullYear() === activeYear && d.getMonth() === activeMonth;
+      return isDateInBudgetPeriod(d, budgetPeriod);
     });
 
     items.forEach((item) => {
@@ -113,7 +114,7 @@ export function SubscriptionsTab() {
             s.name.toLowerCase().trim().includes(itemNameLower)
         );
 
-      // Calculate actual spending matching this subscription this month
+      // Calculate actual spending matching this subscription in the active period
       let spent = 0;
       monthlyExpenseTxs.forEach((tx) => {
         const cleanNote = (tx.note || '')
@@ -154,7 +155,7 @@ export function SubscriptionsTab() {
     });
 
     return map;
-  }, [items, budgetConfig.subcategories, transactions, activeYear, activeMonth]);
+  }, [items, budgetConfig.subcategories, transactions, budgetPeriod]);
 
   // Count unlinked active expense subscriptions
   const unlinkedExpenseCount = useMemo(() => {

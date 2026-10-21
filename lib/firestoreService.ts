@@ -627,12 +627,14 @@ export async function fetchUserBudgetConfig(
     const parsedDeletedIds = data.deletedIdsJson
       ? safeJsonParse<string[]>(data.deletedIdsJson, [])
       : undefined;
+    const resolvedPaydayDay = Number(data.paydayDay || parsedSettings?.paydayDay) || undefined;
 
     return {
       estimatedIncome: Number(data.estimatedIncome) || 0,
       needsPercent: Number(data.needsPercent) || 50,
       wantsPercent: Number(data.wantsPercent) || 30,
       savingsPercent: Number(data.savingsPercent) || 20,
+      ...(resolvedPaydayDay ? { paydayDay: resolvedPaydayDay } : {}),
       subcategories: Array.isArray(parsedSubcategories) ? parsedSubcategories : [],
       ...(parsedSubscriptions !== undefined ? { subscriptions: parsedSubscriptions } : {}),
       ...(parsedLiquidAssets !== undefined ? { liquidAssets: parsedLiquidAssets } : {}),
@@ -707,8 +709,12 @@ export async function saveUserBudgetConfig(userId: string, config: BudgetConfig)
   if (config.categoryBudgets !== undefined) {
     payload.categoryBudgetsJson = JSON.stringify(config.categoryBudgets).substring(0, 19500);
   }
-  if (config.settings !== undefined) {
-    payload.settingsJson = JSON.stringify(config.settings).substring(0, 9500);
+  if (config.settings !== undefined || config.paydayDay !== undefined) {
+    const mergedSettings = {
+      ...(config.settings || {}),
+      ...(config.paydayDay ? { paydayDay: config.paydayDay } : {}),
+    };
+    payload.settingsJson = JSON.stringify(mergedSettings).substring(0, 9500);
   }
   if (config.deletedIds !== undefined) {
     payload.deletedIdsJson = JSON.stringify(config.deletedIds.slice(-400)).substring(0, 19500);

@@ -73,7 +73,15 @@ import {
   DEFAULT_SETTINGS,
 } from '@/lib/constants';
 import { exportTransactionsToCSV, formatRupiah } from '@/lib/formatters';
-import { calculateBudgetBreakdown, getMonthlySubscriptionAmount, isFixedExpense } from '@/lib/budgetUtils';
+import {
+  BudgetPeriodInfo,
+  calculateBudgetBreakdown,
+  getAdjacentPeriodDateStr,
+  getBudgetPeriodInfo,
+  getMonthlySubscriptionAmount,
+  isDateInBudgetPeriod,
+  isFixedExpense,
+} from '@/lib/budgetUtils';
 import {
   auth,
   googleProvider,
@@ -169,6 +177,10 @@ interface AppContextType {
   activeYear: number;
   activeMonth: number;
   activeDay: number;
+  budgetPeriod: BudgetPeriodInfo;
+  goToPrevPeriod: () => void;
+  goToNextPeriod: () => void;
+  goToCurrentPeriod: () => void;
   transactionDetails: TransactionDetail[];
   dashboardSummary: DashboardSummary;
   
@@ -340,6 +352,41 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const activeYear = activeDateObj.getFullYear();
   const activeMonth = activeDateObj.getMonth();
   const activeDay = activeDateObj.getDate();
+
+  const effectivePaydayDay = useMemo(() => {
+    const raw = budgetConfig?.paydayDay || settings?.paydayDay || budgetConfig?.settings?.paydayDay || 1;
+    return Math.max(1, Math.min(31, Math.round(Number(raw) || 1)));
+  }, [budgetConfig?.paydayDay, settings?.paydayDay, budgetConfig?.settings?.paydayDay]);
+
+  const budgetPeriod = useMemo<BudgetPeriodInfo>(() => {
+    return getBudgetPeriodInfo(activeYear, activeMonth, activeDay, effectivePaydayDay);
+  }, [activeYear, activeMonth, activeDay, effectivePaydayDay]);
+
+  const goToPrevPeriod = () => {
+    const prevDateStr = getAdjacentPeriodDateStr(
+      activeYear,
+      activeMonth,
+      activeDay,
+      effectivePaydayDay,
+      -1
+    );
+    setActiveDate(prevDateStr);
+  };
+
+  const goToNextPeriod = () => {
+    const nextDateStr = getAdjacentPeriodDateStr(
+      activeYear,
+      activeMonth,
+      activeDay,
+      effectivePaydayDay,
+      1
+    );
+    setActiveDate(nextDateStr);
+  };
+
+  const goToCurrentPeriod = () => {
+    setActiveDate(getTodayDateStr());
+  };
 
   // Modals & dialog states
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false);
@@ -1076,6 +1123,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           userName: cloudSettings?.userName || displayName || localSettings.userName || '',
           userEmail: email || cloudSettings?.userEmail || localSettings.userEmail || '',
         };
+    const resolvedPaydayDay =
+      authoritativeBudgetSource.paydayDay ||
+      mergedSettings.paydayDay ||
+      effectiveCloudBudget?.paydayDay ||
+      localBudget?.paydayDay ||
+      1;
+    mergedSettings.paydayDay = resolvedPaydayDay;
+
     setSettings(mergedSettings);
     saveStoredSettings(mergedSettings, primaryUid);
     if (mirrorUid) saveStoredSettings(mergedSettings, mirrorUid);
@@ -1085,6 +1140,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       needsPercent: authoritativeBudgetSource.needsPercent,
       wantsPercent: authoritativeBudgetSource.wantsPercent,
       savingsPercent: authoritativeBudgetSource.savingsPercent,
+      paydayDay: resolvedPaydayDay,
       subcategories: Array.from(subcatMap.values()),
     };
 
@@ -1707,7 +1763,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       transactions.forEach((tx) => {
         const effectiveWalletId = resolvedWalletIdMap.get(tx.id) || tx.walletId;
         const txDate = new Date(tx.date);
-        const isThisMonth = txDate.getFullYear() === activeYear && txDate.getMonth() === activeMonth;
+        const isThisMonth = isDateInBudgetPeriod(txDate, budgetPeriod);
 
         if (effectiveWalletId === wallet.id) {
           txCount++;
@@ -1744,7 +1800,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         availableBalance: available,
       };
     });
-  }, [wallets, transactions, goals, activeYear, activeMonth, resolvedWalletIdMap]);
+  }, [wallets, transactions, goals, budgetPeriod, resolvedWalletIdMap]);
 
   // Total balance
   const totalBalance = useMemo(() => {
@@ -1776,7 +1832,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .sort((a, b) => new Date(b.transaction.date).getTime() - new Date(a.transaction.date).getTime());
   }, [transactions, wallets, categories, resolvedWalletIdMap]);
 
-  // Monthly and today income and expense (including any payable debt payments recorded this month)
+  // Active period and today income and expense (including any payable debt payments recorded in this period)
   const { totalIncome, totalExpense, todayIncome, todayExpense } = useMemo(() => {
     let inc = 0;
     let exp = 0;
@@ -1787,14 +1843,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     transactions.forEach((tx) => {
       txIdSet.add(tx.id);
       const txDate = new Date(tx.date);
-      if (txDate.getFullYear() === activeYear && txDate.getMonth() === activeMonth) {
+      if (isDateInBudgetPeriod(txDate, budgetPeriod)) {
         if (tx.type === 'income') inc += tx.amount;
         if (tx.type === 'expense') exp += tx.amount;
-
-        if (txDate.getDate() === activeDay) {
-          if (tx.type === 'income') todayInc += tx.amount;
-          if (tx.type === 'expense') todayExp += tx.amount;
-        }
+      }
+      if (
+        txDate.getFullYear() === activeYear &&
+        txDate.getMonth() === activeMonth &&
+        txDate.getDate() === activeDay
+      ) {
+        if (tx.type === 'income') todayInc += tx.amount;
+        if (tx.type === 'expense') todayExp += tx.amount;
       }
     });
 
@@ -1803,17 +1862,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       (d.payments || []).forEach((p) => {
         if (p.transactionId && txIdSet.has(p.transactionId)) return;
         const pd = new Date(p.date);
-        if (pd.getFullYear() === activeYear && pd.getMonth() === activeMonth) {
+        if (isDateInBudgetPeriod(pd, budgetPeriod)) {
           exp += p.amount;
-          if (pd.getDate() === activeDay) {
-            todayExp += p.amount;
-          }
+        }
+        if (
+          pd.getFullYear() === activeYear &&
+          pd.getMonth() === activeMonth &&
+          pd.getDate() === activeDay
+        ) {
+          todayExp += p.amount;
         }
       });
     });
 
     return { totalIncome: inc, totalExpense: exp, todayIncome: todayInc, todayExpense: todayExp };
-  }, [transactions, debts, activeYear, activeMonth, activeDay]);
+  }, [transactions, debts, budgetPeriod, activeYear, activeMonth, activeDay]);
 
   // Dynamic upcoming bills derived from negative credit/paylater wallets, active subscriptions, and scheduled budget subcategories
   const upcomingBills = useMemo<UpcomingBill[]>(() => {
@@ -1931,6 +1994,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       todayFixedExpense: breakdown.todayFixedExpense,
       dailyOverbudget: breakdown.dailyOverbudget,
       dailyOverbudgetAmount: breakdown.dailyOverbudgetAmount,
+      paydayDay: breakdown.paydayDay,
+      periodTotalDays: breakdown.periodTotalDays,
+      currentPeriodDay: breakdown.currentPeriodDay,
+      daysRemainingUntilPayday: breakdown.daysRemainingUntilPayday,
+      safeDailyBudgetUntilPayday: breakdown.safeDailyBudgetUntilPayday,
+      remainingVariableBudget: breakdown.remainingVariableBudget,
+      periodShortLabel: breakdown.periodShortLabel,
+      periodFullLabel: breakdown.periodFullLabel,
+      endShortLabel: breakdown.endShortLabel,
     };
   }, [
     budgetConfig,
@@ -2539,17 +2611,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateBudgetConfig = (data: Partial<BudgetConfig>) => {
     markLocalMutation();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
+    const nextPayday =
+      data.paydayDay !== undefined
+        ? Math.max(1, Math.min(31, Math.round(Number(data.paydayDay) || 1)))
+        : budgetConfig.paydayDay || settings.paydayDay || 1;
+    const nextSettings: AppSettings =
+      data.paydayDay !== undefined
+        ? { ...settings, paydayDay: nextPayday }
+        : settings;
+    if (data.paydayDay !== undefined) {
+      setSettings(nextSettings);
+      saveStoredSettings(nextSettings, localScopeUid);
+      if (mirrorUid) saveStoredSettings(nextSettings, mirrorUid);
+    }
     const updated: BudgetConfig = {
       ...budgetConfig,
       ...data,
+      paydayDay: nextPayday,
+      settings: nextSettings,
       updatedAt: new Date().toISOString(),
     };
     setBudgetConfig(updated);
     saveStoredBudgetConfig(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
-      persistExtendedBudgetToCloud(user.uid, mirrorUid, { budgetConfig: updated });
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: updated,
+        settings: nextSettings,
+      });
     }
-    addToast('Alokasi Disimpan', 'Alokasi anggaran 50/30/20 berhasil diperbarui.');
+    if (data.paydayDay !== undefined && Object.keys(data).length === 1) {
+      addToast(
+        'Periode Gajian Diperbarui',
+        nextPayday === 1
+          ? 'Periode budget diatur ke siklus kalender bulanan (Tgl 1 s/d akhir bulan).'
+          : `Periode budget diatur mulai Tanggal ${nextPayday} hingga Tanggal ${nextPayday} bulan berikutnya.`
+      );
+    } else {
+      addToast('Alokasi Disimpan', 'Pengaturan anggaran berhasil diperbarui.');
+    }
   };
 
   const addBudgetSubcategory = (item: { name: string; group: BudgetGroup; allocatedAmount: number; emoji: string; dueDateDay?: number }) => {
@@ -3653,6 +3752,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         activeYear,
         activeMonth,
         activeDay,
+        budgetPeriod,
+        goToPrevPeriod,
+        goToNextPeriod,
+        goToCurrentPeriod,
         transactionDetails,
         dashboardSummary,
         isAddTransactionOpen,

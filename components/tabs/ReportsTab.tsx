@@ -16,6 +16,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatRupiah } from '@/lib/formatters';
+import { getBudgetPeriodInfo, isDateInBudgetPeriod } from '@/lib/budgetUtils';
 
 export function ReportsTab() {
   const {
@@ -27,6 +28,9 @@ export function ReportsTab() {
     activeYear,
     activeMonth,
     setActiveDate,
+    budgetPeriod,
+    goToPrevPeriod,
+    goToNextPeriod,
     settings,
     exportToCSV,
     addToast,
@@ -37,35 +41,22 @@ export function ReportsTab() {
 
   // Export Modal State
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
-  const [startDate, setStartDate] = useState(() => {
-    const m = String(activeMonth + 1).padStart(2, '0');
-    return `${activeYear}-${m}-01`;
-  });
-  const [endDate, setEndDate] = useState(() => {
-    const lastDay = new Date(activeYear, activeMonth + 1, 0).getDate();
-    const m = String(activeMonth + 1).padStart(2, '0');
-    return `${activeYear}-${m}-${String(lastDay).padStart(2, '0')}`;
-  });
+  const [startDate, setStartDate] = useState(() => budgetPeriod.startDateIso);
+  const [endDate, setEndDate] = useState(() => budgetPeriod.endDateIso);
   const [exportWalletId, setExportWalletId] = useState('all');
   const [exportFormat, setExportFormat] = useState<'csv' | 'pdf'>('csv');
 
   const monthObj = new Date(activeYear, activeMonth, 1);
-  const monthLabel = monthObj
-    .toLocaleString('id-ID', { month: 'long', year: 'numeric' })
-    .toUpperCase();
+  const monthLabel = budgetPeriod.isCustomPayday
+    ? budgetPeriod.periodFullLabel.toUpperCase()
+    : monthObj.toLocaleString('id-ID', { month: 'long', year: 'numeric' }).toUpperCase();
 
   const handlePrevMonth = () => {
-    const d = new Date(activeYear, activeMonth - 1, 1);
-    setActiveDate(
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
-    );
+    goToPrevPeriod();
   };
 
   const handleNextMonth = () => {
-    const d = new Date(activeYear, activeMonth + 1, 1);
-    setActiveDate(
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
-    );
+    goToNextPeriod();
   };
 
   // Monthly metrics calculation
@@ -92,10 +83,14 @@ export function ReportsTab() {
     let wSpent = 0;
     let sSpent = 0;
 
-    // Previous month comparison
-    const prevDate = new Date(activeYear, activeMonth - 1, 1);
-    const pYear = prevDate.getFullYear();
-    const pMonth = prevDate.getMonth();
+    // Previous period comparison
+    const prevDate = new Date(budgetPeriod.startYear, budgetPeriod.startMonth - 1, 1);
+    const prevPeriod = getBudgetPeriodInfo(
+      prevDate.getFullYear(),
+      prevDate.getMonth(),
+      Math.min(budgetPeriod.paydayDay, new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 0).getDate()),
+      budgetPeriod.paydayDay
+    );
     let prevInc = 0;
     let prevExp = 0;
 
@@ -106,7 +101,7 @@ export function ReportsTab() {
 
     transactions.forEach((tx) => {
       const d = new Date(tx.date);
-      if (d.getFullYear() === activeYear && d.getMonth() === activeMonth) {
+      if (isDateInBudgetPeriod(d, budgetPeriod)) {
         if (tx.type === 'income') {
           inc += tx.amount;
         } else if (tx.type === 'expense') {
@@ -140,7 +135,7 @@ export function ReportsTab() {
             sSpent += tx.amount;
           }
         }
-      } else if (d.getFullYear() === pYear && d.getMonth() === pMonth) {
+      } else if (isDateInBudgetPeriod(d, prevPeriod)) {
         if (tx.type === 'income') prevInc += tx.amount;
         else if (tx.type === 'expense') prevExp += tx.amount;
       }
@@ -215,6 +210,7 @@ export function ReportsTab() {
     budgetConfig,
     activeYear,
     activeMonth,
+    budgetPeriod,
     dashboardSummary.emergencyFundRunwayMonths,
   ]);
 

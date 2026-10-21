@@ -34,29 +34,31 @@ service cloud.firestore {
     // Entity Validation Helpers
     function isValidUserProfile(data) {
       return data.keys().hasAll(['uid', 'email'])
-        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'passwordHash', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'passwordHash', 'settingsJson', 'createdAt', 'updatedAt'])
         && data.uid is string && data.uid.size() <= 128
         && data.email is string && data.email.size() <= 256
         && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128))
         && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
-        && (!('passwordHash' in data) || (data.passwordHash is string && data.passwordHash.size() <= 256));
+        && (!('passwordHash' in data) || (data.passwordHash is string && data.passwordHash.size() <= 256))
+        && (!('settingsJson' in data) || (data.settingsJson is string && data.settingsJson.size() <= 10000));
     }
 
     function isValidWallet(data) {
       return data.keys().hasAll(['id', 'userId', 'name', 'type', 'initialBalance'])
-        && data.keys().hasOnly(['id', 'userId', 'name', 'type', 'icon', 'color', 'initialBalance', 'reservedAmount', 'isDefault', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'name', 'type', 'icon', 'color', 'initialBalance', 'reservedAmount', 'isDefault', 'isVerified', 'createdAt', 'updatedAt'])
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.name is string && data.name.size() > 0 && data.name.size() <= 100
         && data.type is string && data.type.size() <= 50
         && data.initialBalance is number
         && (!('reservedAmount' in data) || data.reservedAmount is number)
-        && (!('isDefault' in data) || data.isDefault is bool);
+        && (!('isDefault' in data) || data.isDefault is bool)
+        && (!('isVerified' in data) || data.isVerified is bool);
     }
 
     function isValidTransaction(data) {
       return data.keys().hasAll(['id', 'userId', 'walletId', 'type', 'amount', 'categoryId', 'date'])
-        && data.keys().hasOnly(['id', 'userId', 'walletId', 'type', 'amount', 'categoryId', 'budgetGroup', 'expenseNature', 'date', 'note', 'tags', 'transferWalletId', 'transferFee', 'imageReceiptUrl', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'walletId', 'type', 'amount', 'categoryId', 'budgetGroup', 'expenseNature', 'date', 'note', 'tags', 'transferWalletId', 'transferFee', 'imageReceiptUrl', 'receiptImageUrl', 'createdAt', 'updatedAt'])
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.walletId is string && data.walletId.size() <= 128
@@ -69,18 +71,21 @@ service cloud.firestore {
         && (!('note' in data) || (data.note is string && data.note.size() <= 500))
         && (!('transferWalletId' in data) || (data.transferWalletId is string && data.transferWalletId.size() <= 128))
         && (!('transferFee' in data) || data.transferFee is number)
-        && (!('imageReceiptUrl' in data) || (data.imageReceiptUrl is string && data.imageReceiptUrl.size() <= 500));
+        && (!('imageReceiptUrl' in data) || (data.imageReceiptUrl is string && data.imageReceiptUrl.size() <= 500))
+        && (!('receiptImageUrl' in data) || (data.receiptImageUrl is string && data.receiptImageUrl.size() <= 500));
     }
 
     function isValidGoal(data) {
       return data.keys().hasAll(['id', 'userId', 'title', 'targetAmount', 'currentAmount'])
-        && data.keys().hasOnly(['id', 'userId', 'title', 'targetAmount', 'currentAmount', 'deadline', 'emoji', 'color', 'walletId', 'isEmergencyFund', 'monthlyTargetSaving', 'isLocked', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'title', 'name', 'targetAmount', 'currentAmount', 'deadline', 'targetDate', 'emoji', 'color', 'walletId', 'isEmergencyFund', 'monthlyTargetSaving', 'isLocked', 'createdAt', 'updatedAt'])
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.title is string && data.title.size() > 0 && data.title.size() <= 100
+        && (!('name' in data) || (data.name is string && data.name.size() <= 100))
         && data.targetAmount is number
         && data.currentAmount is number
         && (!('deadline' in data) || (data.deadline is string && data.deadline.size() <= 30))
+        && (!('targetDate' in data) || (data.targetDate is string && data.targetDate.size() <= 30))
         && (!('emoji' in data) || (data.emoji is string && data.emoji.size() <= 20))
         && (!('color' in data) || (data.color is string && data.color.size() <= 50))
         && (!('walletId' in data) || (data.walletId is string && data.walletId.size() <= 128))
@@ -130,15 +135,21 @@ service cloud.firestore {
 
     function isValidBudgetConfig(data) {
       return data.keys().hasAll(['id', 'userId', 'estimatedIncome'])
-        && data.keys().hasOnly(['id', 'userId', 'estimatedIncome', 'needsPercent', 'wantsPercent', 'savingsPercent', 'subcategoriesJson', 'subscriptionsJson', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'estimatedIncome', 'needsPercent', 'wantsPercent', 'savingsPercent', 'subcategoriesJson', 'subscriptionsJson', 'liquidAssetsJson', 'fixedAssetsJson', 'investmentsJson', 'categoryBudgetsJson', 'settingsJson', 'deletedIdsJson', 'createdAt', 'updatedAt'])
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.estimatedIncome is number
         && (!('needsPercent' in data) || data.needsPercent is number)
         && (!('wantsPercent' in data) || data.wantsPercent is number)
         && (!('savingsPercent' in data) || data.savingsPercent is number)
-        && (!('subcategoriesJson' in data) || (data.subcategoriesJson is string && data.subcategoriesJson.size() <= 10000))
-        && (!('subscriptionsJson' in data) || (data.subscriptionsJson is string && data.subscriptionsJson.size() <= 10000));
+        && (!('subcategoriesJson' in data) || (data.subcategoriesJson is string && data.subcategoriesJson.size() <= 20000))
+        && (!('subscriptionsJson' in data) || (data.subscriptionsJson is string && data.subscriptionsJson.size() <= 20000))
+        && (!('liquidAssetsJson' in data) || (data.liquidAssetsJson is string && data.liquidAssetsJson.size() <= 20000))
+        && (!('fixedAssetsJson' in data) || (data.fixedAssetsJson is string && data.fixedAssetsJson.size() <= 20000))
+        && (!('investmentsJson' in data) || (data.investmentsJson is string && data.investmentsJson.size() <= 20000))
+        && (!('categoryBudgetsJson' in data) || (data.categoryBudgetsJson is string && data.categoryBudgetsJson.size() <= 20000))
+        && (!('settingsJson' in data) || (data.settingsJson is string && data.settingsJson.size() <= 10000))
+        && (!('deletedIdsJson' in data) || (data.deletedIdsJson is string && data.deletedIdsJson.size() <= 20000));
     }
 
     // User Resource Rules

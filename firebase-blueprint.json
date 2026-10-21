@@ -10,27 +10,29 @@
         "displayName": { "type": "string", "maxLength": 128 },
         "photoURL": { "type": "string", "maxLength": 512 },
         "passwordHash": { "type": "string", "maxLength": 256 },
-        "createdAt": { "type": "string", "maxLength": 64 },
-        "updatedAt": { "type": "string", "maxLength": 64 }
+        "settingsJson": { "type": "string", "maxLength": 10000 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["uid", "email"]
     },
     "Wallet": {
       "title": "Wallet",
-      "description": "A financial account or wallet belonging to a user",
+      "description": "User financial wallet or account",
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128 },
         "userId": { "type": "string", "maxLength": 128 },
-        "name": { "type": "string", "maxLength": 100 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
         "type": { "type": "string", "maxLength": 50 },
         "icon": { "type": "string", "maxLength": 50 },
         "color": { "type": "string", "maxLength": 50 },
         "initialBalance": { "type": "number" },
         "reservedAmount": { "type": "number" },
         "isDefault": { "type": "boolean" },
-        "createdAt": { "type": "string", "maxLength": 64 },
-        "updatedAt": { "type": "string", "maxLength": 64 }
+        "isVerified": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["id", "userId", "name", "type", "initialBalance"]
     },
@@ -52,36 +54,39 @@
         "transferWalletId": { "type": "string", "maxLength": 128 },
         "transferFee": { "type": "number" },
         "imageReceiptUrl": { "type": "string", "maxLength": 500 },
-        "createdAt": { "type": "string", "maxLength": 64 },
-        "updatedAt": { "type": "string", "maxLength": 64 }
+        "receiptImageUrl": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["id", "userId", "walletId", "type", "amount", "categoryId", "date"]
     },
     "Goal": {
       "title": "Goal",
-      "description": "Savings goal of a user",
+      "description": "Financial saving goal or emergency fund target",
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128 },
         "userId": { "type": "string", "maxLength": 128 },
-        "title": { "type": "string", "maxLength": 100 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "name": { "type": "string", "maxLength": 100 },
         "targetAmount": { "type": "number" },
         "currentAmount": { "type": "number" },
         "deadline": { "type": "string", "maxLength": 30 },
+        "targetDate": { "type": "string", "maxLength": 30 },
         "emoji": { "type": "string", "maxLength": 20 },
         "color": { "type": "string", "maxLength": 50 },
         "walletId": { "type": "string", "maxLength": 128 },
         "isEmergencyFund": { "type": "boolean" },
         "monthlyTargetSaving": { "type": "number" },
         "isLocked": { "type": "boolean" },
-        "createdAt": { "type": "string", "maxLength": 64 },
-        "updatedAt": { "type": "string", "maxLength": 64 }
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["id", "userId", "title", "targetAmount", "currentAmount"]
     },
     "BudgetConfig": {
       "title": "BudgetConfig",
-      "description": "User monthly budget configuration",
+      "description": "50/30/20 budget configuration, subcategories, assets, investments, and user preferences",
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128 },
@@ -90,26 +95,32 @@
         "needsPercent": { "type": "number" },
         "wantsPercent": { "type": "number" },
         "savingsPercent": { "type": "number" },
-        "subcategoriesJson": { "type": "string", "maxLength": 10000 },
-        "subscriptionsJson": { "type": "string", "maxLength": 10000 },
-        "createdAt": { "type": "string", "maxLength": 64 },
-        "updatedAt": { "type": "string", "maxLength": 64 }
+        "subcategoriesJson": { "type": "string", "maxLength": 20000 },
+        "subscriptionsJson": { "type": "string", "maxLength": 20000 },
+        "liquidAssetsJson": { "type": "string", "maxLength": 20000 },
+        "fixedAssetsJson": { "type": "string", "maxLength": 20000 },
+        "investmentsJson": { "type": "string", "maxLength": 20000 },
+        "categoryBudgetsJson": { "type": "string", "maxLength": 20000 },
+        "settingsJson": { "type": "string", "maxLength": 10000 },
+        "deletedIdsJson": { "type": "string", "maxLength": 20000 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["id", "userId", "estimatedIncome"]
     },
     "Debt": {
       "title": "Debt",
-      "description": "User debt and receivable tracking",
+      "description": "Payable debt or receivable loan record",
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128 },
         "userId": { "type": "string", "maxLength": 128 },
-        "name": { "type": "string", "maxLength": 100 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
         "type": { "type": "string", "enum": ["payable", "receivable"] },
-        "contactName": { "type": "string", "maxLength": 100 },
         "totalAmount": { "type": "number" },
         "remainingAmount": { "type": "number" },
         "dueDate": { "type": "string", "maxLength": 50 },
+        "contactName": { "type": "string", "maxLength": 100 },
         "startDate": { "type": "string", "maxLength": 50 },
         "walletId": { "type": "string", "maxLength": 128 },
         "category": { "type": "string", "maxLength": 50 },
@@ -117,19 +128,19 @@
         "status": { "type": "string", "enum": ["active", "paid"] },
         "note": { "type": "string", "maxLength": 500 },
         "paymentsJson": { "type": "string", "maxLength": 20000 },
-        "createdAt": { "type": "string", "maxLength": 64 },
-        "updatedAt": { "type": "string", "maxLength": 64 }
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["id", "userId", "name", "type", "totalAmount", "remainingAmount", "dueDate", "contactName", "status"]
     },
     "Subscription": {
       "title": "Subscription",
-      "description": "User recurring subscription bills and routine income schedules",
+      "description": "Recurring subscription or routine income/expense schedule",
       "type": "object",
       "properties": {
         "id": { "type": "string", "maxLength": 128 },
         "userId": { "type": "string", "maxLength": 128 },
-        "name": { "type": "string", "maxLength": 100 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
         "emoji": { "type": "string", "maxLength": 20 },
         "type": { "type": "string", "enum": ["expense", "income"] },
         "amount": { "type": "number" },
@@ -141,8 +152,8 @@
         "budgetGroup": { "type": "string", "maxLength": 50 },
         "isActive": { "type": "boolean" },
         "lastRecordedPeriod": { "type": "string", "maxLength": 20 },
-        "createdAt": { "type": "string", "maxLength": 64 },
-        "updatedAt": { "type": "string", "maxLength": 64 }
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["id", "userId", "name", "type", "amount", "frequency", "billingDay", "walletId", "categoryId", "isActive"]
     }
@@ -150,31 +161,31 @@
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "User profile document containing basic account info"
+      "description": "User profile document"
     },
     "/users/{userId}/wallets/{walletId}": {
       "schema": { "$ref": "#/entities/Wallet" },
-      "description": "User financial accounts/wallets"
+      "description": "User wallets subcollection"
     },
     "/users/{userId}/transactions/{transactionId}": {
       "schema": { "$ref": "#/entities/Transaction" },
-      "description": "User financial income, expense, and transfer transactions"
+      "description": "User transactions subcollection"
     },
     "/users/{userId}/goals/{goalId}": {
       "schema": { "$ref": "#/entities/Goal" },
-      "description": "User savings targets and goals"
+      "description": "User saving goals subcollection"
     },
     "/users/{userId}/budgetConfig/{configId}": {
       "schema": { "$ref": "#/entities/BudgetConfig" },
-      "description": "User monthly budget settings"
+      "description": "User budget configuration subcollection"
     },
     "/users/{userId}/debts/{debtId}": {
       "schema": { "$ref": "#/entities/Debt" },
-      "description": "User debts and receivables"
+      "description": "User debts and installments subcollection"
     },
     "/users/{userId}/subscriptions/{subscriptionId}": {
       "schema": { "$ref": "#/entities/Subscription" },
-      "description": "User recurring subscriptions and routine bills"
+      "description": "User recurring subscriptions and routine bills subcollection"
     }
   }
 }

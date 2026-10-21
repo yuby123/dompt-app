@@ -8,10 +8,17 @@ export function Navigation() {
   const { activeTab, setActiveTab, openAddTransaction, settings } = useApp();
 
   const isPink = settings.accentColor === 'pink';
-  const activeBg = isPink ? 'bg-[#FFA4A4] text-black shadow-xs font-bold scale-105' : 'bg-[#D4F826] text-black shadow-xs font-bold scale-105';
-  const centerBtnBg = isPink
-    ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] shadow-[#FFA4A4]/40'
-    : 'bg-[#D4F826] hover:bg-[#c6ec15] shadow-[#D4F826]/30';
+  const isOrange = settings.accentColor === 'orange';
+  const activeBg = isOrange
+    ? 'bg-[#FF6B00] text-white shadow-xs font-bold scale-105 shadow-[#FF6B00]/30'
+    : isPink
+    ? 'bg-[#FFA4A4] text-black shadow-xs font-bold scale-105'
+    : 'bg-[#D4F826] text-black shadow-xs font-bold scale-105';
+  const centerBtnBg = isOrange
+    ? 'bg-[#FF6B00] hover:bg-[#ea5e00] text-white shadow-[#FF6B00]/40'
+    : isPink
+    ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] text-black shadow-[#FFA4A4]/40'
+    : 'bg-[#D4F826] hover:bg-[#c6ec15] text-black shadow-[#D4F826]/30';
 
   return (
     <nav className="fixed bottom-0 inset-x-0 z-40 pb-4 pt-1 px-4 pointer-events-none transition-all lg:hidden">

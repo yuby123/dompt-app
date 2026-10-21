@@ -1,4 +1,16 @@
-import { AppSettings, Budget, BudgetConfig, Category, Debt, Goal, RecurringItem, Transaction, Wallet } from './types';
+import {
+  AppSettings,
+  AssetItem,
+  Budget,
+  BudgetConfig,
+  Category,
+  Debt,
+  Goal,
+  InvestmentItem,
+  RecurringItem,
+  Transaction,
+  Wallet,
+} from './types';
 import {
   DEFAULT_BUDGET_CONFIG,
   DEFAULT_CATEGORIES,
@@ -18,6 +30,10 @@ const STORAGE_KEYS = {
   GOALS: 'budggt_goals',
   DEBTS: 'budggt_debts',
   SUBSCRIPTIONS: 'budggt_subscriptions',
+  ASSETS_LIQUID: 'budggt_assets_liquid',
+  ASSETS_FIXED: 'budggt_assets_fixed',
+  INVESTMENTS: 'budggt_investments',
+  DELETED_IDS: 'budggt_deleted_ids',
   SETTINGS: 'budggt_settings',
 };
 
@@ -824,9 +840,93 @@ export function saveStoredSubscriptions(items: RecurringItem[], scopeUid?: strin
   }
 }
 
-export function loadStoredSettings(): AppSettings {
+export function loadStoredAssets(type: 'liquid' | 'fixed', scopeUid?: string): AssetItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const base = type === 'liquid' ? STORAGE_KEYS.ASSETS_LIQUID : STORAGE_KEYS.ASSETS_FIXED;
+    const key = getScopedKey(base, scopeUid);
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error(`Failed to load ${type} assets:`, err);
+    return [];
+  }
+}
+
+export function saveStoredAssets(
+  type: 'liquid' | 'fixed',
+  items: AssetItem[],
+  scopeUid?: string
+): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const base = type === 'liquid' ? STORAGE_KEYS.ASSETS_LIQUID : STORAGE_KEYS.ASSETS_FIXED;
+    const key = getScopedKey(base, scopeUid);
+    localStorage.setItem(key, JSON.stringify(items));
+  } catch (err) {
+    console.error(`Failed to save ${type} assets:`, err);
+  }
+}
+
+export function loadStoredInvestments(scopeUid?: string): InvestmentItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const key = getScopedKey(STORAGE_KEYS.INVESTMENTS, scopeUid);
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error('Failed to load investments:', err);
+    return [];
+  }
+}
+
+export function saveStoredInvestments(items: InvestmentItem[], scopeUid?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = getScopedKey(STORAGE_KEYS.INVESTMENTS, scopeUid);
+    localStorage.setItem(key, JSON.stringify(items));
+  } catch (err) {
+    console.error('Failed to save investments:', err);
+  }
+}
+
+export function loadStoredDeletedIds(scopeUid?: string): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const key = getScopedKey(STORAGE_KEYS.DELETED_IDS, scopeUid);
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveStoredDeletedIds(ids: string[], scopeUid?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const key = getScopedKey(STORAGE_KEYS.DELETED_IDS, scopeUid);
+    const trimmed = Array.from(new Set(ids)).slice(-500);
+    localStorage.setItem(key, JSON.stringify(trimmed));
+  } catch {
+    // ignore
+  }
+}
+
+export function loadStoredSettings(scopeUid?: string): AppSettings {
   if (typeof window === 'undefined') return DEFAULT_SETTINGS;
   try {
+    if (scopeUid) {
+      const scopedRaw = localStorage.getItem(getScopedKey(STORAGE_KEYS.SETTINGS, scopeUid));
+      if (scopedRaw) {
+        return { ...DEFAULT_SETTINGS, ...JSON.parse(scopedRaw) };
+      }
+    }
     const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
     if (!raw) {
       saveStoredSettings(DEFAULT_SETTINGS);
@@ -839,10 +939,13 @@ export function loadStoredSettings(): AppSettings {
   }
 }
 
-export function saveStoredSettings(settings: AppSettings): void {
+export function saveStoredSettings(settings: AppSettings, scopeUid?: string): void {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    if (scopeUid) {
+      localStorage.setItem(getScopedKey(STORAGE_KEYS.SETTINGS, scopeUid), JSON.stringify(settings));
+    }
   } catch (err) {
     console.error('Failed to save settings:', err);
   }
@@ -858,6 +961,7 @@ export function clearAllData(scopeUid?: string): void {
     localStorage.removeItem(`budggt_debts${suffix}`);
     localStorage.removeItem(`budggt_investments${suffix}`);
     localStorage.removeItem(`budggt_subscriptions${suffix}`);
+    localStorage.removeItem(`budggt_deleted_ids${suffix}`);
   } catch (err) {
     console.error('Failed to clear storage:', err);
   }
@@ -871,6 +975,10 @@ export function resetStorageToZero(scopeUid?: string): void {
   saveStoredBudgets([], scopeUid);
   saveStoredBudgetConfig(EMPTY_BUDGET_CONFIG, scopeUid);
   saveStoredGoals([], scopeUid);
+  saveStoredAssets('liquid', [], scopeUid);
+  saveStoredAssets('fixed', [], scopeUid);
+  saveStoredInvestments([], scopeUid);
+  saveStoredDeletedIds([], scopeUid);
   if (!scopeUid) {
     saveStoredSettings({ ...DEFAULT_SETTINGS, hideBalance: false });
   }
@@ -882,9 +990,11 @@ export function resetStorageToZero(scopeUid?: string): void {
       localStorage.setItem(`budggt_debts${suffix}`, JSON.stringify([]));
       localStorage.setItem(`budggt_investments${suffix}`, JSON.stringify([]));
       localStorage.setItem(`budggt_subscriptions${suffix}`, JSON.stringify([]));
+      localStorage.setItem(`budggt_deleted_ids${suffix}`, JSON.stringify([]));
     } catch {
       // ignore
     }
   }
 }
+
 

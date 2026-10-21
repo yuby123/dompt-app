@@ -8,7 +8,10 @@ export function Header() {
   const { settings, setActiveTab, activeTab, openAddTransaction } = useApp();
 
   const isPink = settings.accentColor === 'pink';
-  const primaryBtnClass = isPink
+  const isOrange = settings.accentColor === 'orange';
+  const primaryBtnClass = isOrange
+    ? 'bg-[#FF6B00] hover:bg-[#ea5e00] text-white shadow-[#FF6B00]/25'
+    : isPink
     ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] text-black'
     : 'bg-[#D4F826] hover:bg-[#cbf11e] text-black';
 

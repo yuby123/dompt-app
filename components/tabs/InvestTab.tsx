@@ -1,50 +1,14 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { TrendingUp, Plus, ArrowUpRight, X, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
 
-interface InvestmentItem {
-  id: string;
-  name: string;
-  type: string;
-  amount: number;
-  profit: string;
-}
-
 export function InvestTab() {
-  const { settings, addToast, user, walletsWithBalance, dataResetVersion } = useApp();
+  const { settings, investments, addInvestment, deleteInvestment } = useApp();
   const hide = settings.hideBalance;
-
-  const storageKey = user?.uid ? `budggt_investments_${user.uid}` : 'budggt_investments';
-  const scopeKey = `${storageKey}_${dataResetVersion}`;
-  const [invState, setInvState] = useState<{ scope: string; items: InvestmentItem[] } | null>(null);
-
-  const investments = useMemo<InvestmentItem[]>(() => {
-    if (invState?.scope === scopeKey) return invState.items;
-    if (typeof window === 'undefined') return [];
-    try {
-      const raw = localStorage.getItem(storageKey);
-      if (raw !== null) {
-        return JSON.parse(raw);
-      }
-      const hasDemoRdn = !user && walletsWithBalance.some((w) => w.id === 'wallet-rdn' && w.balance > 0);
-      if (hasDemoRdn) {
-        const initial: InvestmentItem[] = [
-          { id: 'inv-1', name: 'RDN BCA (IHSG Index)', type: 'Saham', amount: 500000, profit: '+12.4%' },
-          { id: 'inv-2', name: 'Emas Antam (Tabungan Emas)', type: 'Komoditas', amount: 2000000, profit: '+8.2%' },
-          { id: 'inv-3', name: 'Bibit Reksadana Obligasi', type: 'Reksadana', amount: 1500000, profit: '+6.1%' },
-        ];
-        localStorage.setItem(storageKey, JSON.stringify(initial));
-        return initial;
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  }, [invState, scopeKey, storageKey, user, walletsWithBalance]);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [name, setName] = useState('');
@@ -59,22 +23,13 @@ export function InvestTab() {
     const val = parseNominalInput(amount);
     if (!name.trim() || val <= 0) return;
 
-    const updated: InvestmentItem[] = [
-      ...investments,
-      {
-        id: `inv-${Date.now()}`,
-        name: name.trim(),
-        type: invType,
-        amount: val,
-        profit: profit.trim() || '+0%',
-      },
-    ];
-    setInvState({ scope: scopeKey, items: updated });
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-    } catch {}
+    addInvestment({
+      name: name.trim(),
+      type: invType,
+      amount: val,
+      profit: profit.trim() || '+0%',
+    });
 
-    addToast('Portofolio Ditambahkan', `${name.trim()} berhasil dicatat.`);
     setIsAddOpen(false);
     setName('');
     setAmount('');
@@ -82,12 +37,7 @@ export function InvestTab() {
   };
 
   const handleDelete = (id: string) => {
-    const updated = investments.filter((i) => i.id !== id);
-    setInvState({ scope: scopeKey, items: updated });
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(updated));
-    } catch {}
-    addToast('Portofolio Dihapus', 'Catatan investasi telah dihapus.', 'info');
+    deleteInvestment(id);
   };
 
   return (

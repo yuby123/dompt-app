@@ -5,7 +5,6 @@ import { AppProvider, useApp } from '@/components/AppContext';
 import { Header } from '@/components/Header';
 import { Navigation } from '@/components/Navigation';
 import { DesktopSidebar } from '@/components/DesktopSidebar';
-import { Footer } from '@/components/Footer';
 import { DashboardTab } from '@/components/tabs/DashboardTab';
 import { WalletsTab } from '@/components/tabs/WalletsTab';
 import { TransactionsTab } from '@/components/tabs/TransactionsTab';
@@ -84,9 +83,6 @@ function MainAppContent() {
               {activeTab === 'health-score' && <HealthScoreTab />}
             </motion.div>
           </AnimatePresence>
-
-          {/* Architectural Footer */}
-          <Footer />
         </main>
 
         {/* Bottom Floating Pill Navigation (mobile only) */}

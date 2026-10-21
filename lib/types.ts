@@ -1,10 +1,9 @@
 export type TransactionType = 'expense' | 'income' | 'transfer';
 
 export type WalletType = 'bank' | 'ewallet' | 'cash' | 'credit' | 'paylater' | 'investment' | 'savings' | 'other';
-
 export type ThemeMode = 'system' | 'light' | 'dark';
 
-export type AccentColor = 'lime' | 'pink';
+export type AccentColor = 'lime' | 'pink' | 'orange';
 
 export type BudgetStatus = 'safe' | 'warning' | 'exceeded';
 
@@ -67,6 +66,24 @@ export interface RecurringItem {
   budgetGroup?: BudgetGroup;
   isActive: boolean;
   lastRecordedPeriod?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface AssetItem {
+  id: string;
+  name: string;
+  amount: number;
+  updatedAt?: string;
+}
+
+export interface InvestmentItem {
+  id: string;
+  name: string;
+  type: string;
+  amount: number;
+  profit: string;
+  updatedAt?: string;
 }
 
 export interface BudgetConfig {
@@ -75,6 +92,14 @@ export interface BudgetConfig {
   wantsPercent: number; // 30%
   savingsPercent: number; // 20%
   subcategories: BudgetSubcategory[];
+  subscriptions?: RecurringItem[];
+  liquidAssets?: AssetItem[];
+  fixedAssets?: AssetItem[];
+  investments?: InvestmentItem[];
+  categoryBudgets?: Budget[];
+  settings?: Partial<AppSettings>;
+  deletedIds?: string[];
+  updatedAt?: string;
 }
 
 export interface Goal {
@@ -88,6 +113,8 @@ export interface Goal {
   isEmergencyFund?: boolean;
   isLocked?: boolean;
   monthlyTargetSaving?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Asset {

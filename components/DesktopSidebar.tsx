@@ -51,6 +51,7 @@ export function DesktopSidebar() {
   };
 
   const isPink = settings.accentColor === 'pink';
+  const isOrange = settings.accentColor === 'orange';
 
   const navItems: {
     id: TabType;
@@ -88,8 +89,12 @@ export function DesktopSidebar() {
           >
             <div
               className={`w-9 h-9 rounded-2xl ${
-                isPink ? 'bg-[#FFA4A4]' : 'bg-[#D4F826]'
-              } text-black font-display font-black flex items-center justify-center text-base shadow-xs group-hover:scale-105 transition-transform`}
+                isOrange
+                  ? 'bg-[#FF6B00] text-white'
+                  : isPink
+                  ? 'bg-[#FFA4A4] text-black'
+                  : 'bg-[#D4F826] text-black'
+              } font-display font-black flex items-center justify-center text-base shadow-xs group-hover:scale-105 transition-transform`}
             >
               D.
             </div>
@@ -137,7 +142,9 @@ export function DesktopSidebar() {
                 onClick={() => setActiveTab(item.id)}
                 className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-xs transition-all cursor-pointer whitespace-nowrap ${
                   isActive
-                    ? isPink
+                    ? isOrange
+                      ? 'bg-[#FF6B00] text-white font-extrabold shadow-xs shadow-[#FF6B00]/25'
+                      : isPink
                       ? 'bg-[#FFA4A4] text-black font-extrabold shadow-xs'
                       : 'bg-[#D4F826] text-black font-extrabold shadow-xs'
                     : 'font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-100/80 dark:hover:bg-white/[0.05] hover:text-slate-900 dark:hover:text-white'
@@ -148,7 +155,9 @@ export function DesktopSidebar() {
                   strokeWidth={isActive ? 2.5 : 2}
                   className={
                     isActive
-                      ? 'text-black shrink-0'
+                      ? isOrange
+                        ? 'text-white shrink-0'
+                        : 'text-black shrink-0'
                       : 'text-slate-400 dark:text-slate-500 shrink-0'
                   }
                 />
@@ -168,7 +177,7 @@ export function DesktopSidebar() {
         >
           <div
             className={`relative w-9 h-9 rounded-full border ${
-              isPink ? 'border-[#FFA4A4]' : 'border-[#D4F826]'
+              isOrange ? 'border-[#FF6B00]' : isPink ? 'border-[#FFA4A4]' : 'border-[#D4F826]'
             } overflow-hidden bg-slate-900 text-white font-display font-bold flex items-center justify-center shrink-0 text-xs`}
           >
             {user?.photoURL ? (

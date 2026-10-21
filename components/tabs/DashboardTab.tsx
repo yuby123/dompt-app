@@ -425,6 +425,10 @@ export function DashboardTab() {
                 className={`h-full rounded-full transition-all duration-500 ${
                   dashboardSummary.dailyOverbudget
                     ? 'bg-[#FB7185]'
+                    : settings.accentColor === 'orange'
+                    ? 'bg-gradient-to-r from-[#FF6B00] via-[#F59E0B] to-[#EC4899]'
+                    : settings.accentColor === 'pink'
+                    ? 'bg-gradient-to-r from-[#FFA4A4] via-[#F43F5E] to-[#A855F7]'
                     : 'bg-gradient-to-r from-[#D4F826] via-[#8B5CF6] to-[#38BDF8]'
                 }`}
                 style={{ width: `${dailyCapacityPct}%` }}

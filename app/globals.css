@@ -34,13 +34,13 @@
 }
 
 /* Global Soft Coral Pink Accent Theme Overrides */
-[data-accent="pink"] .bg-\[\#D4F826\]:not([data-swatch="lime"]) {
+[data-accent="pink"] .bg-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="orange"]) {
   background-color: #FFA4A4 !important;
 }
-[data-accent="pink"] .hover\:bg-\[\#c6ec15\]:not([data-swatch="lime"]):hover,
-[data-accent="pink"] .hover\:bg-\[\#cbf11e\]:not([data-swatch="lime"]):hover,
-[data-accent="pink"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch="lime"]):hover,
-[data-accent="pink"] .hover\:bg-\[\#b8dc12\]:not([data-swatch="lime"]):hover {
+[data-accent="pink"] .hover\:bg-\[\#c6ec15\]:not([data-swatch="lime"]):not([data-swatch="orange"]):hover,
+[data-accent="pink"] .hover\:bg-\[\#cbf11e\]:not([data-swatch="lime"]):not([data-swatch="orange"]):hover,
+[data-accent="pink"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch="lime"]):not([data-swatch="orange"]):hover,
+[data-accent="pink"] .hover\:bg-\[\#b8dc12\]:not([data-swatch="lime"]):not([data-swatch="orange"]):hover {
   background-color: #ff8e8e !important;
 }
 [data-accent="pink"] .bg-\[\#EEF9B4\] {
@@ -96,7 +96,7 @@
 }
 
 /* Border & Ring overrides for Pink theme */
-[data-accent="pink"] .border-\[\#D4F826\]:not([data-swatch="lime"]),
+[data-accent="pink"] .border-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="orange"]),
 [data-accent="pink"] .hover\:border-\[\#D4F826\]:hover,
 [data-accent="pink"] .focus\:border-\[\#D4F826\]:focus,
 [data-accent="pink"] .dark .dark\:border-\[\#D4F826\],
@@ -118,4 +118,107 @@
 [data-accent="pink"] .focus\:ring-\[\#D4F826\]:focus {
   --tw-ring-color: #FFA4A4 !important;
 }
+
+/* Global Vibrant Sunset Orange Accent Theme Overrides */
+[data-accent="orange"] .bg-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="pink"]) {
+  background-color: #FF6B00 !important;
+}
+[data-accent="orange"] .hover\:bg-\[\#c6ec15\]:not([data-swatch="lime"]):not([data-swatch="pink"]):hover,
+[data-accent="orange"] .hover\:bg-\[\#cbf11e\]:not([data-swatch="lime"]):not([data-swatch="pink"]):hover,
+[data-accent="orange"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch="lime"]):not([data-swatch="pink"]):hover,
+[data-accent="orange"] .hover\:bg-\[\#c8ed1d\]:not([data-swatch="lime"]):not([data-swatch="pink"]):hover,
+[data-accent="orange"] .hover\:bg-\[\#b8dc12\]:not([data-swatch="lime"]):not([data-swatch="pink"]):hover {
+  background-color: #EA5E00 !important;
+}
+[data-accent="orange"] .bg-\[\#EEF9B4\] {
+  background-color: #FFEDD5 !important;
+}
+[data-accent="orange"] .bg-\[\#ECFCCB\],
+[data-accent="orange"] .hover\:bg-\[\#ECFCCB\]:hover {
+  background-color: #FFEDD5 !important;
+}
+[data-accent="orange"] .bg-\[\#F4FDE1\] {
+  background-color: #FFF7ED !important;
+}
+[data-accent="orange"] .bg-\[\#1C2417\] {
+  background-color: #2A160A !important;
+}
+[data-accent="orange"] .bg-\[\#D4F826\]\/30 {
+  background-color: rgba(255, 107, 0, 0.3) !important;
+}
+[data-accent="orange"] .bg-\[\#D4F826\]\/25,
+[data-accent="orange"] .dark .dark\:bg-\[\#D4F826\]\/25,
+.dark[data-accent="orange"] .dark\:bg-\[\#D4F826\]\/25 {
+  background-color: rgba(255, 107, 0, 0.25) !important;
+}
+[data-accent="orange"] .bg-\[\#D4F826\]\/20,
+[data-accent="orange"] .hover\:bg-\[\#D4F826\]\/20:hover,
+[data-accent="orange"] .dark .dark\:bg-\[\#EEF9B4\]\/20,
+.dark[data-accent="orange"] .dark\:bg-\[\#EEF9B4\]\/20 {
+  background-color: rgba(255, 107, 0, 0.2) !important;
+}
+[data-accent="orange"] .bg-\[\#D4F826\]\/15,
+[data-accent="orange"] .dark .dark\:hover\:bg-\[\#D4F826\]\/15:hover,
+.dark[data-accent="orange"] .dark\:hover\:bg-\[\#D4F826\]\/15:hover {
+  background-color: rgba(255, 107, 0, 0.15) !important;
+}
+[data-accent="orange"] .bg-\[\#D4F826\]\/10,
+[data-accent="orange"] .dark .dark\:bg-\[\#D4F826\]\/10,
+.dark[data-accent="orange"] .dark\:bg-\[\#D4F826\]\/10 {
+  background-color: rgba(255, 107, 0, 0.12) !important;
+}
+
+/* Text color overrides for Orange theme */
+[data-accent="orange"] .text-\[\#D4F826\],
+[data-accent="orange"] .dark .dark\:text-\[\#D4F826\],
+.dark[data-accent="orange"] .dark\:text-\[\#D4F826\] {
+  color: #FF7A1A !important;
+}
+[data-accent="orange"] .text-\[\#84CC16\] {
+  color: #EA580C !important;
+}
+[data-accent="orange"] .text-\[\#65A30D\],
+[data-accent="orange"] .text-\[\#658500\] {
+  color: #C2410C !important;
+}
+
+/* Border & Ring overrides for Orange theme */
+[data-accent="orange"] .border-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="pink"]),
+[data-accent="orange"] .hover\:border-\[\#D4F826\]:hover,
+[data-accent="orange"] .focus\:border-\[\#D4F826\]:focus,
+[data-accent="orange"] .dark .dark\:border-\[\#D4F826\],
+.dark[data-accent="orange"] .dark\:border-\[\#D4F826\] {
+  border-color: #FF6B00 !important;
+}
+[data-accent="orange"] .border-\[\#D4F826\]\/40,
+[data-accent="orange"] .hover\:border-\[\#D4F826\]\/60:hover,
+[data-accent="orange"] .hover\:border-\[\#D4F826\]\/50:hover {
+  border-color: rgba(255, 107, 0, 0.45) !important;
+}
+[data-accent="orange"] .border-\[\#84CC16\] {
+  border-color: #EA580C !important;
+}
+[data-accent="orange"] .border-\[\#2D3F1D\] {
+  border-color: #431407 !important;
+}
+[data-accent="orange"] .ring-\[\#D4F826\],
+[data-accent="orange"] .focus\:ring-\[\#D4F826\]:focus {
+  --tw-ring-color: #FF6B00 !important;
+}
+
+/* Button text & icon contrast for Orange theme */
+[data-accent="orange"] button.bg-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="pink"]),
+[data-accent="orange"] a.bg-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="pink"]) {
+  color: #ffffff !important;
+}
+[data-accent="orange"] button.bg-\[\#D4F826\] svg,
+[data-accent="orange"] a.bg-\[\#D4F826\] svg {
+  color: #ffffff !important;
+}
+
+[data-accent="orange"] ::selection {
+  background-color: #FF6B00 !important;
+  color: #ffffff !important;
+}
+
 

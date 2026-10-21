@@ -62,12 +62,27 @@ export function SettingsTab() {
   const themeChoice = settings.themeMode || 'light';
   const accentChoice = settings.accentColor || 'lime';
   const isPink = accentChoice === 'pink';
-  const accentBg = isPink ? 'bg-[#FFA4A4]' : 'bg-[#D4F826]';
-  const accentBtn = isPink
-    ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e]'
-    : 'bg-[#D4F826] hover:bg-[#c6ec15]';
-  const accentBorder = isPink ? 'border-[#FFA4A4]' : 'border-[#D4F826]';
-  const accentFocusRing = isPink ? 'focus:ring-[#FFA4A4]' : 'focus:ring-[#D4F826]';
+  const isOrange = accentChoice === 'orange';
+  const accentBg = isOrange
+    ? 'bg-[#FF6B00] text-white'
+    : isPink
+    ? 'bg-[#FFA4A4] text-black'
+    : 'bg-[#D4F826] text-black';
+  const accentBtn = isOrange
+    ? 'bg-[#FF6B00] hover:bg-[#ea5e00] text-white'
+    : isPink
+    ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] text-black'
+    : 'bg-[#D4F826] hover:bg-[#c6ec15] text-black';
+  const accentBorder = isOrange
+    ? 'border-[#FF6B00]'
+    : isPink
+    ? 'border-[#FFA4A4]'
+    : 'border-[#D4F826]';
+  const accentFocusRing = isOrange
+    ? 'focus:ring-[#FF6B00]'
+    : isPink
+    ? 'focus:ring-[#FFA4A4]'
+    : 'focus:ring-[#D4F826]';
 
   // PIN states
   const [isSettingPin, setIsSettingPin] = useState(false);
@@ -279,7 +294,7 @@ export function SettingsTab() {
           <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Lock size={16} className={isPink ? 'text-[#F43F5E]' : 'text-[#84CC16]'} />
+                <Lock size={16} className={isOrange ? 'text-[#EA580C]' : isPink ? 'text-[#F43F5E]' : 'text-[#84CC16]'} />
                 <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
                   Keamanan Aplikasi
                 </h3>
@@ -446,7 +461,9 @@ export function SettingsTab() {
                   onClick={() => setThemeMode('light')}
                   className={`py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer border ${
                     themeChoice === 'light'
-                      ? isPink
+                      ? isOrange
+                        ? 'bg-[#FFEDD5] text-orange-950 border-[#FF6B00] shadow-xs'
+                        : isPink
                         ? 'bg-[#FFE4E8] text-black border-[#F43F5E] shadow-xs'
                         : 'bg-[#EEF9B4] text-black border-[#84CC16] shadow-xs'
                       : 'bg-gray-50 dark:bg-gray-800/60 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700/80 hover:bg-gray-100 dark:hover:bg-gray-800'
@@ -456,7 +473,9 @@ export function SettingsTab() {
                     size={15}
                     className={
                       themeChoice === 'light'
-                        ? isPink
+                        ? isOrange
+                          ? 'text-[#EA580C]'
+                          : isPink
                           ? 'text-[#E11D48]'
                           : 'text-[#65A30D]'
                         : 'text-gray-400'
@@ -469,7 +488,9 @@ export function SettingsTab() {
                   onClick={() => setThemeMode('dark')}
                   className={`py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer border ${
                     themeChoice === 'dark'
-                      ? isPink
+                      ? isOrange
+                        ? 'bg-gray-900 text-white border-gray-900 dark:bg-[#FF6B00]/25 dark:text-[#FF8A3D] dark:border-[#FF6B00] shadow-xs'
+                        : isPink
                         ? 'bg-gray-900 text-white border-gray-900 dark:bg-[#FFA4A4]/20 dark:text-[#FFA4A4] dark:border-[#FFA4A4] shadow-xs'
                         : 'bg-gray-900 text-white border-gray-900 dark:bg-[#EEF9B4]/20 dark:text-[#D4F826] dark:border-[#D4F826] shadow-xs'
                       : 'bg-gray-50 dark:bg-gray-800/60 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700/80 hover:bg-gray-100 dark:hover:bg-gray-800'
@@ -512,6 +533,17 @@ export function SettingsTab() {
                         : 'border-transparent'
                     }`}
                     title="Soft Coral Pink"
+                  />
+                  <button
+                    type="button"
+                    data-swatch="orange"
+                    onClick={() => setAccentColor('orange')}
+                    className={`w-8 h-8 rounded-full bg-[#FF6B00] border-2 cursor-pointer transition-transform ${
+                      accentChoice === 'orange'
+                        ? 'scale-110 border-black dark:border-white shadow-xs'
+                        : 'border-transparent'
+                    }`}
+                    title="Sunset Orange"
                   />
                 </div>
               </div>

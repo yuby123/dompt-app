@@ -46,9 +46,22 @@ export function DebtTab() {
 
   const hide = settings.hideBalance;
   const isPink = settings.accentColor === 'pink';
-  const brandAccentBg = isPink ? 'bg-[#FFA4A4] text-black hover:bg-[#ff8e8e]' : 'bg-[#D4F826] text-black hover:bg-[#c6ec15]';
-  const brandAccentText = isPink ? 'text-[#F43F5E]' : 'text-lime-600 dark:text-[#D4F826]';
-  const brandAccentBorder = isPink ? 'border-[#FFA4A4]' : 'border-[#D4F826]';
+  const isOrange = settings.accentColor === 'orange';
+  const brandAccentBg = isOrange
+    ? 'bg-[#FF6B00] text-white hover:bg-[#ea5e00]'
+    : isPink
+    ? 'bg-[#FFA4A4] text-black hover:bg-[#ff8e8e]'
+    : 'bg-[#D4F826] text-black hover:bg-[#c6ec15]';
+  const brandAccentText = isOrange
+    ? 'text-[#EA580C] dark:text-[#FF8A3D]'
+    : isPink
+    ? 'text-[#F43F5E]'
+    : 'text-lime-600 dark:text-[#D4F826]';
+  const brandAccentBorder = isOrange
+    ? 'border-[#FF6B00]'
+    : isPink
+    ? 'border-[#FFA4A4]'
+    : 'border-[#D4F826]';
 
   // Filters & State
   const [activeTypeFilter, setActiveTypeFilter] = useState<'all' | 'payable' | 'receivable'>('all');

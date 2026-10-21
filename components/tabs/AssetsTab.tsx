@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import {
   Plus,
   Landmark,
@@ -15,45 +15,23 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
 
-type AssetItem = { id: string; name: string; amount: number };
-
 export function AssetsTab() {
-  const { walletsWithBalance, totalBalance, dashboardSummary, debts, settings, addToast, user, dataResetVersion } = useApp();
+  const {
+    walletsWithBalance,
+    totalBalance,
+    dashboardSummary,
+    debts,
+    settings,
+    liquidAssets,
+    fixedAssets,
+    addAsset,
+    deleteAsset,
+  } = useApp();
 
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [assetType, setAssetType] = useState<'liquid' | 'fixed'>('liquid');
   const [assetName, setAssetName] = useState('');
   const [assetAmount, setAssetAmount] = useState('');
-
-  const storagePrefix = user?.uid ? `_${user.uid}` : '';
-  const liquidKey = `budggt_assets_liquid${storagePrefix}`;
-  const fixedKey = `budggt_assets_fixed${storagePrefix}`;
-  const scopeKey = `${liquidKey}_${dataResetVersion}`;
-
-  const [liquidState, setLiquidState] = useState<{ scope: string; items: AssetItem[] } | null>(null);
-  const [fixedState, setFixedState] = useState<{ scope: string; items: AssetItem[] } | null>(null);
-
-  const liquidAssets = useMemo<AssetItem[]>(() => {
-    if (liquidState?.scope === scopeKey) return liquidState.items;
-    if (typeof window === 'undefined') return [];
-    try {
-      const rawL = localStorage.getItem(liquidKey);
-      return rawL ? JSON.parse(rawL) : [];
-    } catch {
-      return [];
-    }
-  }, [liquidState, scopeKey, liquidKey]);
-
-  const fixedAssets = useMemo<AssetItem[]>(() => {
-    if (fixedState?.scope === scopeKey) return fixedState.items;
-    if (typeof window === 'undefined') return [];
-    try {
-      const rawF = localStorage.getItem(fixedKey);
-      return rawF ? JSON.parse(rawF) : [];
-    } catch {
-      return [];
-    }
-  }, [fixedState, scopeKey, fixedKey]);
 
   const hide = settings.hideBalance;
 
@@ -106,47 +84,18 @@ export function AssetsTab() {
     const amountVal = parseNominalInput(assetAmount);
     if (!assetName.trim() || amountVal <= 0) return;
 
-    const newAsset = {
-      id: `asset-${Date.now()}`,
+    addAsset(assetType, {
       name: assetName.trim(),
       amount: amountVal,
-    };
+    });
 
-    if (assetType === 'liquid') {
-      const updated = [...liquidAssets, newAsset];
-      setLiquidState({ scope: scopeKey, items: updated });
-      try {
-        localStorage.setItem(liquidKey, JSON.stringify(updated));
-      } catch {}
-    } else {
-      const updated = [...fixedAssets, newAsset];
-      setFixedState({ scope: scopeKey, items: updated });
-      try {
-        localStorage.setItem(fixedKey, JSON.stringify(updated));
-      } catch {}
-    }
-
-    addToast('Aset Ditambahkan', `${assetName} berhasil dicatat.`);
     setIsAddModalOpen(false);
     setAssetName('');
     setAssetAmount('');
   };
 
   const handleDeleteAsset = (type: 'liquid' | 'fixed', id: string) => {
-    if (type === 'liquid') {
-      const updated = liquidAssets.filter((a) => a.id !== id);
-      setLiquidState({ scope: scopeKey, items: updated });
-      try {
-        localStorage.setItem(liquidKey, JSON.stringify(updated));
-      } catch {}
-    } else {
-      const updated = fixedAssets.filter((a) => a.id !== id);
-      setFixedState({ scope: scopeKey, items: updated });
-      try {
-        localStorage.setItem(fixedKey, JSON.stringify(updated));
-      } catch {}
-    }
-    addToast('Aset Dihapus', 'Catatan aset telah dihapus.', 'info');
+    deleteAsset(type, id);
   };
 
   return (

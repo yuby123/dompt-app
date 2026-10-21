@@ -7,6 +7,7 @@ import {
   deleteDoc,
   deleteField,
   query,
+  onSnapshot,
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
 import { db, handleFirestoreError, OperationType } from './firebase';
@@ -789,9 +790,48 @@ export async function saveUserExtendedSyncData(
     }
     await setDoc(docRef, payload, { merge: true });
   } catch (error) {
+    const existingRes = await cloudRestApi('get', path);
+    if (existingRes?.ok && !existingRes.exists) {
+      await saveUserBudgetConfig(userId, {
+        ...EMPTY_BUDGET_CONFIG,
+        ...partial,
+      });
+      return;
+    }
     const setRes = await cloudRestApi('set', path, payload, true);
     if (setRes?.ok) return;
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export function subscribeToUserBudgetConfig(
+  userId: string,
+  onRemoteUpdate: (updatedAt?: string, deletedIds?: string[]) => void
+): () => void {
+  if (!userId || typeof window === 'undefined') return () => {};
+  const path = `users/${userId}/budgetConfig/main`;
+  try {
+    const docRef = doc(db, 'users', userId, 'budgetConfig', 'main');
+    return onSnapshot(
+      docRef,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        const remoteDeleted = data?.deletedIdsJson
+          ? safeJsonParse<string[]>(data.deletedIdsJson, [])
+          : undefined;
+        onRemoteUpdate(data?.updatedAt, remoteDeleted);
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, OperationType.GET, path);
+        } catch {
+          // Handled by background polling fallback
+        }
+      }
+    );
+  } catch {
+    return () => {};
   }
 }
 

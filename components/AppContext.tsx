@@ -105,6 +105,7 @@ import {
   fetchUserBudgetConfig,
   saveUserBudgetConfig,
   saveUserExtendedSyncData,
+  subscribeToUserBudgetConfig,
   fetchUserDebts,
   saveUserDebt,
   deleteUserDebt,
@@ -382,6 +383,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const isCloudSyncingRef = useRef(false);
   const lastLocalMutationRef = useRef<number>(0);
+  const lastSeenCloudUpdatedAtRef = useRef<string>('');
 
   const markLocalMutation = () => {
     lastLocalMutationRef.current = Date.now();
@@ -408,6 +410,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deletedIds?: string[];
     }
   ) => {
+    const now = new Date().toISOString();
+    lastLocalMutationRef.current = Date.now();
+    lastSeenCloudUpdatedAtRef.current = now;
     const baseCfg = overrides?.budgetConfig ?? budgetConfig;
     const fullCfg: BudgetConfig = {
       ...baseCfg,
@@ -418,8 +423,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       categoryBudgets: overrides?.categoryBudgets ?? budgets,
       settings: overrides?.settings ?? settings,
       deletedIds: overrides?.deletedIds ?? deletedIds,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
     };
+    setBudgetConfig(fullCfg);
     saveStoredBudgetConfig(fullCfg, uid);
     saveUserBudgetConfig(uid, fullCfg).catch((err) =>
       console.warn('Error saving extended budget config to Firestore:', err)
@@ -430,8 +436,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const recordDeletedId = (id: string, currentDeleted = deletedIds): string[] => {
-    const next = Array.from(new Set([...currentDeleted, id])).slice(-400);
+  const recordDeletedId = (ids: string | (string | undefined)[], currentDeleted = deletedIds): string[] => {
+    const idList = (Array.isArray(ids) ? ids : [ids]).filter((x): x is string => Boolean(x));
+    const next = Array.from(new Set([...currentDeleted, ...idList])).slice(-400);
     setDeletedIds(next);
     if (localScopeUid) {
       saveStoredDeletedIds(next, localScopeUid);
@@ -447,7 +454,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     budget: BudgetConfig,
     activeWallets: Wallet[],
     deletedSet: Set<string>,
-    mirrorUid?: string
+    mirrorUid?: string,
+    isBackgroundSync = false
   ): Promise<RecurringItem[]> => {
     const cloudIds = new Set(cloudSubs.map((s) => s.id));
     const embeddedSubs = Array.isArray(budget.subscriptions) ? budget.subscriptions : [];
@@ -456,6 +464,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const mergedMap = new Map<string, RecurringItem>();
     const addOrUpdateRec = (item: RecurringItem) => {
       if (!item?.id || deletedSet.has(item.id)) return;
+      if (item.subcategoryId && deletedSet.has(item.subcategoryId)) return;
       const lowerName = item.name.toLowerCase().trim();
       const existingById = mergedMap.get(item.id);
       if (existingById) {
@@ -471,6 +480,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
       if (!existingByName) {
         mergedMap.set(item.id, item);
+      } else {
+        const existingTime = existingByName.updatedAt ? new Date(existingByName.updatedAt).getTime() : 0;
+        const itemTime = item.updatedAt ? new Date(item.updatedAt).getTime() : 0;
+        if (itemTime > existingTime) {
+          mergedMap.delete(existingByName.id);
+          mergedMap.set(item.id, item);
+        }
       }
     };
 
@@ -478,7 +494,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     for (const item of cloudSubs) addOrUpdateRec(item);
     for (const localItem of localSubs) addOrUpdateRec(localItem);
 
-    const subcats = (budget.subcategories || []).filter((s) => !deletedSet.has(s.id));
+    const subcats = (budget.subcategories || []).filter(
+      (s) => !deletedSet.has(s.id) && !(s.subscriptionId && deletedSet.has(s.subscriptionId))
+    );
 
     // 2. Filter out orphaned expense subscriptions whose subcategory was deleted from budgetConfig
     const validSubs: RecurringItem[] = [];
@@ -548,7 +566,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (!isSubscriptionSub) continue;
 
       const targetSubId = sub.subscriptionId || `sub-rec-${sub.id}`;
-      if (deletedSet.has(targetSubId)) continue;
+      if (deletedSet.has(targetSubId) || deletedSet.has(sub.id)) continue;
 
       const existsInValid = validSubs.some(
         (rec) =>
@@ -591,17 +609,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // 4. Persist reconciled subscriptions to Cloud Firestore & localStorage
+    // 4. Persist reconciled subscriptions to localStorage (and to Cloud only when not in a passive background pull)
     saveStoredSubscriptions(validSubs, uid);
     if (mirrorUid) {
       saveStoredSubscriptions(validSubs, mirrorUid);
     }
-    for (const item of validSubs) {
-      if (!cloudIds.has(item.id)) {
-        saveUserSubscription(uid, item).catch(() => {});
-      }
-      if (mirrorUid) {
-        saveUserSubscription(mirrorUid, item).catch(() => {});
+    if (!isBackgroundSync) {
+      for (const item of validSubs) {
+        if (!cloudIds.has(item.id)) {
+          saveUserSubscription(uid, item).catch(() => {});
+        }
+        if (mirrorUid) {
+          saveUserSubscription(mirrorUid, item).catch(() => {});
+        }
       }
     }
 
@@ -614,8 +634,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     email: string,
     displayName: string,
     isNewRegistration = false,
-    mirrorUid?: string
+    mirrorUid?: string,
+    isBackgroundSync = false
   ) => {
+    const syncStartTime = Date.now();
     const legacyUid = email ? `user_${email.replace(/[^a-z0-9]/g, '_')}` : undefined;
 
     // Fetch primary UID collections independently so a single network hiccup never fails the others
@@ -661,6 +683,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ]);
     }
 
+    // Abort applying fetched state if the user performed a local write while this network fetch was in flight
+    if (lastLocalMutationRef.current >= syncStartTime) {
+      return;
+    }
+
+    // Pick the newest Cloud BudgetConfig snapshot between primaryUid and mirrorUid
+    const effectiveCloudBudget = (() => {
+      if (loadedBudget && mirrorBudget) {
+        return (loadedBudget.updatedAt || '') >= (mirrorBudget.updatedAt || '')
+          ? loadedBudget
+          : mirrorBudget;
+      }
+      return loadedBudget || mirrorBudget || null;
+    })();
+
+    const cloudUpdatedAt = effectiveCloudBudget?.updatedAt || '';
+    if (cloudUpdatedAt) {
+      lastSeenCloudUpdatedAtRef.current = cloudUpdatedAt;
+    }
+
+    const localBudget = isNewRegistration ? EMPTY_BUDGET_CONFIG : loadStoredBudgetConfig(primaryUid);
+    const localUpdatedAt = localBudget?.updatedAt || '';
+
+    // Check if THIS browser tab performed a local write very recently (< 8 seconds ago)
+    const hasRecentLocalWrite =
+      !isNewRegistration &&
+      !isBackgroundSync &&
+      lastLocalMutationRef.current > 0 &&
+      Date.now() - lastLocalMutationRef.current < 8000;
+
+    // Cloud is authoritative whenever the user has an existing Cloud snapshot and this tab hasn't just mutated data
+    const cloudHasSnapshot = Boolean(
+      effectiveCloudBudget ||
+        loadedTx.length > 0 ||
+        loadedWallets.length > 0 ||
+        loadedGoals.length > 0 ||
+        loadedDebts.length > 0 ||
+        loadedSubs.length > 0
+    );
+    const preferCloudAuthority = Boolean(
+      isBackgroundSync ||
+        (cloudHasSnapshot &&
+          (!hasRecentLocalWrite ||
+            !localUpdatedAt ||
+            (cloudUpdatedAt && cloudUpdatedAt >= localUpdatedAt)))
+    );
+
+    // Helper: only allow a local-only item (missing from Cloud) to survive & upload if it was literally just created on THIS device (< 8s ago)
+    // Otherwise, if Cloud already has a snapshot and an item is missing from Cloud, it was deleted on another device (e.g. HP) and must NOT resurrect.
+    const canKeepLocalOnlyItem = (itemUpdatedAt?: string, itemCreatedAt?: string): boolean => {
+      if (!cloudHasSnapshot) return true;
+      if (isBackgroundSync || !hasRecentLocalWrite) return false;
+      const itemTs = itemUpdatedAt || itemCreatedAt || '';
+      if (!itemTs) return false;
+      const ageMs = Date.now() - new Date(itemTs).getTime();
+      return ageMs >= 0 && ageMs < 8000;
+    };
+
     // 1. Deleted IDs reconciliation
     const localDeleted = loadStoredDeletedIds(primaryUid);
     const mirrorDeleted = mirrorUid ? loadStoredDeletedIds(mirrorUid) : [];
@@ -676,7 +756,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredDeletedIds(combinedDeleted, primaryUid);
     if (mirrorUid) saveStoredDeletedIds(combinedDeleted, mirrorUid);
 
-    // 2. Transactions bi-directional merge (by id, newest updatedAt wins, upload any local-only items)
+    // 2. Transactions sync (strictly respecting Cloud deletions & Cloud authority on open tabs)
     const cloudTxMap = new Map<string, Transaction>();
     for (const t of [...(mirrorTx || []), ...(loadedTx || [])]) {
       if (!t?.id || deletedSet.has(t.id)) continue;
@@ -698,24 +778,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (/^tx-\d+[a-z]?$/.test(lTx.id)) continue;
       const cTx = finalTxMap.get(lTx.id);
       if (!cTx) {
-        finalTxMap.set(lTx.id, lTx);
-        txToUpload.push(lTx);
-      } else if ((lTx.updatedAt || '') > (cTx.updatedAt || '')) {
+        if (canKeepLocalOnlyItem(lTx.updatedAt, lTx.createdAt)) {
+          finalTxMap.set(lTx.id, lTx);
+          txToUpload.push(lTx);
+        }
+      } else if (hasRecentLocalWrite && (lTx.updatedAt || '') > (cTx.updatedAt || '')) {
         finalTxMap.set(lTx.id, lTx);
         txToUpload.push(lTx);
       }
     }
 
-    const finalTx = Array.from(finalTxMap.values());
+    const finalTx = Array.from(finalTxMap.values()).sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    );
     setTransactions(finalTx);
     saveStoredTransactions(finalTx, primaryUid);
     if (mirrorUid) saveStoredTransactions(finalTx, mirrorUid);
-    for (const t of txToUpload) {
-      saveUserTransaction(primaryUid, t).catch(() => {});
-      if (mirrorUid) saveUserTransaction(mirrorUid, t).catch(() => {});
+    if (!isBackgroundSync) {
+      for (const t of txToUpload) {
+        saveUserTransaction(primaryUid, t).catch(() => {});
+        if (mirrorUid) saveUserTransaction(mirrorUid, t).catch(() => {});
+      }
     }
 
-    // 3. Wallets bi-directional merge & deduplication of untouched Rp 0 defaults
+    // 3. Wallets sync & deduplication of untouched Rp 0 defaults
     const demoWalletIds = new Set([
       'wallet-bca',
       'wallet-mandiri',
@@ -731,8 +817,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const existing = cloudWalletMap.get(w.id);
       if (
         !existing ||
-        (w.initialBalance !== 0 && existing.initialBalance === 0) ||
-        (w.updatedAt || '') >= (existing.updatedAt || '')
+        (w.updatedAt || '') > (existing.updatedAt || '') ||
+        ((w.updatedAt || '') === (existing.updatedAt || '') &&
+          w.initialBalance !== 0 &&
+          existing.initialBalance === 0)
       ) {
         cloudWalletMap.set(w.id, w);
       }
@@ -747,6 +835,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (demoWalletIds.has(lW.id)) continue;
       const cW = finalWalletMap.get(lW.id);
       if (!cW) {
+        if ((cloudWalletMap.size > 0 || cloudHasSnapshot) && !canKeepLocalOnlyItem(lW.updatedAt, lW.createdAt)) {
+          continue;
+        }
         const isUntouchedDefault =
           lW.initialBalance === 0 &&
           (lW.name === 'Dompet Tunai' || lW.name === 'Rekening Bank' || lW.name === 'Dompet Utama');
@@ -758,10 +849,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         finalWalletMap.set(lW.id, lW);
         walletsToUpload.push(lW);
-      } else if (
-        (lW.initialBalance !== 0 && cW.initialBalance === 0) ||
-        (lW.updatedAt || '') > (cW.updatedAt || '')
-      ) {
+      } else if (hasRecentLocalWrite && (lW.updatedAt || '') > (cW.updatedAt || '')) {
         finalWalletMap.set(lW.id, lW);
         walletsToUpload.push(lW);
       }
@@ -784,9 +872,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           (other) =>
             other.id !== w.id &&
             other.name.toLowerCase().trim() === w.name.toLowerCase().trim() &&
-            (other.initialBalance !== 0 || txWalletIds.has(other.id) || other.id === 'wallet-cash-main' || other.id === 'wallet-bank-main')
+            (other.initialBalance !== 0 ||
+              txWalletIds.has(other.id) ||
+              other.id === 'wallet-cash-main' ||
+              other.id === 'wallet-bank-main')
         );
-        if (isUntouchedDefault && hasOtherWithSameName && w.id !== 'wallet-cash-main' && w.id !== 'wallet-bank-main') {
+        if (
+          isUntouchedDefault &&
+          hasOtherWithSameName &&
+          w.id !== 'wallet-cash-main' &&
+          w.id !== 'wallet-bank-main'
+        ) {
           duplicateIdsToDelete.push(w.id);
         } else {
           deduplicated.push(w);
@@ -795,20 +891,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (deduplicated.length > 0) {
         finalWallets = deduplicated;
       }
-      for (const dupId of duplicateIdsToDelete) {
-        deleteUserWallet(primaryUid, dupId).catch(() => {});
+      if (!isBackgroundSync) {
+        for (const dupId of duplicateIdsToDelete) {
+          deleteUserWallet(primaryUid, dupId).catch(() => {});
+        }
       }
     }
 
     setWallets(finalWallets);
     saveStoredWallets(finalWallets, primaryUid);
     if (mirrorUid) saveStoredWallets(finalWallets, mirrorUid);
-    for (const w of walletsToUpload) {
-      saveUserWallet(primaryUid, w).catch(() => {});
-      if (mirrorUid) saveUserWallet(mirrorUid, w).catch(() => {});
+    if (!isBackgroundSync) {
+      for (const w of walletsToUpload) {
+        saveUserWallet(primaryUid, w).catch(() => {});
+        if (mirrorUid) saveUserWallet(mirrorUid, w).catch(() => {});
+      }
     }
 
-    // 4. Goals bi-directional merge
+    // 4. Goals sync
     const cloudGoalMap = new Map<string, Goal>();
     for (const g of [...(mirrorGoals || []), ...(loadedGoals || [])]) {
       if (!g?.id || deletedSet.has(g.id)) continue;
@@ -822,7 +922,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     for (const lG of localGoals) {
       if (!lG?.id || deletedSet.has(lG.id) || /^goal-[123]$/.test(lG.id)) continue;
       const cG = cloudGoalMap.get(lG.id);
-      if (!cG || (lG.updatedAt || '') > (cG.updatedAt || '')) {
+      if (!cG) {
+        if (canKeepLocalOnlyItem(lG.updatedAt, lG.createdAt)) {
+          cloudGoalMap.set(lG.id, lG);
+          goalsToUpload.push(lG);
+        }
+      } else if (hasRecentLocalWrite && (lG.updatedAt || '') > (cG.updatedAt || '')) {
         cloudGoalMap.set(lG.id, lG);
         goalsToUpload.push(lG);
       }
@@ -831,12 +936,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setGoals(finalGoals);
     saveStoredGoals(finalGoals, primaryUid);
     if (mirrorUid) saveStoredGoals(finalGoals, mirrorUid);
-    for (const g of goalsToUpload) {
-      saveUserGoal(primaryUid, g).catch(() => {});
-      if (mirrorUid) saveUserGoal(mirrorUid, g).catch(() => {});
+    if (!isBackgroundSync) {
+      for (const g of goalsToUpload) {
+        saveUserGoal(primaryUid, g).catch(() => {});
+        if (mirrorUid) saveUserGoal(mirrorUid, g).catch(() => {});
+      }
     }
 
-    // 5. Debts bi-directional merge
+    // 5. Debts sync
     const cloudDebtMap = new Map<string, Debt>();
     for (const d of [...(mirrorDebts || []), ...(loadedDebts || [])]) {
       if (!d?.id || deletedSet.has(d.id)) continue;
@@ -850,10 +957,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     for (const lD of localDebts) {
       if (!lD?.id || deletedSet.has(lD.id)) continue;
       const cD = cloudDebtMap.get(lD.id);
-      if (
-        !cD ||
-        (lD.updatedAt || '') > (cD.updatedAt || '') ||
-        (lD.payments?.length || 0) > (cD.payments?.length || 0)
+      if (!cD) {
+        if (canKeepLocalOnlyItem(lD.updatedAt, lD.createdAt)) {
+          cloudDebtMap.set(lD.id, lD);
+          debtsToUpload.push(lD);
+        }
+      } else if (
+        hasRecentLocalWrite &&
+        ((lD.updatedAt || '') > (cD.updatedAt || '') ||
+          (lD.payments?.length || 0) > (cD.payments?.length || 0))
       ) {
         cloudDebtMap.set(lD.id, lD);
         debtsToUpload.push(lD);
@@ -863,88 +975,69 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setDebts(finalDebts);
     saveStoredDebts(finalDebts, primaryUid);
     if (mirrorUid) saveStoredDebts(finalDebts, mirrorUid);
-    for (const d of debtsToUpload) {
-      saveUserDebt(primaryUid, d).catch(() => {});
-      if (mirrorUid) saveUserDebt(mirrorUid, d).catch(() => {});
+    if (!isBackgroundSync) {
+      for (const d of debtsToUpload) {
+        saveUserDebt(primaryUid, d).catch(() => {});
+        if (mirrorUid) saveUserDebt(mirrorUid, d).catch(() => {});
+      }
     }
 
-    // 6. BudgetConfig & Subcategories bi-directional merge
-    const localBudget = isNewRegistration ? EMPTY_BUDGET_CONFIG : loadStoredBudgetConfig(primaryUid);
-    const effectiveCloudBudget =
-      loadedBudget &&
-      (loadedBudget.estimatedIncome > 0 ||
-        (loadedBudget.subcategories?.length || 0) > 0 ||
-        (loadedBudget.liquidAssets?.length || 0) > 0 ||
-        (loadedBudget.fixedAssets?.length || 0) > 0 ||
-        (loadedBudget.investments?.length || 0) > 0)
-        ? loadedBudget
-        : mirrorBudget || loadedBudget;
-
-    const cloudBudgetHasData = Boolean(
-      effectiveCloudBudget &&
-        (effectiveCloudBudget.estimatedIncome > 0 ||
-          (effectiveCloudBudget.subcategories?.length || 0) > 0)
-    );
-    const localBudgetHasData = Boolean(
-      !isNewRegistration &&
-        (localBudget.estimatedIncome > 0 || (localBudget.subcategories?.length || 0) > 0)
-    );
-
-    const baseBudgetSource = cloudBudgetHasData
-      ? effectiveCloudBudget!
-      : localBudgetHasData
-      ? localBudget
-      : effectiveCloudBudget || EMPTY_BUDGET_CONFIG;
-
-    // Merge subcategories (preferring cloud, adding any non-deleted local subcategories if local is newer)
-    const subcatMap = new Map<string, BudgetConfig['subcategories'][number]>();
+    // 6. BudgetConfig & Subcategories sync (Cloud-authoritative when Cloud has snapshot and no recent local write)
     const localIsNewer =
       !isNewRegistration &&
-      Boolean(
-        localBudget.updatedAt &&
-          (!effectiveCloudBudget?.updatedAt ||
-            localBudget.updatedAt > effectiveCloudBudget.updatedAt)
-      );
+      !isBackgroundSync &&
+      hasRecentLocalWrite &&
+      Boolean(localUpdatedAt && (!cloudUpdatedAt || localUpdatedAt > cloudUpdatedAt));
 
-    const firstSubs = localIsNewer
-      ? effectiveCloudBudget?.subcategories || []
-      : localBudget.subcategories || [];
-    const secondSubs = localIsNewer
-      ? localBudget.subcategories || []
-      : effectiveCloudBudget?.subcategories || [];
+    const authoritativeBudgetSource =
+      !localIsNewer && effectiveCloudBudget
+        ? effectiveCloudBudget
+        : localBudget.estimatedIncome > 0 || (localBudget.subcategories?.length || 0) > 0
+        ? localBudget
+        : effectiveCloudBudget || EMPTY_BUDGET_CONFIG;
 
-    for (const s of [...firstSubs, ...secondSubs]) {
+    // Filter subcategories strictly from the authoritative source so deleted subcategories never resurrect from a stale device
+    const subcatMap = new Map<string, BudgetConfig['subcategories'][number]>();
+    const sourceSubcats = authoritativeBudgetSource.subcategories || [];
+    for (const s of sourceSubcats) {
       if (!s?.id || deletedSet.has(s.id)) continue;
-      // Skip default guest template subcategories (sub-1..sub-13)
+      if (s.subscriptionId && deletedSet.has(s.subscriptionId)) continue;
       if (/^sub-\d+$/.test(s.id) && Number(s.id.replace('sub-', '')) <= 20) continue;
       subcatMap.set(s.id, s);
     }
 
-    // 7. Liquid Assets, Fixed Assets, Investments, Category Budgets, and Settings merge
-    const mergeById = <T extends { id: string }>(cloudArr?: T[], localArr?: T[]): T[] => {
+    // 7. Liquid Assets, Fixed Assets, Investments, Category Budgets, and Settings sync
+    const pickAuthoritativeArray = <T extends { id: string }>(
+      cloudArr?: T[],
+      localArr?: T[]
+    ): T[] => {
+      // If Cloud has explicitly stored this array and Cloud is authoritative, use Cloud's exact array (no stale union!)
+      if (!localIsNewer && cloudArr !== undefined) {
+        return cloudArr.filter((item) => item?.id && !deletedSet.has(item.id));
+      }
       const map = new Map<string, T>();
-      for (const item of [...(localArr || []), ...(cloudArr || [])]) {
+      for (const item of [...(cloudArr || []), ...(localArr || [])]) {
         if (!item?.id || deletedSet.has(item.id)) continue;
         map.set(item.id, item);
       }
       return Array.from(map.values());
     };
 
-    const finalLiquidAssets = mergeById<AssetItem>(
+    const finalLiquidAssets = pickAuthoritativeArray<AssetItem>(
       effectiveCloudBudget?.liquidAssets ?? mirrorBudget?.liquidAssets,
       isNewRegistration ? [] : loadStoredAssets('liquid', primaryUid)
     );
-    const finalFixedAssets = mergeById<AssetItem>(
+    const finalFixedAssets = pickAuthoritativeArray<AssetItem>(
       effectiveCloudBudget?.fixedAssets ?? mirrorBudget?.fixedAssets,
       isNewRegistration ? [] : loadStoredAssets('fixed', primaryUid)
     );
-    const finalInvestments = mergeById<InvestmentItem>(
+    const finalInvestments = pickAuthoritativeArray<InvestmentItem>(
       effectiveCloudBudget?.investments ?? mirrorBudget?.investments,
       isNewRegistration
         ? []
         : loadStoredInvestments(primaryUid).filter((inv) => !/^inv-[123]$/.test(inv.id))
     );
-    const finalCategoryBudgets = mergeById<Budget>(
+    const finalCategoryBudgets = pickAuthoritativeArray<Budget>(
       effectiveCloudBudget?.categoryBudgets ?? mirrorBudget?.categoryBudgets,
       isNewRegistration
         ? []
@@ -970,32 +1063,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // Settings merge
     const cloudSettings = effectiveCloudBudget?.settings || mirrorBudget?.settings;
     const localSettings = loadStoredSettings(primaryUid);
-    const mergedSettings: AppSettings = {
-      ...localSettings,
-      ...(cloudSettings || {}),
-      userName: cloudSettings?.userName || displayName || localSettings.userName,
-      userEmail: email || cloudSettings?.userEmail || localSettings.userEmail,
-    };
+    const mergedSettings: AppSettings = localIsNewer
+      ? {
+          ...(cloudSettings || {}),
+          ...localSettings,
+          userName: localSettings.userName || cloudSettings?.userName || displayName || '',
+          userEmail: email || localSettings.userEmail || cloudSettings?.userEmail || '',
+        }
+      : {
+          ...localSettings,
+          ...(cloudSettings || {}),
+          userName: cloudSettings?.userName || displayName || localSettings.userName || '',
+          userEmail: email || cloudSettings?.userEmail || localSettings.userEmail || '',
+        };
     setSettings(mergedSettings);
     saveStoredSettings(mergedSettings, primaryUid);
     if (mirrorUid) saveStoredSettings(mergedSettings, mirrorUid);
 
     const finalBudget: BudgetConfig = {
-      estimatedIncome:
-        localIsNewer && localBudget.estimatedIncome > 0
-          ? localBudget.estimatedIncome
-          : baseBudgetSource.estimatedIncome,
-      needsPercent: localIsNewer ? localBudget.needsPercent : baseBudgetSource.needsPercent,
-      wantsPercent: localIsNewer ? localBudget.wantsPercent : baseBudgetSource.wantsPercent,
-      savingsPercent: localIsNewer ? localBudget.savingsPercent : baseBudgetSource.savingsPercent,
+      estimatedIncome: authoritativeBudgetSource.estimatedIncome,
+      needsPercent: authoritativeBudgetSource.needsPercent,
+      wantsPercent: authoritativeBudgetSource.wantsPercent,
+      savingsPercent: authoritativeBudgetSource.savingsPercent,
       subcategories: Array.from(subcatMap.values()),
     };
 
-    // 8. Reconcile Subscriptions across Cloud subcollection, embedded subscriptionsJson, local storage, and subcategories
-    const localRawSubs = isNewRegistration ? [] : loadStoredSubscriptions(primaryUid);
-    const legacyRawSubs = !isNewRegistration && legacyUid ? loadStoredSubscriptions(legacyUid) : [];
-    const mirrorLocalSubs = !isNewRegistration && mirrorUid ? loadStoredSubscriptions(mirrorUid) : [];
+    // 8. Reconcile Subscriptions (only include local subscriptions if Cloud has no snapshot yet or local has recent write)
     const combinedCloudSubs = [...(mirrorSubs || []), ...(loadedSubs || [])];
+    const cloudEmbeddedSubs = effectiveCloudBudget?.subscriptions ?? mirrorBudget?.subscriptions;
+
+    const localRawSubs =
+      isNewRegistration || preferCloudAuthority
+        ? []
+        : loadStoredSubscriptions(primaryUid);
+    const legacyRawSubs =
+      isNewRegistration || preferCloudAuthority || !legacyUid
+        ? []
+        : loadStoredSubscriptions(legacyUid);
+    const mirrorLocalSubs =
+      isNewRegistration || preferCloudAuthority || !mirrorUid
+        ? []
+        : loadStoredSubscriptions(mirrorUid);
     const combinedLocalSubs = [...legacyRawSubs, ...mirrorLocalSubs, ...localRawSubs];
 
     const reconciledSubs = await reconcileAndSyncSubscriptions(
@@ -1004,11 +1112,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       combinedLocalSubs,
       {
         ...finalBudget,
-        subscriptions: effectiveCloudBudget?.subscriptions || mirrorBudget?.subscriptions,
+        subscriptions: cloudEmbeddedSubs,
       },
       finalWallets,
       deletedSet,
-      mirrorUid
+      mirrorUid,
+      isBackgroundSync || preferCloudAuthority
     );
     setSubscriptions(reconciledSubs);
 
@@ -1021,16 +1130,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       categoryBudgets: finalCategoryBudgets,
       settings: mergedSettings,
       deletedIds: combinedDeleted,
-      updatedAt: effectiveCloudBudget?.updatedAt || new Date().toISOString(),
+      updatedAt: cloudUpdatedAt || new Date().toISOString(),
     };
     setBudgetConfig(completeBudgetToSave);
     saveStoredBudgetConfig(completeBudgetToSave, primaryUid);
     if (mirrorUid) saveStoredBudgetConfig(completeBudgetToSave, mirrorUid);
 
-    // Ensure Cloud has the complete unified snapshot
-    saveUserBudgetConfig(primaryUid, completeBudgetToSave).catch(() => {});
-    if (mirrorUid) {
-      saveUserBudgetConfig(mirrorUid, completeBudgetToSave).catch(() => {});
+    // Only write back to Cloud on initial login/migration, NEVER during passive background/focus pulls!
+    if (!isBackgroundSync && (!cloudHasSnapshot || localIsNewer)) {
+      saveUserBudgetConfig(primaryUid, completeBudgetToSave).catch(() => {});
+      if (mirrorUid) {
+        saveUserBudgetConfig(mirrorUid, completeBudgetToSave).catch(() => {});
+      }
     }
   };
 
@@ -1038,7 +1149,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const loadAndSyncCloudAccountSession = async (
     profile: LocalAccountProfile,
     isNewRegistration = false,
-    silentToast = false
+    silentToast = false,
+    isBackgroundSync = false
   ) => {
     const cloudUid = getCloudAccountUid(profile.email);
     const normalizedProfile: LocalAccountProfile = {
@@ -1048,40 +1160,48 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
 
     isCloudSyncingRef.current = true;
-    saveActiveLocalUser(normalizedProfile);
-    setUser(normalizedProfile);
-    setActiveDate(getTodayDateStr());
+    if (!isBackgroundSync) {
+      saveActiveLocalUser(normalizedProfile);
+      setUser(normalizedProfile);
+      setActiveDate(getTodayDateStr());
+    }
 
     try {
       await syncAllAccountDataWithCloud(
         cloudUid,
         normalizedProfile.email,
         normalizedProfile.displayName,
-        isNewRegistration
+        isNewRegistration,
+        undefined,
+        isBackgroundSync
       );
     } catch (err) {
-      console.warn('Fallback to cached account data while syncing Firestore:', err);
-      const fallbackWallets = loadStoredWallets(cloudUid);
-      setWallets(fallbackWallets);
-      setTransactions(loadStoredTransactions(cloudUid));
-      setGoals(loadStoredGoals(cloudUid));
-      setDebts(loadStoredDebts(cloudUid));
-      setLiquidAssets(loadStoredAssets('liquid', cloudUid));
-      setFixedAssets(loadStoredAssets('fixed', cloudUid));
-      setInvestments(loadStoredInvestments(cloudUid));
-      const localBudget = loadStoredBudgetConfig(cloudUid);
-      setBudgetConfig(localBudget);
-      const rawSubs = loadStoredSubscriptions(cloudUid);
-      const deletedSet = new Set(loadStoredDeletedIds(cloudUid));
-      const reconciledSubs = await reconcileAndSyncSubscriptions(
-        cloudUid,
-        [],
-        rawSubs,
-        localBudget,
-        fallbackWallets,
-        deletedSet
-      );
-      setSubscriptions(reconciledSubs);
+      if (!isBackgroundSync) {
+        console.warn('Fallback to cached account data while syncing Firestore:', err);
+        const fallbackWallets = loadStoredWallets(cloudUid);
+        setWallets(fallbackWallets);
+        setTransactions(loadStoredTransactions(cloudUid));
+        setGoals(loadStoredGoals(cloudUid));
+        setDebts(loadStoredDebts(cloudUid));
+        setLiquidAssets(loadStoredAssets('liquid', cloudUid));
+        setFixedAssets(loadStoredAssets('fixed', cloudUid));
+        setInvestments(loadStoredInvestments(cloudUid));
+        const localBudget = loadStoredBudgetConfig(cloudUid);
+        setBudgetConfig(localBudget);
+        const rawSubs = loadStoredSubscriptions(cloudUid);
+        const deletedSet = new Set(loadStoredDeletedIds(cloudUid));
+        const reconciledSubs = await reconcileAndSyncSubscriptions(
+          cloudUid,
+          [],
+          rawSubs,
+          localBudget,
+          fallbackWallets,
+          deletedSet,
+          undefined,
+          true
+        );
+        setSubscriptions(reconciledSubs);
+      }
     } finally {
       isCloudSyncingRef.current = false;
     }
@@ -1400,17 +1520,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, []);
 
-  // Re-sync cloud account data when user switches back to this browser window/tab or periodically while active
+  // Real-time & background sync when another device (e.g. HP vs Laptop) updates or deletes data
   useEffect(() => {
-    const triggerBackgroundCloudSync = () => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+    const triggerBackgroundCloudSync = (forceEvenIfHidden = false) => {
+      if (
+        !forceEvenIfHidden &&
+        typeof document !== 'undefined' &&
+        document.visibilityState !== 'visible'
+      ) {
+        return;
+      }
       if (isCloudSyncingRef.current) return;
-      // Do not interrupt if user performed a local write within the last 4 seconds
-      if (Date.now() - lastLocalMutationRef.current < 4000) return;
+      // Do not interrupt if user performed a local write on THIS tab within the last 3.5 seconds
+      if (Date.now() - lastLocalMutationRef.current < 3500) return;
 
       const activeLocal = loadActiveLocalUser();
       if (activeLocal?.email) {
-        loadAndSyncCloudAccountSession(activeLocal, false, true).catch(() => {});
+        loadAndSyncCloudAccountSession(activeLocal, false, true, true).catch(() => {});
       } else if (auth.currentUser) {
         const currentUser = auth.currentUser;
         const acctUid = currentUser.email ? getCloudAccountUid(currentUser.email) : undefined;
@@ -1420,7 +1546,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           currentUser.email || '',
           currentUser.displayName || 'Pengguna Dompt',
           false,
-          acctUid
+          acctUid,
+          true
         )
           .catch(() => {})
           .finally(() => {
@@ -1429,16 +1556,58 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    window.addEventListener('focus', triggerBackgroundCloudSync);
-    document.addEventListener('visibilitychange', triggerBackgroundCloudSync);
-    const intervalId = setInterval(triggerBackgroundCloudSync, 15000);
+    const handleFocusOrShow = () => triggerBackgroundCloudSync(true);
+    const handleVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        triggerBackgroundCloudSync(true);
+      }
+    };
+
+    window.addEventListener('focus', handleFocusOrShow);
+    window.addEventListener('pageshow', handleFocusOrShow);
+    window.addEventListener('online', handleFocusOrShow);
+    document.addEventListener('visibilitychange', handleVisibility);
+    const intervalId = setInterval(() => triggerBackgroundCloudSync(false), 6000);
+
+    let unsubPrimary: (() => void) | undefined;
+    let unsubMirror: (() => void) | undefined;
+
+    if (user?.uid) {
+      const handleRemoteChange = (remoteUpdatedAt?: string, remoteDeletedIds?: string[]) => {
+        if (Date.now() - lastLocalMutationRef.current < 3000) return;
+        if (remoteDeletedIds && remoteDeletedIds.length > 0) {
+          setDeletedIds((prev) => {
+            const combined = Array.from(new Set([...prev, ...remoteDeletedIds])).slice(-400);
+            if (combined.length !== prev.length) {
+              saveStoredDeletedIds(combined, user.uid);
+              return combined;
+            }
+            return prev;
+          });
+        }
+        if (remoteUpdatedAt && remoteUpdatedAt !== lastSeenCloudUpdatedAtRef.current) {
+          lastSeenCloudUpdatedAtRef.current = remoteUpdatedAt;
+          triggerBackgroundCloudSync(true);
+        }
+      };
+
+      unsubPrimary = subscribeToUserBudgetConfig(user.uid, handleRemoteChange);
+      const mirrorId = getMirrorUid(user.uid, user.email);
+      if (mirrorId) {
+        unsubMirror = subscribeToUserBudgetConfig(mirrorId, handleRemoteChange);
+      }
+    }
 
     return () => {
-      window.removeEventListener('focus', triggerBackgroundCloudSync);
-      document.removeEventListener('visibilitychange', triggerBackgroundCloudSync);
+      window.removeEventListener('focus', handleFocusOrShow);
+      window.removeEventListener('pageshow', handleFocusOrShow);
+      window.removeEventListener('online', handleFocusOrShow);
+      document.removeEventListener('visibilitychange', handleVisibility);
       clearInterval(intervalId);
+      if (unsubPrimary) unsubPrimary();
+      if (unsubMirror) unsubMirror();
     };
-  }, []);
+  }, [user?.uid, user?.email]);
 
   const applyThemeToDOM = (mode: ThemeMode, accent?: AccentColor) => {
     if (typeof document === 'undefined') return;
@@ -1526,31 +1695,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     return map;
   }, [wallets, transactions]);
-
-  // Persist healed transaction walletIds to localStorage/Firestore when resolvedWalletIdMap maps an orphan/unfunded wallet
-  useEffect(() => {
-    if (isCloudSyncingRef.current || authLoading) return;
-    if (wallets.length === 0 || transactions.length === 0) return;
-    let changed = false;
-    const healed = transactions.map((tx) => {
-      const effectiveWalletId = resolvedWalletIdMap.get(tx.id);
-      if (effectiveWalletId && effectiveWalletId !== tx.walletId) {
-        changed = true;
-        return { ...tx, walletId: effectiveWalletId, updatedAt: new Date().toISOString() };
-      }
-      return tx;
-    });
-    if (changed) {
-      saveStoredTransactions(healed, localScopeUid);
-      if (isCloudUser && user?.uid) {
-        healed.forEach((tx, idx) => {
-          if (tx.walletId !== transactions[idx]?.walletId) {
-            saveUserTransaction(user.uid, tx).catch(() => {});
-          }
-        });
-      }
-    }
-  }, [resolvedWalletIdMap, wallets.length, transactions, localScopeUid, isCloudUser, user?.uid, authLoading]);
 
   // Calculate wallet balances
   const walletsWithBalance = useMemo<WalletWithBalance[]>(() => {
@@ -1809,16 +1953,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // CRUD: Transaction
   const addTransaction = (data: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): string => {
+    markLocalMutation();
+    const now = new Date().toISOString();
     const generatedId = data.id || `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const newTx: Transaction = {
       ...data,
       id: generatedId,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     setTransactions((prev) => {
       const updated = [newTx, ...prev];
       saveStoredTransactions(updated, localScopeUid);
+      if (mirrorUid) saveStoredTransactions(updated, mirrorUid);
       return updated;
     });
 
@@ -1826,6 +1974,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       saveUserTransaction(user.uid, newTx).catch((err) =>
         console.warn('Error saving transaction to Firestore:', err)
       );
+      if (mirrorUid) {
+        saveUserTransaction(mirrorUid, newTx).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid);
     }
 
     addToast('Transaksi Ditambahkan', `${data.note || 'Transaksi baru'} berhasil dicatat.`);
@@ -1833,16 +1985,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateTransaction = (id: string, data: Partial<Transaction>) => {
+    markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     let targetTx: Transaction | undefined;
     setTransactions((prev) => {
       const updated = prev.map((t) => {
         if (t.id === id) {
-          targetTx = { ...t, ...data, updatedAt: new Date().toISOString() };
+          targetTx = { ...t, ...data, updatedAt: now };
           return targetTx;
         }
         return t;
       });
       saveStoredTransactions(updated, localScopeUid);
+      if (mirrorUid) saveStoredTransactions(updated, mirrorUid);
       return updated;
     });
 
@@ -1850,6 +2006,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       saveUserTransaction(user.uid, targetTx).catch((err) =>
         console.warn('Error updating transaction in Firestore:', err)
       );
+      if (mirrorUid) {
+        saveUserTransaction(mirrorUid, targetTx).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid);
     }
 
     addToast('Transaksi Diperbarui', 'Perubahan transaksi berhasil disimpan.');
@@ -1858,9 +2018,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteTransaction = (id: string) => {
     markLocalMutation();
     const nextDeleted = recordDeletedId(id);
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
+    if (mirrorUid) {
+      saveStoredDeletedIds(nextDeleted, mirrorUid);
+    }
     setTransactions((prev) => {
       const updated = prev.filter((t) => t.id !== id);
       saveStoredTransactions(updated, localScopeUid);
+      if (mirrorUid) saveStoredTransactions(updated, mirrorUid);
       return updated;
     });
 
@@ -1868,9 +2033,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deleteUserTransaction(user.uid, id).catch((err) =>
         console.warn('Error deleting transaction from Firestore:', err)
       );
-      const primaryUid = user.uid;
-      const acctUid = user.email ? getCloudAccountUid(user.email) : undefined;
-      persistExtendedBudgetToCloud(primaryUid, acctUid, { deletedIds: nextDeleted });
+      if (mirrorUid) {
+        deleteUserTransaction(mirrorUid, id).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, { deletedIds: nextDeleted });
     }
 
     addToast('Transaksi Dihapus', 'Data transaksi telah dihapus.', 'info');
@@ -1879,40 +2045,54 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // CRUD: Wallet
   const addWallet = (data: Omit<Wallet, 'id' | 'createdAt' | 'updatedAt'>) => {
     markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const newW: Wallet = {
       ...data,
       id: `wallet-${Date.now()}`,
       isVerified: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
     const updated = [...wallets, newW];
     setWallets(updated);
     saveStoredWallets(updated, localScopeUid);
+    if (mirrorUid) saveStoredWallets(updated, mirrorUid);
     if (isCloudUser && user?.uid) {
       saveUserWallet(user.uid, newW).catch((err) =>
         console.warn('Error saving wallet to Firestore:', err)
       );
+      if (mirrorUid) {
+        saveUserWallet(mirrorUid, newW).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid);
     }
     addToast('Dompet Ditambahkan', `Dompet ${data.name} berhasil dibuat.`);
   };
 
   const updateWallet = (id: string, data: Partial<Wallet>) => {
     markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     let targetW: Wallet | undefined;
     const updated = wallets.map((w) => {
       if (w.id === id) {
-        targetW = { ...w, ...data, updatedAt: new Date().toISOString() };
+        targetW = { ...w, ...data, updatedAt: now };
         return targetW;
       }
       return w;
     });
     setWallets(updated);
     saveStoredWallets(updated, localScopeUid);
+    if (mirrorUid) saveStoredWallets(updated, mirrorUid);
     if (isCloudUser && user?.uid && targetW) {
       saveUserWallet(user.uid, targetW).catch((err) =>
         console.warn('Error updating wallet in Firestore:', err)
       );
+      if (mirrorUid) {
+        saveUserWallet(mirrorUid, targetW).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid);
     }
     addToast('Dompet Diperbarui', 'Informasi dompet berhasil diubah.');
   };
@@ -1924,16 +2104,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     markLocalMutation();
     const nextDeleted = recordDeletedId(id);
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
+    if (mirrorUid) {
+      saveStoredDeletedIds(nextDeleted, mirrorUid);
+    }
     const updated = wallets.filter((w) => w.id !== id);
     setWallets(updated);
     saveStoredWallets(updated, localScopeUid);
+    if (mirrorUid) saveStoredWallets(updated, mirrorUid);
     if (isCloudUser && user?.uid) {
       deleteUserWallet(user.uid, id).catch((err) =>
         console.warn('Error deleting wallet from Firestore:', err)
       );
-      const primaryUid = user.uid;
-      const acctUid = user.email ? getCloudAccountUid(user.email) : undefined;
-      persistExtendedBudgetToCloud(primaryUid, acctUid, { deletedIds: nextDeleted });
+      if (mirrorUid) {
+        deleteUserWallet(mirrorUid, id).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, { deletedIds: nextDeleted });
     }
     addToast('Dompet Dihapus', 'Dompet berhasil dihapus.', 'info');
     return true;
@@ -1947,38 +2133,53 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // CRUD: Goals
   const addGoal = (data: Omit<Goal, 'id'>) => {
     markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const newG: Goal = {
       ...data,
       id: `goal-${Date.now()}`,
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
     const updated = [...goals, newG];
     setGoals(updated);
     saveStoredGoals(updated, localScopeUid);
+    if (mirrorUid) saveStoredGoals(updated, mirrorUid);
     if (isCloudUser && user?.uid) {
       saveUserGoal(user.uid, newG).catch((err) =>
         console.warn('Error saving goal to Firestore:', err)
       );
+      if (mirrorUid) {
+        saveUserGoal(mirrorUid, newG).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid);
     }
     addToast('Target Goal Dibuat', `Target ${data.name} berhasil ditambahkan.`);
   };
 
   const updateGoal = (id: string, data: Partial<Goal>) => {
     markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     let targetG: Goal | undefined;
     const updated = goals.map((g) => {
       if (g.id === id) {
-        targetG = { ...g, ...data, updatedAt: new Date().toISOString() };
+        targetG = { ...g, ...data, updatedAt: now };
         return targetG;
       }
       return g;
     });
     setGoals(updated);
     saveStoredGoals(updated, localScopeUid);
+    if (mirrorUid) saveStoredGoals(updated, mirrorUid);
     if (isCloudUser && user?.uid && targetG) {
       saveUserGoal(user.uid, targetG).catch((err) =>
         console.warn('Error updating goal in Firestore:', err)
       );
+      if (mirrorUid) {
+        saveUserGoal(mirrorUid, targetG).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid);
     }
     addToast('Goal Diperbarui', 'Perubahan target berhasil disimpan.');
   };
@@ -1986,16 +2187,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const deleteGoal = (id: string) => {
     markLocalMutation();
     const nextDeleted = recordDeletedId(id);
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
+    if (mirrorUid) {
+      saveStoredDeletedIds(nextDeleted, mirrorUid);
+    }
     const updated = goals.filter((g) => g.id !== id);
     setGoals(updated);
     saveStoredGoals(updated, localScopeUid);
+    if (mirrorUid) saveStoredGoals(updated, mirrorUid);
     if (isCloudUser && user?.uid) {
       deleteUserGoal(user.uid, id).catch((err) =>
         console.warn('Error deleting goal from Firestore:', err)
       );
-      const primaryUid = user.uid;
-      const acctUid = user.email ? getCloudAccountUid(user.email) : undefined;
-      persistExtendedBudgetToCloud(primaryUid, acctUid, { deletedIds: nextDeleted });
+      if (mirrorUid) {
+        deleteUserGoal(mirrorUid, id).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, { deletedIds: nextDeleted });
     }
     addToast('Goal Dihapus', 'Target goal telah dihapus.', 'info');
   };
@@ -2016,6 +2223,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     markLocalMutation();
     const id = `debt-${Date.now()}`;
     const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const initialRem = debtData.remainingAmount !== undefined ? debtData.remainingAmount : debtData.totalAmount;
     const newDebt: Debt = {
       ...debtData,
@@ -2030,10 +2238,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const nextDebts = [newDebt, ...debts];
     setDebts(nextDebts);
     saveStoredDebts(nextDebts, localScopeUid);
+    if (mirrorUid) saveStoredDebts(nextDebts, mirrorUid);
     if (isCloudUser && user?.uid) {
       saveUserDebt(user.uid, newDebt).catch((err) =>
         console.warn('Error saving debt to Firestore:', err)
       );
+      if (mirrorUid) {
+        saveUserDebt(mirrorUid, newDebt).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid);
     }
 
     // Cashflow integration: if user chose to disburse or release money from/to a wallet
@@ -2073,12 +2286,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateDebt = (id: string, data: Partial<Debt>) => {
     markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const nextDebts = debts.map((d) => {
       if (d.id !== id) return d;
       const updatedItem: Debt = {
         ...d,
         ...data,
-        updatedAt: new Date().toISOString(),
+        updatedAt: now,
       };
       if (updatedItem.remainingAmount <= 0) {
         updatedItem.status = 'paid';
@@ -2088,48 +2303,63 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
     setDebts(nextDebts);
     saveStoredDebts(nextDebts, localScopeUid);
+    if (mirrorUid) saveStoredDebts(nextDebts, mirrorUid);
     const itemToSync = nextDebts.find((d) => d.id === id);
     if (isCloudUser && user?.uid && itemToSync) {
       saveUserDebt(user.uid, itemToSync).catch((err) =>
         console.warn('Error updating debt in Firestore:', err)
       );
+      if (mirrorUid) {
+        saveUserDebt(mirrorUid, itemToSync).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid);
     }
     addToast('Perubahan Disimpan', 'Data utang/piutang berhasil diperbarui.');
   };
 
   const deleteDebt = (id: string) => {
     markLocalMutation();
-    const nextDeleted = recordDeletedId(id);
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const targetDebt = debts.find((d) => d.id === id);
     const nextDebts = debts.filter((d) => d.id !== id);
     setDebts(nextDebts);
     saveStoredDebts(nextDebts, localScopeUid);
+    if (mirrorUid) saveStoredDebts(nextDebts, mirrorUid);
+
+    const debtSubId = `sub-debt-${id}`;
+    const debtSubNameLower = targetDebt ? `cicilan ${targetDebt.name}`.toLowerCase().trim() : '';
+    const removedSubIds: string[] = [debtSubId];
+    const updatedSubs = budgetConfig.subcategories.filter((s) => {
+      if (s.id === debtSubId || (debtSubNameLower && s.name.toLowerCase().trim() === debtSubNameLower)) {
+        removedSubIds.push(s.id);
+        return false;
+      }
+      return true;
+    });
+
+    const nextDeleted = recordDeletedId([id, ...removedSubIds]);
+    if (mirrorUid) saveStoredDeletedIds(nextDeleted, mirrorUid);
+
+    const nextBudget: BudgetConfig = {
+      ...budgetConfig,
+      subcategories: updatedSubs,
+      deletedIds: nextDeleted,
+      updatedAt: new Date().toISOString(),
+    };
+    setBudgetConfig(nextBudget);
+    saveStoredBudgetConfig(nextBudget, localScopeUid);
+
     if (isCloudUser && user?.uid) {
       deleteUserDebt(user.uid, id).catch((err) =>
         console.warn('Error deleting debt from Firestore:', err)
       );
-      const primaryUid = user.uid;
-      const acctUid = user.email ? getCloudAccountUid(user.email) : undefined;
-      persistExtendedBudgetToCloud(primaryUid, acctUid, { deletedIds: nextDeleted });
-    }
-
-    // Also remove any linked debt subcategory from budgetConfig so deleted debt doesn't leave a ghost allocation
-    if (targetDebt) {
-      const debtSubId = `sub-debt-${id}`;
-      const debtSubNameLower = `cicilan ${targetDebt.name}`.toLowerCase().trim();
-      const updatedSubs = budgetConfig.subcategories.filter(
-        (s) => s.id !== debtSubId && s.name.toLowerCase().trim() !== debtSubNameLower
-      );
-      if (updatedSubs.length !== budgetConfig.subcategories.length) {
-        const nextBudget = { ...budgetConfig, subcategories: updatedSubs };
-        setBudgetConfig(nextBudget);
-        saveStoredBudgetConfig(nextBudget, localScopeUid);
-        if (isCloudUser && user?.uid) {
-          saveUserBudgetConfig(user.uid, nextBudget).catch((err) =>
-            console.warn('Error saving budget config to Firestore:', err)
-          );
-        }
+      if (mirrorUid) {
+        deleteUserDebt(mirrorUid, id).catch(() => {});
       }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudget,
+        deletedIds: nextDeleted,
+      });
     }
 
     addToast('Catatan Dihapus', 'Data utang/piutang & alokasi cicilan terkait telah dihapus.', 'info');
@@ -2143,6 +2373,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const debt = debts.find((d) => d.id === debtId);
     if (!debt || amount <= 0) return;
 
+    markLocalMutation();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const paymentDate = options?.date || new Date().toISOString().slice(0, 10);
     const selectedWallet =
       (options?.walletId ? wallets.find((w) => w.id === options.walletId) : undefined) ||
@@ -2208,11 +2440,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     setDebts(nextDebts);
     saveStoredDebts(nextDebts, localScopeUid);
+    if (mirrorUid) saveStoredDebts(nextDebts, mirrorUid);
     const updatedDebt = nextDebts.find((d) => d.id === debtId);
     if (isCloudUser && user?.uid && updatedDebt) {
       saveUserDebt(user.uid, updatedDebt).catch((err) =>
         console.warn('Error saving debt payment to Firestore:', err)
       );
+      if (mirrorUid) {
+        saveUserDebt(mirrorUid, updatedDebt).catch(() => {});
+      }
     }
 
     // Sync payable debt installment directly into BudgetConfig (KEBUTUHAN & POS TAGIHAN BULANAN)
@@ -2262,14 +2498,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const nextBudgetConfig: BudgetConfig = {
         ...budgetConfig,
         subcategories: updatedSubcategories,
+        updatedAt: new Date().toISOString(),
       };
       setBudgetConfig(nextBudgetConfig);
       saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
       if (isCloudUser && user?.uid) {
-        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
-          console.warn('Error saving budget config to Firestore:', err)
-        );
+        persistExtendedBudgetToCloud(user.uid, mirrorUid, { budgetConfig: nextBudgetConfig });
       }
+    } else if (isCloudUser && user?.uid) {
+      persistExtendedBudgetToCloud(user.uid, mirrorUid);
     }
 
     if (newRemaining <= 0) {
@@ -2300,32 +2537,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // CRUD: BudgetConfig
   const updateBudgetConfig = (data: Partial<BudgetConfig>) => {
-    const updated = { ...budgetConfig, ...data };
+    markLocalMutation();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
+    const updated: BudgetConfig = {
+      ...budgetConfig,
+      ...data,
+      updatedAt: new Date().toISOString(),
+    };
     setBudgetConfig(updated);
     saveStoredBudgetConfig(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
-      saveUserBudgetConfig(user.uid, updated).catch((err) =>
-        console.warn('Error saving budget config to Firestore:', err)
-      );
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, { budgetConfig: updated });
     }
     addToast('Alokasi Disimpan', 'Alokasi anggaran 50/30/20 berhasil diperbarui.');
   };
 
   const addBudgetSubcategory = (item: { name: string; group: BudgetGroup; allocatedAmount: number; emoji: string; dueDateDay?: number }) => {
+    markLocalMutation();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const newSub = {
       id: `sub-${Date.now()}`,
       ...item,
     };
-    const updated = {
+    const updated: BudgetConfig = {
       ...budgetConfig,
       subcategories: [...budgetConfig.subcategories, newSub],
+      updatedAt: new Date().toISOString(),
     };
     setBudgetConfig(updated);
     saveStoredBudgetConfig(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
-      saveUserBudgetConfig(user.uid, updated).catch((err) =>
-        console.warn('Error saving budget config to Firestore:', err)
-      );
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, { budgetConfig: updated });
     }
     addToast('Subkategori Ditambahkan', `${item.name} berhasil ditambahkan ke ${item.group}.`);
   };
@@ -2334,6 +2576,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     id: string,
     data: { name?: string; group?: BudgetGroup; allocatedAmount?: number; emoji?: string; dueDateDay?: number }
   ) => {
+    markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     let targetSubName = '';
     const updatedSub = budgetConfig.subcategories.map((s) => {
       if (s.id === id) {
@@ -2342,23 +2587,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       return s;
     });
-    const updated = { ...budgetConfig, subcategories: updatedSub };
-    setBudgetConfig(updated);
-    saveStoredBudgetConfig(updated, localScopeUid);
-    if (isCloudUser && user?.uid) {
-      saveUserBudgetConfig(user.uid, updated).catch((err) =>
-        console.warn('Error saving budget config to Firestore:', err)
-      );
-    }
+    const updated: BudgetConfig = {
+      ...budgetConfig,
+      subcategories: updatedSub,
+      updatedAt: now,
+    };
 
     // Two-way sync: if a subscription is linked to this subcategory, keep its details in sync
+    let nextSubs = subscriptions;
     const hasLinkedSub = subscriptions.some(
       (rec) =>
         rec.subcategoryId === id ||
         (targetSubName && rec.name.toLowerCase().trim() === targetSubName)
     );
     if (hasLinkedSub) {
-      const nextSubs = subscriptions.map((rec) => {
+      nextSubs = subscriptions.map((rec) => {
         if (
           rec.subcategoryId === id ||
           (targetSubName && rec.name.toLowerCase().trim() === targetSubName)
@@ -2374,11 +2617,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               data.allocatedAmount !== undefined && rec.frequency === 'monthly'
                 ? data.allocatedAmount
                 : rec.amount,
+            updatedAt: now,
           };
           if (isCloudUser && user?.uid) {
             saveUserSubscription(user.uid, updatedRec).catch((err) =>
               console.warn('Error updating subscription in Firestore:', err)
             );
+            if (mirrorUid) {
+              saveUserSubscription(mirrorUid, updatedRec).catch(() => {});
+            }
           }
           return updatedRec;
         }
@@ -2386,6 +2633,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       setSubscriptions(nextSubs);
       saveStoredSubscriptions(nextSubs, localScopeUid);
+      if (mirrorUid) saveStoredSubscriptions(nextSubs, mirrorUid);
+    }
+
+    setBudgetConfig(updated);
+    saveStoredBudgetConfig(updated, localScopeUid);
+    if (isCloudUser && user?.uid) {
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: updated,
+        subscriptions: nextSubs,
+      });
     }
 
     addToast('Subkategori Diperbarui', 'Alokasi subkategori berhasil disimpan.');
@@ -2393,19 +2650,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const deleteBudgetSubcategory = (id: string) => {
     markLocalMutation();
-    const nextDeleted = recordDeletedId(id);
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const targetSub = budgetConfig.subcategories.find((s) => s.id === id);
     const targetNameLower = targetSub ? targetSub.name.toLowerCase().trim() : '';
 
     const updatedSub = budgetConfig.subcategories.filter((s) => s.id !== id);
-    const updated = { ...budgetConfig, subcategories: updatedSub, deletedIds: nextDeleted };
-    setBudgetConfig(updated);
-    saveStoredBudgetConfig(updated, localScopeUid);
-    if (isCloudUser && user?.uid) {
-      saveUserBudgetConfig(user.uid, updated).catch((err) =>
-        console.warn('Error saving budget config to Firestore:', err)
-      );
-    }
 
     // Also delete any subscription linked to this deleted subcategory so it never stays as a ghost bill
     const removedSubs: RecurringItem[] = [];
@@ -2424,16 +2673,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       return true;
     });
+
+    const nextDeleted = recordDeletedId([
+      id,
+      targetSub?.subscriptionId,
+      ...removedSubs.map((r) => r.id),
+    ]);
+    if (mirrorUid) saveStoredDeletedIds(nextDeleted, mirrorUid);
+
     if (nextSubs.length !== subscriptions.length) {
       setSubscriptions(nextSubs);
       saveStoredSubscriptions(nextSubs, localScopeUid);
+      if (mirrorUid) saveStoredSubscriptions(nextSubs, mirrorUid);
       if (isCloudUser && user?.uid) {
         for (const rem of removedSubs) {
           deleteUserSubscription(user.uid, rem.id).catch((err) =>
             console.warn('Error deleting subscription from Firestore:', err)
           );
+          if (mirrorUid) {
+            deleteUserSubscription(mirrorUid, rem.id).catch(() => {});
+          }
         }
       }
+    }
+
+    const updated: BudgetConfig = {
+      ...budgetConfig,
+      subcategories: updatedSub,
+      subscriptions: nextSubs,
+      deletedIds: nextDeleted,
+      updatedAt: new Date().toISOString(),
+    };
+    setBudgetConfig(updated);
+    saveStoredBudgetConfig(updated, localScopeUid);
+    if (isCloudUser && user?.uid) {
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: updated,
+        subscriptions: nextSubs,
+        deletedIds: nextDeleted,
+      });
     }
 
     addToast('Subkategori Dihapus', 'Subkategori & jadwal tagihan terkait telah dihapus.', 'info');
@@ -2442,6 +2720,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // CRUD: Subscriptions & Recurring Transactions (Two-way integrated with BudgetConfig & Cloud Firestore)
   const addSubscription = (itemData: Omit<RecurringItem, 'id'>) => {
     markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const newId = `sub-rec-${Date.now()}`;
     const cleanName = itemData.name.trim();
     const cleanNameLower = cleanName.toLowerCase();
@@ -2451,6 +2731,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const determinedGroup: BudgetGroup =
       itemData.budgetGroup ||
       (itemData.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
+
+    let nextBudgetConfig: BudgetConfig = { ...budgetConfig, updatedAt: now };
 
     if (itemData.type === 'expense') {
       const monthlyAmt = getMonthlySubscriptionAmount(itemData.amount, itemData.frequency);
@@ -2500,30 +2782,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
-      const nextBudgetConfig: BudgetConfig = {
+      nextBudgetConfig = {
         ...budgetConfig,
         subcategories: updatedSubcategories,
+        updatedAt: now,
       };
-      setBudgetConfig(nextBudgetConfig);
-      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
-      if (isCloudUser && user?.uid) {
-        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
-          console.warn('Error saving budget config to Firestore:', err)
-        );
-      }
     } else if (itemData.type === 'income' && budgetConfig.estimatedIncome === 0) {
       const monthlyInc = getMonthlySubscriptionAmount(itemData.amount, itemData.frequency);
-      const nextBudgetConfig: BudgetConfig = {
+      nextBudgetConfig = {
         ...budgetConfig,
         estimatedIncome: monthlyInc,
+        updatedAt: now,
       };
-      setBudgetConfig(nextBudgetConfig);
-      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
-      if (isCloudUser && user?.uid) {
-        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
-          console.warn('Error saving budget config to Firestore:', err)
-        );
-      }
     }
 
     const newItem: RecurringItem = {
@@ -2532,18 +2802,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       name: cleanName,
       subcategoryId: linkedSubcategoryId,
       budgetGroup: itemData.type === 'expense' ? determinedGroup : undefined,
+      createdAt: now,
+      updatedAt: now,
     };
 
     const nextSubs = [...subscriptions, newItem];
     setSubscriptions(nextSubs);
     saveStoredSubscriptions(nextSubs, localScopeUid);
+    if (mirrorUid) saveStoredSubscriptions(nextSubs, mirrorUid);
+
+    setBudgetConfig({ ...nextBudgetConfig, subscriptions: nextSubs });
+    saveStoredBudgetConfig({ ...nextBudgetConfig, subscriptions: nextSubs }, localScopeUid);
+
     if (isCloudUser && user?.uid) {
       saveUserSubscription(user.uid, newItem).catch((err) =>
         console.warn('Error saving subscription to Firestore:', err)
       );
-      if (user.email && getCloudAccountUid(user.email) !== user.uid) {
-        saveUserSubscription(getCloudAccountUid(user.email), newItem).catch(() => {});
+      if (mirrorUid) {
+        saveUserSubscription(mirrorUid, newItem).catch(() => {});
       }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+        subscriptions: nextSubs,
+      });
     }
     addToast(
       'Jadwal & Budget Disimpan',
@@ -2554,14 +2835,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateSubscription = (id: string, data: Partial<RecurringItem>) => {
-    markLocalMutation();
     const existingItem = subscriptions.find((i) => i.id === id);
     if (!existingItem) return;
+
+    markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
 
     const merged: RecurringItem = {
       ...existingItem,
       ...data,
       name: (data.name !== undefined ? data.name : existingItem.name).trim(),
+      updatedAt: now,
     };
 
     const determinedGroup: BudgetGroup =
@@ -2570,6 +2855,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     let updatedSubcategories = [...(budgetConfig.subcategories || [])];
     let linkedSubcategoryId = merged.subcategoryId;
+    let nextBudgetConfig: BudgetConfig = { ...budgetConfig, updatedAt: now };
 
     if (merged.type === 'expense') {
       const monthlyAmt = getMonthlySubscriptionAmount(merged.amount, merged.frequency);
@@ -2624,52 +2910,50 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
-      const nextBudgetConfig: BudgetConfig = {
+      nextBudgetConfig = {
         ...budgetConfig,
         subcategories: updatedSubcategories,
+        updatedAt: now,
       };
-      setBudgetConfig(nextBudgetConfig);
-      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
-      if (isCloudUser && user?.uid) {
-        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
-          console.warn('Error saving budget config to Firestore:', err)
-        );
-      }
     } else if (existingItem.type === 'expense' && merged.type === 'income') {
       // Switched from expense to income -> remove old expense subcategory if linked
       updatedSubcategories = updatedSubcategories.filter(
         (s) => s.id !== existingItem.subcategoryId && s.subscriptionId !== id
       );
       linkedSubcategoryId = undefined;
-      const nextBudgetConfig: BudgetConfig = {
+      nextBudgetConfig = {
         ...budgetConfig,
         subcategories: updatedSubcategories,
+        updatedAt: now,
       };
-      setBudgetConfig(nextBudgetConfig);
-      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
-      if (isCloudUser && user?.uid) {
-        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
-          console.warn('Error saving budget config to Firestore:', err)
-        );
-      }
     }
 
     const finalUpdatedItem: RecurringItem = {
       ...merged,
       subcategoryId: linkedSubcategoryId,
       budgetGroup: merged.type === 'expense' ? determinedGroup : undefined,
+      updatedAt: now,
     };
 
     const nextSubs = subscriptions.map((i) => (i.id === id ? finalUpdatedItem : i));
     setSubscriptions(nextSubs);
     saveStoredSubscriptions(nextSubs, localScopeUid);
+    if (mirrorUid) saveStoredSubscriptions(nextSubs, mirrorUid);
+
+    setBudgetConfig({ ...nextBudgetConfig, subscriptions: nextSubs });
+    saveStoredBudgetConfig({ ...nextBudgetConfig, subscriptions: nextSubs }, localScopeUid);
+
     if (isCloudUser && user?.uid) {
       saveUserSubscription(user.uid, finalUpdatedItem).catch((err) =>
         console.warn('Error updating subscription in Firestore:', err)
       );
-      if (user.email && getCloudAccountUid(user.email) !== user.uid) {
-        saveUserSubscription(getCloudAccountUid(user.email), finalUpdatedItem).catch(() => {});
+      if (mirrorUid) {
+        saveUserSubscription(mirrorUid, finalUpdatedItem).catch(() => {});
       }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+        subscriptions: nextSubs,
+      });
     }
     addToast(
       'Jadwal Diperbarui',
@@ -2678,23 +2962,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const toggleSubscriptionActive = (id: string) => {
-    markLocalMutation();
     const target = subscriptions.find((i) => i.id === id);
     if (!target) return;
+    markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const nextActive = !target.isActive;
-    const updatedItem: RecurringItem = { ...target, isActive: nextActive };
+    const updatedItem: RecurringItem = { ...target, isActive: nextActive, updatedAt: now };
     const nextSubs = subscriptions.map((i) => (i.id === id ? updatedItem : i));
     setSubscriptions(nextSubs);
     saveStoredSubscriptions(nextSubs, localScopeUid);
-    if (isCloudUser && user?.uid) {
-      saveUserSubscription(user.uid, updatedItem).catch((err) =>
-        console.warn('Error toggling subscription in Firestore:', err)
-      );
-      if (user.email && getCloudAccountUid(user.email) !== user.uid) {
-        saveUserSubscription(getCloudAccountUid(user.email), updatedItem).catch(() => {});
-      }
-    }
+    if (mirrorUid) saveStoredSubscriptions(nextSubs, mirrorUid);
 
+    let nextBudgetConfig: BudgetConfig = { ...budgetConfig, updatedAt: now };
     if (target.type === 'expense') {
       const targetNameLower = target.name.toLowerCase().trim();
       const updatedSubcategories = budgetConfig.subcategories.map((s) => {
@@ -2707,17 +2987,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         return s;
       });
-      const nextBudgetConfig: BudgetConfig = {
+      nextBudgetConfig = {
         ...budgetConfig,
         subcategories: updatedSubcategories,
+        updatedAt: now,
       };
-      setBudgetConfig(nextBudgetConfig);
-      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
-      if (isCloudUser && user?.uid) {
-        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
-          console.warn('Error saving budget config to Firestore:', err)
-        );
+    }
+
+    setBudgetConfig({ ...nextBudgetConfig, subscriptions: nextSubs });
+    saveStoredBudgetConfig({ ...nextBudgetConfig, subscriptions: nextSubs }, localScopeUid);
+
+    if (isCloudUser && user?.uid) {
+      saveUserSubscription(user.uid, updatedItem).catch((err) =>
+        console.warn('Error toggling subscription in Firestore:', err)
+      );
+      if (mirrorUid) {
+        saveUserSubscription(mirrorUid, updatedItem).catch(() => {});
       }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+        subscriptions: nextSubs,
+      });
     }
 
     addToast(
@@ -2731,44 +3021,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const deleteSubscription = (id: string) => {
     markLocalMutation();
-    const nextDeleted = recordDeletedId(id);
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const target = subscriptions.find((i) => i.id === id);
     const nextSubs = subscriptions.filter((i) => i.id !== id);
     setSubscriptions(nextSubs);
     saveStoredSubscriptions(nextSubs, localScopeUid);
+    if (mirrorUid) saveStoredSubscriptions(nextSubs, mirrorUid);
+
+    const removedSubcatIds: string[] = [];
+    let updatedSubcategories = budgetConfig.subcategories;
+
+    if (target && target.type === 'expense') {
+      const targetNameLower = target.name.toLowerCase().trim();
+      updatedSubcategories = budgetConfig.subcategories.filter((s) => {
+        if (
+          s.id === target.subcategoryId ||
+          s.subscriptionId === id ||
+          s.name.toLowerCase().trim() === targetNameLower
+        ) {
+          removedSubcatIds.push(s.id);
+          return false;
+        }
+        return true;
+      });
+    }
+
+    const nextDeleted = recordDeletedId([id, target?.subcategoryId, ...removedSubcatIds]);
+    if (mirrorUid) saveStoredDeletedIds(nextDeleted, mirrorUid);
+
+    const nextBudgetConfig: BudgetConfig = {
+      ...budgetConfig,
+      subcategories: updatedSubcategories,
+      subscriptions: nextSubs,
+      deletedIds: nextDeleted,
+      updatedAt: new Date().toISOString(),
+    };
+    setBudgetConfig(nextBudgetConfig);
+    saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+
     if (isCloudUser && user?.uid) {
       deleteUserSubscription(user.uid, id).catch((err) =>
         console.warn('Error deleting subscription from Firestore:', err)
       );
-      if (user.email && getCloudAccountUid(user.email) !== user.uid) {
-        deleteUserSubscription(getCloudAccountUid(user.email), id).catch(() => {});
+      if (mirrorUid) {
+        deleteUserSubscription(mirrorUid, id).catch(() => {});
       }
-      const primaryUid = user.uid;
-      const acctUid = user.email ? getCloudAccountUid(user.email) : undefined;
-      persistExtendedBudgetToCloud(primaryUid, acctUid, { deletedIds: nextDeleted });
-    }
-
-    if (target && target.type === 'expense') {
-      const targetNameLower = target.name.toLowerCase().trim();
-      const updatedSubcategories = budgetConfig.subcategories.filter(
-        (s) =>
-          s.id !== target.subcategoryId &&
-          s.subscriptionId !== id &&
-          s.name.toLowerCase().trim() !== targetNameLower
-      );
-      if (updatedSubcategories.length !== budgetConfig.subcategories.length) {
-        const nextBudgetConfig: BudgetConfig = {
-          ...budgetConfig,
-          subcategories: updatedSubcategories,
-        };
-        setBudgetConfig(nextBudgetConfig);
-        saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
-        if (isCloudUser && user?.uid) {
-          saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
-            console.warn('Error saving budget config to Firestore:', err)
-          );
-        }
-      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+        subscriptions: nextSubs,
+        deletedIds: nextDeleted,
+      });
     }
 
     addToast('Jadwal Dihapus', 'Langganan & alokasi subkategori budget terkait telah dihapus.', 'info');
@@ -2778,6 +3080,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const item = subscriptions.find((i) => i.id === id);
     if (!item) return;
 
+    markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const currentPeriodKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
     const dateStr = new Date(activeYear, activeMonth, activeDay, 9, 0, 0).toISOString();
 
@@ -2799,6 +3104,43 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       item.budgetGroup ||
       (item.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
 
+    const updatedItem: RecurringItem = {
+      ...item,
+      lastRecordedPeriod: currentPeriodKey,
+      updatedAt: now,
+    };
+    const nextSubs = subscriptions.map((i) => (i.id === item.id ? updatedItem : i));
+    setSubscriptions(nextSubs);
+    saveStoredSubscriptions(nextSubs, localScopeUid);
+    if (mirrorUid) saveStoredSubscriptions(nextSubs, mirrorUid);
+
+    const updatedSubcategories = (budgetConfig.subcategories || []).map((s) =>
+      matchedSub && s.id === matchedSub.id
+        ? { ...s, lastRecordedPeriod: currentPeriodKey }
+        : s
+    );
+    const nextBudgetConfig: BudgetConfig = {
+      ...budgetConfig,
+      subcategories: updatedSubcategories,
+      subscriptions: nextSubs,
+      updatedAt: now,
+    };
+    setBudgetConfig(nextBudgetConfig);
+    saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+
+    if (isCloudUser && user?.uid) {
+      saveUserSubscription(user.uid, updatedItem).catch((err) =>
+        console.warn('Error updating recorded subscription in Firestore:', err)
+      );
+      if (mirrorUid) {
+        saveUserSubscription(mirrorUid, updatedItem).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+        subscriptions: nextSubs,
+      });
+    }
+
     addTransaction({
       walletId: item.walletId || wallets[0]?.id || 'wallet-bca',
       categoryId: item.categoryId || (matchedSub ? matchedSub.id.replace('sub-', 'cat-') : 'cat-tagihan'),
@@ -2810,18 +3152,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       date: dateStr,
     });
 
-    const updatedItem: RecurringItem = { ...item, lastRecordedPeriod: currentPeriodKey };
-    const nextSubs = subscriptions.map((i) => (i.id === item.id ? updatedItem : i));
-    setSubscriptions(nextSubs);
-    saveStoredSubscriptions(nextSubs, localScopeUid);
-    if (isCloudUser && user?.uid) {
-      saveUserSubscription(user.uid, updatedItem).catch((err) =>
-        console.warn('Error updating recorded subscription in Firestore:', err)
-      );
-      if (user.email && getCloudAccountUid(user.email) !== user.uid) {
-        saveUserSubscription(getCloudAccountUid(user.email), updatedItem).catch(() => {});
-      }
-    }
     addToast(
       'Pembayaran Dicatat',
       item.type === 'expense'
@@ -2832,6 +3162,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const syncSubscriptionsToBudget = () => {
+    markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     let updatedSubcategories = [...(budgetConfig.subcategories || [])];
     let changed = false;
 
@@ -2868,7 +3201,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               }
             : s
         );
-        return { ...item, subcategoryId: matchedSub.id, budgetGroup: determinedGroup };
+        return { ...item, subcategoryId: matchedSub.id, budgetGroup: determinedGroup, updatedAt: now };
       } else {
         changed = true;
         const newSubId = `sub-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -2886,25 +3219,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           frequency: item.frequency,
           lastRecordedPeriod: item.lastRecordedPeriod,
         });
-        return { ...item, subcategoryId: newSubId, budgetGroup: determinedGroup };
+        return { ...item, subcategoryId: newSubId, budgetGroup: determinedGroup, updatedAt: now };
       }
     });
 
     if (changed) {
       setSubscriptions(nextSubs);
       saveStoredSubscriptions(nextSubs, localScopeUid);
+      if (mirrorUid) saveStoredSubscriptions(nextSubs, mirrorUid);
       const nextBudgetConfig: BudgetConfig = {
         ...budgetConfig,
         subcategories: updatedSubcategories,
+        subscriptions: nextSubs,
+        updatedAt: now,
       };
       setBudgetConfig(nextBudgetConfig);
       saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
       if (isCloudUser && user?.uid) {
-        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
-          console.warn('Error saving budget config to Firestore:', err)
-        );
+        persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+          budgetConfig: nextBudgetConfig,
+          subscriptions: nextSubs,
+        });
         for (const subItem of nextSubs) {
           saveUserSubscription(user.uid, subItem).catch(() => {});
+          if (mirrorUid) saveUserSubscription(mirrorUid, subItem).catch(() => {});
         }
       }
       addToast('Sinkronisasi Berhasil', 'Semua jadwal langganan kini terhubung ke Pos Alokasi Budget & Cloud.');
@@ -2913,6 +3251,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Assets & Investments CRUD (Cloud-Synced)
   const addAsset = (type: 'liquid' | 'fixed', item: Omit<AssetItem, 'id'>) => {
+    markLocalMutation();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const newAsset: AssetItem = {
       ...item,
       id: `asset-${Date.now()}`,
@@ -2922,49 +3262,56 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const updated = [...liquidAssets, newAsset];
       setLiquidAssets(updated);
       saveStoredAssets('liquid', updated, localScopeUid);
+      if (mirrorUid) saveStoredAssets('liquid', updated, mirrorUid);
       if (isCloudUser && user?.uid) {
-        saveUserExtendedSyncData(user.uid, { liquidAssets: updated }).catch((err) =>
-          console.warn('Error saving liquid assets to Firestore:', err)
-        );
+        persistExtendedBudgetToCloud(user.uid, mirrorUid, { liquidAssets: updated });
       }
     } else {
       const updated = [...fixedAssets, newAsset];
       setFixedAssets(updated);
       saveStoredAssets('fixed', updated, localScopeUid);
+      if (mirrorUid) saveStoredAssets('fixed', updated, mirrorUid);
       if (isCloudUser && user?.uid) {
-        saveUserExtendedSyncData(user.uid, { fixedAssets: updated }).catch((err) =>
-          console.warn('Error saving fixed assets to Firestore:', err)
-        );
+        persistExtendedBudgetToCloud(user.uid, mirrorUid, { fixedAssets: updated });
       }
     }
     addToast('Aset Ditambahkan', `${item.name} berhasil dicatat dan disinkronkan.`);
   };
 
   const deleteAsset = (type: 'liquid' | 'fixed', id: string) => {
+    markLocalMutation();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const nextDeleted = recordDeletedId(id);
+    if (mirrorUid) saveStoredDeletedIds(nextDeleted, mirrorUid);
     if (type === 'liquid') {
       const updated = liquidAssets.filter((a) => a.id !== id);
       setLiquidAssets(updated);
       saveStoredAssets('liquid', updated, localScopeUid);
+      if (mirrorUid) saveStoredAssets('liquid', updated, mirrorUid);
       if (isCloudUser && user?.uid) {
-        saveUserExtendedSyncData(user.uid, { liquidAssets: updated, deletedIds: nextDeleted }).catch(
-          (err) => console.warn('Error deleting liquid asset in Firestore:', err)
-        );
+        persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+          liquidAssets: updated,
+          deletedIds: nextDeleted,
+        });
       }
     } else {
       const updated = fixedAssets.filter((a) => a.id !== id);
       setFixedAssets(updated);
       saveStoredAssets('fixed', updated, localScopeUid);
+      if (mirrorUid) saveStoredAssets('fixed', updated, mirrorUid);
       if (isCloudUser && user?.uid) {
-        saveUserExtendedSyncData(user.uid, { fixedAssets: updated, deletedIds: nextDeleted }).catch(
-          (err) => console.warn('Error deleting fixed asset in Firestore:', err)
-        );
+        persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+          fixedAssets: updated,
+          deletedIds: nextDeleted,
+        });
       }
     }
     addToast('Aset Dihapus', 'Catatan aset telah dihapus.', 'info');
   };
 
   const addInvestment = (item: Omit<InvestmentItem, 'id'>) => {
+    markLocalMutation();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const newInv: InvestmentItem = {
       ...item,
       id: `inv-${Date.now()}`,
@@ -2973,23 +3320,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const updated = [...investments, newInv];
     setInvestments(updated);
     saveStoredInvestments(updated, localScopeUid);
+    if (mirrorUid) saveStoredInvestments(updated, mirrorUid);
     if (isCloudUser && user?.uid) {
-      saveUserExtendedSyncData(user.uid, { investments: updated }).catch((err) =>
-        console.warn('Error saving investments to Firestore:', err)
-      );
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, { investments: updated });
     }
     addToast('Portofolio Ditambahkan', `${item.name} berhasil dicatat dan disinkronkan.`);
   };
 
   const deleteInvestment = (id: string) => {
+    markLocalMutation();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const nextDeleted = recordDeletedId(id);
+    if (mirrorUid) saveStoredDeletedIds(nextDeleted, mirrorUid);
     const updated = investments.filter((i) => i.id !== id);
     setInvestments(updated);
     saveStoredInvestments(updated, localScopeUid);
+    if (mirrorUid) saveStoredInvestments(updated, mirrorUid);
     if (isCloudUser && user?.uid) {
-      saveUserExtendedSyncData(user.uid, { investments: updated, deletedIds: nextDeleted }).catch(
-        (err) => console.warn('Error deleting investment in Firestore:', err)
-      );
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        investments: updated,
+        deletedIds: nextDeleted,
+      });
     }
     addToast('Portofolio Dihapus', 'Catatan investasi telah dihapus.', 'info');
   };
@@ -3002,6 +3353,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     note?: string,
     date?: string
   ) => {
+    markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const fromW = wallets.find((w) => w.id === fromWalletId);
     const toW = wallets.find((w) => w.id === toWalletId);
 
@@ -3011,15 +3365,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       amount,
       walletId: fromWalletId,
       transferWalletId: toWalletId,
-      date: date || new Date().toISOString(),
+      date: date || now,
       note: note || `Transfer dari ${fromW?.name || 'Dompet'} ke ${toW?.name || 'Dompet'}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
 
     setTransactions((prev) => {
       const updated = [tx, ...prev];
       saveStoredTransactions(updated, localScopeUid);
+      if (mirrorUid) saveStoredTransactions(updated, mirrorUid);
       return updated;
     });
 
@@ -3027,6 +3382,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       saveUserTransaction(user.uid, tx).catch((err) =>
         console.warn('Error saving transfer transaction to Firestore:', err)
       );
+      if (mirrorUid) {
+        saveUserTransaction(mirrorUid, tx).catch(() => {});
+      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid);
     }
 
     addToast('Transfer Berhasil', `Rp ${amount.toLocaleString('id-ID')} dipindahkan.`);
@@ -3034,17 +3393,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Settings
   const updateSettings = (data: Partial<AppSettings>, silent = false) => {
+    markLocalMutation();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const updated = { ...settings, ...data };
     setSettings(updated);
     saveStoredSettings(updated, localScopeUid);
+    if (mirrorUid) saveStoredSettings(updated, mirrorUid);
     if (isCloudUser && user?.uid) {
-      saveUserExtendedSyncData(user.uid, { settings: updated }).catch((err) =>
-        console.warn('Error syncing settings to Firestore:', err)
-      );
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, { settings: updated });
       if (data.userName && data.userName.trim()) {
         const cleanName = data.userName.trim();
         setUser((prev) => (prev ? { ...prev, displayName: cleanName } : prev));
-        updateCloudUserProfile(user.uid, cleanName, user.email || '').catch(() => {});
+        updateCloudUserProfile(user.uid, user.email || '', cleanName, updated).catch(() => {});
+        if (mirrorUid) {
+          updateCloudUserProfile(mirrorUid, user.email || '', cleanName, updated).catch(() => {});
+        }
         const activeLocal = loadActiveLocalUser();
         if (activeLocal) {
           saveActiveLocalUser({ ...activeLocal, displayName: cleanName });
@@ -3067,12 +3430,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const setThemeMode = (mode: ThemeMode) => {
+    markLocalMutation();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
     applyThemeToDOM(mode, settings.accentColor);
     const updated = { ...settings, themeMode: mode };
     setSettings(updated);
     saveStoredSettings(updated, localScopeUid);
+    if (mirrorUid) saveStoredSettings(updated, mirrorUid);
     if (isCloudUser && user?.uid) {
-      saveUserExtendedSyncData(user.uid, { settings: updated }).catch(() => {});
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, { settings: updated });
     }
     addToast(
       mode === 'light' ? 'Mode Terang Aktif' : 'Mode Gelap Aktif',

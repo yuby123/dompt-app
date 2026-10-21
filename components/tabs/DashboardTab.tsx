@@ -22,6 +22,7 @@ import {
   BookOpen,
   CalendarClock,
   Activity,
+  ArrowUpRight,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -265,18 +266,18 @@ export function DashboardTab() {
   ];
   const activePeriodLabel = `01 ${SHORT_MONTHS_ID[activeMonth] || 'Mar'} - ${daysInMonth} ${SHORT_MONTHS_ID[activeMonth] || 'Mar'}`;
 
-  const dailyProgressPct =
+  const dailyCapacityPct =
     dashboardSummary.dailyBudgetQuota > 0
       ? Math.min(
           100,
           Math.max(
-            12,
+            0,
             Math.round(
               (dashboardSummary.dailyBudgetRemaining / dashboardSummary.dailyBudgetQuota) * 100
             )
           )
         )
-      : 28;
+      : 0;
 
   const dayRingPct = Math.min(100, Math.round((currentDay / (daysInMonth || 31)) * 100));
 
@@ -345,99 +346,106 @@ export function DashboardTab() {
 
       {/* Responsive Grid Container: Stacked on Mobile (<lg), Full-width Black Hero + Bento on Desktop (lg+) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 items-stretch">
-        {/* 2. Sekilas Hari Ini (Full-Width Black Banner on Desktop matching screenshot) */}
+        {/* 2. Sekilas Hari Ini (Full-Width Dark Banner matching reference screenshot) */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 bg-[#121316] text-white shadow-xl border border-white/5 flex flex-col justify-between"
+          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[28px] lg:rounded-[32px] p-6 sm:p-8 lg:px-10 lg:py-8 bg-gradient-to-br from-[#110F18] via-[#14111F] to-[#1C162E] text-white shadow-xl border border-white/5 flex flex-col justify-between"
         >
-          {/* Top Label */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-widest text-gray-400">
-              <span className="text-[#D4F826]">⚡</span>
-              <span>SEKILAS HARI INI</span>
+          {/* Top Row: Sekilas Hari Ini • Kuota Operasional Harian | Hari X/Y + Eye */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs sm:text-sm">
+              <span className="font-extrabold text-[#D4F826]">Sekilas Hari Ini</span>
+              <span className="text-gray-500">•</span>
+              <span className="font-medium text-gray-300">Kuota Operasional Harian</span>
             </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs sm:text-sm font-mono font-semibold text-gray-300 tracking-wide">
+                Hari {currentDay}/{daysInMonth}
+              </span>
+              <button
+                type="button"
+                onClick={toggleHideBalance}
+                className="p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                title={hide ? 'Tampilkan Saldo' : 'Sembunyikan Saldo'}
+              >
+                {hide ? <Eye size={16} /> : <EyeOff size={16} />}
+              </button>
+            </div>
+          </div>
+
+          {/* Middle Row: Left Big Monospace Balance + Right Outlined Cards */}
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mt-5 lg:mt-6">
+            <div>
+              <div className="text-4xl sm:text-5xl lg:text-[54px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
+                {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.dailyBudgetRemaining, false)}
+              </div>
+              <p className="text-xs sm:text-sm text-gray-400 font-medium mt-3">
+                {dashboardSummary.dailyOverbudget
+                  ? `Melebihi kuota harian (${formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari`
+                  : `Tersedia dari kuota harian ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari di luar tagihan tetap`}
+              </p>
+            </div>
+
+            {/* Right: 2 Outlined Box Cards (PEMASUKAN HARI INI & PENGELUARAN HARI INI) */}
+            <div className="grid grid-cols-2 gap-3 sm:gap-4 shrink-0">
+              <div className="rounded-2xl bg-white/[0.03] border border-white/10 px-4 sm:px-5 py-3.5 sm:py-4 min-w-[140px] sm:min-w-[175px]">
+                <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block">
+                  PEMASUKAN HARI INI
+                </span>
+                <div className="text-lg sm:text-xl font-mono font-bold text-[#D4F826] mt-1.5 tabular-nums">
+                  {hide ? 'Rp ••••••' : `+${formatRupiah(todayIncome, false)}`}
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-white/[0.03] border border-white/10 px-4 sm:px-5 py-3.5 sm:py-4 min-w-[140px] sm:min-w-[175px]">
+                <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block">
+                  PENGELUARAN HARI INI
+                </span>
+                <div className="text-lg sm:text-xl font-mono font-bold text-[#FB7185] mt-1.5 tabular-nums">
+                  {hide ? 'Rp ••••••' : `-${formatRupiah(todayExpense, false)}`}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Section: Kapasitas Kuota Harian + Gradient Bar */}
+          <div className="mt-6 lg:mt-7">
+            <div className="flex items-center justify-between text-xs mb-2">
+              <span className="text-gray-400 font-medium">Kapasitas Kuota Harian</span>
+              <span className="text-white font-extrabold tabular-nums">{dailyCapacityPct}%</span>
+            </div>
+            <div className="w-full h-2.5 bg-white/10 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  dashboardSummary.dailyOverbudget
+                    ? 'bg-[#FB7185]'
+                    : 'bg-gradient-to-r from-[#D4F826] via-[#8B5CF6] to-[#38BDF8]'
+                }`}
+                style={{ width: `${dailyCapacityPct}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Bottom Action Buttons */}
+          <div className="flex flex-wrap items-center gap-3 mt-6">
             <button
               type="button"
-              onClick={toggleHideBalance}
-              className="lg:hidden p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
-              title={hide ? 'Tampilkan' : 'Sembunyikan'}
+              onClick={() => openAddTransaction()}
+              className="px-5 py-3 rounded-full bg-[#D4F826] hover:bg-[#c8ed1d] text-black font-extrabold text-xs sm:text-sm flex items-center gap-2 shadow-md transition-transform active:scale-95 cursor-pointer"
             >
-              {hide ? <Eye size={16} /> : <EyeOff size={16} />}
+              <Plus size={16} strokeWidth={2.5} />
+              <span>Catat Transaksi</span>
             </button>
-          </div>
 
-          {/* Main Content Row: Left Big Balance + Right Pemasukan & Pengeluaran */}
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 my-3 lg:my-4">
-            <div>
-              <div className="flex items-center gap-3">
-                <div className="text-3xl sm:text-4xl lg:text-[42px] font-black tracking-tight tabular-nums text-white leading-none">
-                  {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.dailyBudgetRemaining, false)}
-                </div>
-                <button
-                  type="button"
-                  onClick={toggleHideBalance}
-                  className="hidden lg:inline-flex p-1.5 text-gray-500 hover:text-gray-300 transition-colors cursor-pointer rounded-lg"
-                  title={hide ? 'Tampilkan Saldo' : 'Sembunyikan Saldo'}
-                >
-                  {hide ? <Eye size={18} /> : <EyeOff size={18} />}
-                </button>
-              </div>
-              <div className="flex flex-col gap-1 mt-2.5">
-                <p className="text-xs text-gray-400 font-medium flex items-center gap-1.5">
-                  <span>👆</span>
-                  <span>
-                    {dashboardSummary.dailyBudgetQuota > 0
-                      ? dashboardSummary.dailyOverbudget
-                        ? `Melebihi kuota harian (${formatRupiah(dashboardSummary.dailyOverbudgetAmount, false)})`
-                        : `sisa budget harian operasional (kuota: ${formatRupiah(dashboardSummary.dailyBudgetQuota, false)}/hari)`
-                      : 'budget harian belum diatur'}
-                  </span>
-                </p>
-                {dashboardSummary.todayFixedExpense > 0 && !hide && (
-                  <p className="text-[11px] font-semibold text-sky-400/90 flex items-center gap-1">
-                    <span>📅</span>
-                    <span>Tagihan rutin hari ini {formatRupiah(dashboardSummary.todayFixedExpense, false)} diambil dari pos terpisah</span>
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Pemasukan vs Pengeluaran on Right Side */}
-            <div className="grid grid-cols-2 lg:flex lg:items-center gap-4 lg:gap-10 pt-3.5 lg:pt-0 border-t border-white/10 lg:border-t-0">
-              <div>
-                <span className="text-[9px] lg:text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block">
-                  PEMASUKAN
-                </span>
-                <div className="text-sm sm:text-base lg:text-lg font-black text-[#D4F826] mt-1 tabular-nums">
-                  {hide ? 'Rp ••••••' : formatRupiah(todayIncome, false)}
-                </div>
-              </div>
-
-              <div>
-                <span className="text-[9px] lg:text-[10px] font-extrabold text-gray-500 uppercase tracking-wider block">
-                  PENGELUARAN
-                </span>
-                <div className="text-sm sm:text-base lg:text-lg font-black text-[#F472B6] mt-1 tabular-nums">
-                  {hide ? 'Rp ••••••' : formatRupiah(todayExpense, false)}
-                </div>
-                {dashboardSummary.todayFixedExpense > 0 && !hide && (
-                  <span className="text-[9px] text-gray-400 block mt-0.5">
-                    Harian: {formatRupiah(dashboardSummary.todayVariableExpense, false)}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Full-width bottom progress line */}
-          <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mt-3 lg:mt-4">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${
-                dashboardSummary.dailyOverbudget ? 'bg-[#F472B6]' : 'bg-[#D4F826]'
-              }`}
-              style={{ width: `${dailyProgressPct}%` }}
-            />
+            <button
+              type="button"
+              onClick={() => setActiveTab('wallets')}
+              className="px-5 py-3 rounded-full bg-white/[0.03] hover:bg-white/[0.08] border border-white/15 text-white font-bold text-xs sm:text-sm flex items-center gap-2 transition-colors cursor-pointer"
+            >
+              <span>Lihat Saldo Dompet</span>
+              <ArrowUpRight size={15} className="text-gray-400" />
+            </button>
           </div>
         </motion.div>
 

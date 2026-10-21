@@ -5,6 +5,7 @@ import { AppProvider, useApp } from '@/components/AppContext';
 import { Header } from '@/components/Header';
 import { Navigation } from '@/components/Navigation';
 import { DesktopSidebar } from '@/components/DesktopSidebar';
+import { Footer } from '@/components/Footer';
 import { DashboardTab } from '@/components/tabs/DashboardTab';
 import { WalletsTab } from '@/components/tabs/WalletsTab';
 import { TransactionsTab } from '@/components/tabs/TransactionsTab';
@@ -46,18 +47,18 @@ function MainAppContent() {
   return (
     <div
       data-accent={accentAttr}
-      className="min-h-screen bg-[#F5F6F8] dark:bg-[#0B0C10] text-gray-900 dark:text-gray-100 transition-colors selection:bg-[#D4F826] selection:text-black lg:flex"
+      className="min-h-screen bg-[#F6F7FB] dark:bg-[#08090F] bg-noise-subtle text-slate-900 dark:text-slate-100 transition-colors selection:bg-[#D4F826] selection:text-black lg:flex"
     >
       {/* Desktop Left Sidebar (visible on lg+ website view) */}
       <DesktopSidebar />
 
       {/* Main Content Container: Mobile Frame (<lg) vs Wide Desktop Canvas (lg+) */}
-      <div className="max-w-md mx-auto min-h-screen flex flex-col px-3 sm:px-4 relative lg:max-w-none lg:mx-0 lg:flex-1 lg:px-8 xl:px-10 lg:py-6 lg:overflow-x-hidden">
-        {/* Top Navbar (mobile only) */}
+      <div className="max-w-md mx-auto min-h-screen flex flex-col px-3 sm:px-4 relative lg:max-w-none lg:mx-0 lg:flex-1 lg:px-8 xl:px-10 lg:pb-8 lg:overflow-x-hidden">
+        {/* Top Bar Contract Header */}
         <Header />
 
         {/* Dynamic Tab View */}
-        <main className="flex-1 pt-1 lg:pt-0 lg:max-w-[1200px] lg:w-full lg:mx-auto">
+        <main className="flex-1 pt-1 lg:pt-2 lg:max-w-[1200px] lg:w-full lg:mx-auto">
           <AnimatePresence mode="wait">
             <motion.div
               key={activeTab}
@@ -83,6 +84,9 @@ function MainAppContent() {
               {activeTab === 'health-score' && <HealthScoreTab />}
             </motion.div>
           </AnimatePresence>
+
+          {/* Architectural Footer */}
+          <Footer />
         </main>
 
         {/* Bottom Floating Pill Navigation (mobile only) */}

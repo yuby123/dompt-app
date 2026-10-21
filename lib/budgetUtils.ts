@@ -1,4 +1,4 @@
-import { BudgetConfig, Category, RecurringItem, Transaction } from './types';
+import { BudgetConfig, Category, Debt, RecurringItem, Transaction } from './types';
 
 // Category IDs that represent fixed monthly obligations
 export const FIXED_CATEGORY_IDS = new Set([
@@ -110,13 +110,13 @@ export interface BudgetBreakdownResult {
  *
  * Rules:
  * 1. Monthly Spending Limit = Estimated Income * (Needs% + Wants%) [typically 80%].
- * 2. Monthly Fixed Budget = Sum of allocated fixed subcategories (bills with due date or fixed nature)
- *    + any active Expense Subscriptions not yet represented in subcategories.
+ * 2. Monthly Fixed Budget = Sum of effective fixed subcategories (max of allocated vs realized)
+ *    + any unallocated fixed expenses / debt installment payments made this month.
+ *    -> Paying a debt (e.g. Rp1.000.000) this month automatically increases Monthly Fixed Budget
+ *       and cuts the available Monthly Variable Budget & Daily Budget Quota!
  * 3. Monthly Variable Budget = Math.max(0, Monthly Spending Limit - Monthly Fixed Budget).
  * 4. Daily Budget Quota = Math.round(Monthly Variable Budget / DaysInMonth).
- * 5. Daily Budget Remaining = Math.max(0, Daily Budget Quota - Today's Variable Expenses).
- *    -> Any Fixed Expense (Wi-Fi, Netflix, Listrik, BPJS, Cicilan) goes to todayFixedExpense,
- *       NOT todayVariableExpense, preserving the daily budget!
+ * 5. Daily Budget Remaining = Math.max(0, Effective Daily Quota - Today's Variable Expenses).
  */
 export function calculateBudgetBreakdown({
   budgetConfig,
@@ -126,6 +126,7 @@ export function calculateBudgetBreakdown({
   activeMonth,
   activeDay,
   subscriptions = [],
+  debts = [],
 }: {
   budgetConfig: BudgetConfig;
   transactions: Transaction[];
@@ -134,6 +135,7 @@ export function calculateBudgetBreakdown({
   activeMonth: number;
   activeDay: number;
   subscriptions?: RecurringItem[];
+  debts?: Debt[];
 }): BudgetBreakdownResult {
   const daysInMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
   const estIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
@@ -146,9 +148,8 @@ export function calculateBudgetBreakdown({
   // Build lookup of expense subscriptions
   const expenseSubscriptions = subscriptions.filter((s) => s.type === 'expense');
 
-  // 2. Identify fixed subcategories from Needs & Wants in budgetConfig (exclude 'tabungan' which has its own 20% bucket)
-  // Single source of truth: only subcategories that exist in budgetConfig.subcategories are counted
-  let allocatedFixedFromSubs = 0;
+  // 2. Identify active fixed subcategories from Needs & Wants in budgetConfig (exclude 'tabungan' which has its own 20% bucket)
+  const activeFixedSubs: { id: string; name: string; allocatedAmount: number }[] = [];
   if (budgetConfig?.subcategories && budgetConfig.subcategories.length > 0) {
     budgetConfig.subcategories.forEach((sub) => {
       if (sub.group === 'tabungan') return;
@@ -162,10 +163,7 @@ export function calculateBudgetBreakdown({
       );
 
       if (linkedSub) {
-        // If linked subscription is explicitly paused, skip counting its fixed obligation this month
-        if (!linkedSub.isActive) {
-          return;
-        }
+        if (!linkedSub.isActive) return;
       } else if (sub.isSubscriptionActive === false) {
         return;
       }
@@ -174,21 +172,68 @@ export function calculateBudgetBreakdown({
         Boolean(sub.dueDateDay) ||
         Boolean(sub.subscriptionId) ||
         Boolean(linkedSub) ||
+        sub.id.startsWith('sub-debt-') ||
         FIXED_CATEGORY_IDS.has(sub.id.replace('sub-', 'cat-')) ||
         FIXED_EXPENSE_KEYWORDS_REGEX.test(sub.name);
       if (isSubFixed) {
-        allocatedFixedFromSubs += Number(sub.allocatedAmount) || 0;
+        activeFixedSubs.push({
+          id: sub.id,
+          name: sub.name,
+          allocatedAmount: Number(sub.allocatedAmount) || 0,
+        });
       }
     });
   }
 
-  // 3. Partition transactions into Variable vs Fixed (excluding pure savings transfers/allocations from operational variable expense)
+  // Helper to match a fixed expense note/category to one of activeFixedSubs
+  const fixedSubSpentMap: Record<string, number> = {};
+  let unallocatedFixedExp = 0;
+
+  const matchFixedSubcategory = (noteStr: string, catNameStr: string, categoryId?: string | null) => {
+    const cleanNote = noteStr
+      .toLowerCase()
+      .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)|bayar cicilan utang:|cicilan utang:/gi, '')
+      .trim();
+    const rawNote = noteStr.toLowerCase().trim();
+
+    return activeFixedSubs.find((s) => {
+      const subNameLower = s.name.toLowerCase().trim();
+      const cleanSubName = subNameLower.replace(/^cicilan\s+/i, '').trim();
+      if (categoryId && s.id.replace('sub-', '') === categoryId.replace('cat-', '')) {
+        return true;
+      }
+      if (
+        cleanNote === subNameLower ||
+        (cleanSubName && cleanNote.includes(cleanSubName)) ||
+        rawNote.includes(subNameLower) ||
+        cleanNote.includes(subNameLower) ||
+        (cleanNote && subNameLower.includes(cleanNote))
+      ) {
+        return true;
+      }
+      const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3 && w !== 'cicilan');
+      const noteWords = cleanNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
+      if (subWords.length > 0 && noteWords.length > 0) {
+        if (subWords.some((sw) => noteWords.some((nw) => nw === sw || nw.includes(sw) || sw.includes(nw)))) {
+          return true;
+        }
+      }
+      if (catNameStr && subNameLower && (catNameStr.includes(subNameLower) || subNameLower.includes(catNameStr))) {
+        return true;
+      }
+      return false;
+    });
+  };
+
+  // 3. Partition transactions into Variable vs Fixed
   let monthlyVarExp = 0;
   let monthlyFixExp = 0;
   let todayVarExp = 0;
   let todayFixExp = 0;
+  const recordedTxIds = new Set<string>();
 
   transactions.forEach((tx) => {
+    recordedTxIds.add(tx.id);
     if (tx.type !== 'expense') return;
     const d = new Date(tx.date);
     if (d.getFullYear() === activeYear && d.getMonth() === activeMonth) {
@@ -197,6 +242,12 @@ export function calculateBudgetBreakdown({
 
       if (fixed) {
         monthlyFixExp += tx.amount;
+        const matchedSub = matchFixedSubcategory(tx.note || '', (cat?.name || '').toLowerCase(), tx.categoryId);
+        if (matchedSub) {
+          fixedSubSpentMap[matchedSub.id] = (fixedSubSpentMap[matchedSub.id] || 0) + tx.amount;
+        } else {
+          unallocatedFixedExp += tx.amount;
+        }
       } else {
         monthlyVarExp += tx.amount;
       }
@@ -211,12 +262,38 @@ export function calculateBudgetBreakdown({
     }
   });
 
-  // 4. Monthly Fixed Budget
-  // Murni dari subkategori tagihan tetap & langganan aktif yang dialokasikan pengguna.
-  // Jika pengguna belum mengalokasikan subkategori/langganan spesifik, gunakan realisasi tagihan tetap bulan ini (jika ada) atau 0.
-  const monthlyFixedBudget = allocatedFixedFromSubs > 0 ? allocatedFixedFromSubs : monthlyFixExp;
+  // 3b. Also include any payable debt payments recorded in DebtTab this month that did not create a wallet transaction
+  debts.forEach((debt) => {
+    if (debt.type !== 'payable') return;
+    (debt.payments || []).forEach((p) => {
+      if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
+      const pd = new Date(p.date);
+      if (pd.getFullYear() === activeYear && pd.getMonth() === activeMonth) {
+        monthlyFixExp += p.amount;
+        if (pd.getDate() === activeDay) {
+          todayFixExp += p.amount;
+        }
+        const matchedSub = matchFixedSubcategory(`${debt.name} ${p.note || ''}`, 'tagihan');
+        if (matchedSub) {
+          fixedSubSpentMap[matchedSub.id] = (fixedSubSpentMap[matchedSub.id] || 0) + p.amount;
+        } else {
+          unallocatedFixedExp += p.amount;
+        }
+      }
+    });
+  });
 
-  // 5. Monthly Variable Budget (untuk operasional harian)
+  // 4. Monthly Fixed Budget:
+  // Each fixed subcategory reserves at least its allocatedAmount (or actual spent if higher),
+  // PLUS any unallocated fixed expenses / debt payments made this month!
+  const effectiveSubsFixedTotal = activeFixedSubs.reduce((sum, sub) => {
+    const spentOnSub = fixedSubSpentMap[sub.id] || 0;
+    return sum + Math.max(sub.allocatedAmount, spentOnSub);
+  }, 0);
+
+  const monthlyFixedBudget = effectiveSubsFixedTotal + unallocatedFixedExp;
+
+  // 5. Monthly Variable Budget (untuk operasional harian, otomatis terpotong oleh tagihan & pembayaran utang bulan ini)
   const monthlyVariableBudget = Math.max(0, monthlySpendingLimit - monthlyFixedBudget);
 
   // 6. Daily Budget Quota (per hari)

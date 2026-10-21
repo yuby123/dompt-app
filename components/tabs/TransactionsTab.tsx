@@ -111,53 +111,50 @@ export function TransactionsTab() {
   }, [filteredTransactions, activeDate]);
 
   return (
-    <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
+    <div className="space-y-5 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 lg:pt-0 px-1">
         <div>
-          <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
-            Transaksi
+          <h1 className="font-display text-2xl lg:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+            Buku Besar Transaksi
           </h1>
-          <p className="text-xs lg:text-sm font-semibold text-gray-400 mt-0.5">
-            Uangmu lari ke mana aja? Pantau dan filter semua riwayatmu.
+          <p className="text-xs lg:text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5">
+            Telusuri, filter, dan audit seluruh arus kas masuk maupun keluar per dompet.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => openScanModal()}
-            className="h-10 px-3.5 sm:px-4 rounded-2xl bg-white dark:bg-[#16181D] hover:bg-gray-50 dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95"
+            className="h-10 px-4 rounded-full bg-white dark:bg-[#11131E] hover:bg-slate-50 dark:hover:bg-white/[0.06] border border-slate-200/90 dark:border-white/10 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-2 font-semibold text-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap shrink-0"
             title="Scan Struk & Bukti Transfer"
           >
-            <Camera size={16} className="text-[#658500] dark:text-[#D4F826]" />
-            <span>Scan Struk</span>
+            <Camera size={15} className="text-indigo-600 dark:text-[#D4F826]" />
+            <span>Scan Struk AI</span>
           </button>
           <button
             type="button"
             onClick={() => openAddTransaction()}
-            className="h-10 px-3.5 sm:px-4 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95"
+            className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-bold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap shrink-0"
             title="Catat Transaksi Manual"
           >
-            <Plus size={18} strokeWidth={2.8} />
-            <span className="hidden sm:inline">Catat Transaksi</span>
-            <span className="sm:hidden">Catat</span>
+            <Plus size={16} strokeWidth={2.8} />
+            <span>Catat Transaksi</span>
           </button>
         </div>
       </div>
 
-      {/* Full-Width Black Summary Card */}
-      <div className="w-full bg-[#121316] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-6 text-white shadow-xl border border-white/5">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+      {/* Bespoke Deep Indigo & Obsidian Summary Card */}
+      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-6 lg:px-9 lg:py-7 text-white border border-white/10">
+        <div className="absolute -top-20 -right-16 w-64 h-64 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none" />
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest">
-                RINGKASAN RIWAYAT TERFILTER
-              </span>
-              <span className="px-2 py-0.5 rounded-md bg-[#D4F826] text-black text-[10px] font-black uppercase">
-                {filteredTransactions.length} TRANSAKSI
-              </span>
+            <div className="flex items-center gap-2 text-xs text-slate-300">
+              <span className="text-[#D4F826] font-semibold">Ringkasan Riwayat Terfilter</span>
+              <span aria-hidden="true">·</span>
+              <span>{filteredTransactions.length} Transaksi</span>
             </div>
-            <div className="text-2xl sm:text-3xl font-black tracking-tight tabular-nums mt-1">
+            <div className="font-display font-mono-num text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight mt-1.5">
               {filteredSummary.net >= 0 ? '+' : '-'}
               {formatRupiah(Math.abs(filteredSummary.net), hide)}
             </div>
@@ -165,18 +162,18 @@ export function TransactionsTab() {
 
           <div className="grid grid-cols-2 gap-6 lg:gap-10 pt-3 lg:pt-0 border-t lg:border-t-0 border-white/10">
             <div>
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                TOTAL PEMASUKAN
+              <span className="text-[11px] font-medium text-slate-400 block">
+                Total Pemasukan
               </span>
-              <span className="text-sm lg:text-lg font-black text-[#D4F826] tabular-nums mt-0.5 block">
+              <span className="font-mono-num text-sm lg:text-lg font-bold text-[#D4F826] mt-0.5 block">
                 +{formatRupiah(filteredSummary.income, hide)}
               </span>
             </div>
             <div>
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                TOTAL PENGELUARAN
+              <span className="text-[11px] font-medium text-slate-400 block">
+                Total Pengeluaran
               </span>
-              <span className="text-sm lg:text-lg font-black text-[#FB7185] tabular-nums mt-0.5 block">
+              <span className="font-mono-num text-sm lg:text-lg font-bold text-[#FF6B2B] mt-0.5 block">
                 -{formatRupiah(filteredSummary.expense, hide)}
               </span>
             </div>
@@ -318,7 +315,7 @@ export function TransactionsTab() {
               })()}
 
               {/* Transactions in Date Group */}
-              <div className="bg-white dark:bg-[#16181D] rounded-3xl p-3 shadow-xs border border-gray-100 dark:border-gray-800 divide-y divide-gray-100 dark:divide-gray-800">
+              <div className="bg-white dark:bg-[#11131E] rounded-[28px] p-3.5 border border-slate-200/80 dark:border-white/[0.08] divide-y divide-slate-100 dark:divide-white/[0.06]">
                 {group.items.map((item) => {
                   const { transaction, wallet, category, transferWallet } = item;
                   const isExpanded = expandedId === transaction.id;
@@ -329,34 +326,37 @@ export function TransactionsTab() {
                   return (
                     <div
                       key={transaction.id}
-                      className="py-2.5 px-2 hover:bg-gray-50/50 dark:hover:bg-gray-800/30 rounded-2xl cursor-pointer transition-colors"
+                      className="py-3 px-2 hover:bg-slate-50/60 dark:hover:bg-white/[0.03] rounded-2xl cursor-pointer transition-colors"
                       onClick={() => setExpandedId(isExpanded ? null : transaction.id)}
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3 min-w-0">
-                          {/* Cute Emoji Avatar in soft pink pill background */}
-                          <div className="w-10 h-10 rounded-full bg-[#FFE4E8] dark:bg-[#3D1E24] text-xl flex items-center justify-center shrink-0">
+                          <div className="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-white/[0.06] text-xl flex items-center justify-center shrink-0">
                             {category?.emoji || (isTransfer ? '🔄' : '☕')}
                           </div>
 
                           <div className="min-w-0">
-                            <p className="text-xs font-black text-gray-900 dark:text-white truncate">
+                            <p className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">
                               {transaction.note || category?.name || (isTransfer ? 'Transfer' : 'Transaksi')}
                             </p>
-                            <div className="flex items-center gap-1 text-[10px] text-gray-400 mt-0.5">
-                              <span>🏷️ {category?.name || (isTransfer ? 'Transfer' : 'Lainnya')}</span>
+                            <div className="flex items-center flex-wrap gap-1.5 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                              <span>{category?.name || (isTransfer ? 'Transfer' : 'Lainnya')}</span>
+                              <span aria-hidden="true">·</span>
+                              <span className="font-medium text-slate-600 dark:text-slate-300">
+                                {isTransfer ? `${wallet.name} → ${transferWallet?.name || 'Tujuan'}` : wallet.name}
+                              </span>
                             </div>
                           </div>
                         </div>
 
                         <div className="text-right shrink-0">
                           <span
-                            className={`text-xs font-black tabular-nums ${
+                            className={`font-mono-num text-xs sm:text-sm font-bold ${
                               isExpense
-                                ? 'text-gray-900 dark:text-white'
+                                ? 'text-slate-900 dark:text-white'
                                 : isIncome
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-blue-600 dark:text-blue-400'
+                                ? 'text-emerald-600 dark:text-[#D4F826]'
+                                : 'text-sky-500'
                             }`}
                           >
                             {isExpense ? '-' : isIncome ? '+' : ''}

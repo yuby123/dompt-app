@@ -30,6 +30,7 @@ export function BudgetTab() {
     budgetConfig,
     dashboardSummary,
     subscriptions,
+    debts,
     setActiveTab,
     updateBudgetConfig,
     addBudgetSubcategory,
@@ -94,53 +95,46 @@ export function BudgetTab() {
   const daysInCurMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
   const curMonthShort = curMonthDate.toLocaleString('id-ID', { month: 'short' });
 
-  // Filter subcategories
-  const needsSubs = budgetConfig.subcategories.filter((s) => s.group === 'kebutuhan');
-  const wantsSubs = budgetConfig.subcategories.filter((s) => s.group === 'keinginan');
-  const savingsSubs = budgetConfig.subcategories.filter((s) => s.group === 'tabungan');
+  // Merge subcategories with any payable debt payments made this month not yet in budgetConfig.subcategories
+  const effectiveSubcategories = useMemo<BudgetSubcategory[]>(() => {
+    const base = [...(budgetConfig.subcategories || [])];
+    (debts || []).forEach((debt) => {
+      if (debt.type !== 'payable') return;
+      const paidThisMonth = (debt.payments || []).reduce((sum, p) => {
+        const pd = new Date(p.date);
+        if (pd.getFullYear() === activeYear && pd.getMonth() === activeMonth) {
+          return sum + p.amount;
+        }
+        return sum;
+      }, 0);
+      if (paidThisMonth <= 0) return;
 
-  // Subcategories recognized as fixed monthly obligations (Wi-Fi, Netflix, Listrik, etc.)
-  // Single source of truth: only subcategories currently in budgetConfig.subcategories (Kebutuhan & Keinginan)
-  const fixedSubcategories = useMemo(() => {
-    const expenseSubs = (subscriptions || []).filter((s) => s.type === 'expense');
-    const list: { id: string; name: string; allocatedAmount: number }[] = [];
-
-    budgetConfig.subcategories.forEach((sub) => {
-      if (sub.group === 'tabungan') return;
-
-      const subNameLower = sub.name.toLowerCase().trim();
-      const linkedRec = expenseSubs.find(
-        (rec) =>
-          rec.id === sub.subscriptionId ||
-          rec.subcategoryId === sub.id ||
-          rec.name.toLowerCase().trim() === subNameLower
-      );
-      if (linkedRec) {
-        if (!linkedRec.isActive) return;
-      } else if (sub.isSubscriptionActive === false) {
-        return;
-      }
-
-      const isFixed =
-        Boolean(sub.dueDateDay) ||
-        Boolean(sub.subscriptionId) ||
-        Boolean(linkedRec) ||
-        FIXED_CATEGORY_IDS.has(sub.id.replace('sub-', 'cat-')) ||
-        FIXED_EXPENSE_KEYWORDS_REGEX.test(sub.name);
-
-      if (isFixed) {
-        list.push({
-          id: sub.id,
-          name: sub.name,
-          allocatedAmount: sub.allocatedAmount,
+      const debtSubId = `sub-debt-${debt.id}`;
+      const cleanDebtName = debt.name.toLowerCase().trim();
+      const subDisplayName = `Cicilan ${debt.name}`;
+      const exists = base.some((s) => {
+        const sLower = s.name.toLowerCase().trim();
+        return s.id === debtSubId || sLower === subDisplayName.toLowerCase() || sLower === cleanDebtName;
+      });
+      if (!exists) {
+        base.push({
+          id: debtSubId,
+          name: subDisplayName,
+          group: 'kebutuhan',
+          allocatedAmount: paidThisMonth,
+          emoji: '💳',
         });
       }
     });
+    return base;
+  }, [budgetConfig.subcategories, debts, activeYear, activeMonth]);
 
-    return list;
-  }, [budgetConfig.subcategories, subscriptions]);
+  // Filter subcategories
+  const needsSubs = effectiveSubcategories.filter((s) => s.group === 'kebutuhan');
+  const wantsSubs = effectiveSubcategories.filter((s) => s.group === 'keinginan');
+  const savingsSubs = effectiveSubcategories.filter((s) => s.group === 'tabungan');
 
-  // Dynamic subcategory spent amounts calculated from transactions this month
+  // Dynamic subcategory spent amounts calculated from transactions & debt payments this month
   const { subSpentMap, unallocatedGroupSpent } = useMemo(() => {
     const map: Record<string, number> = {};
     const unallocatedMap: Record<BudgetGroup, number> = {
@@ -152,8 +146,10 @@ export function BudgetTab() {
     const catMap = new Map<string, { name: string; group?: BudgetGroup }>(
       categories.map((c) => [c.id, { name: c.name.toLowerCase(), group: c.budgetGroup }])
     );
+    const recordedTxIds = new Set<string>();
 
     transactions.forEach((tx) => {
+      recordedTxIds.add(tx.id);
       const d = new Date(tx.date);
       if (d.getFullYear() === activeYear && d.getMonth() === activeMonth) {
         if (tx.type === 'expense') {
@@ -163,15 +159,16 @@ export function BudgetTab() {
 
           const cleanTxNote = (tx.note || '')
             .toLowerCase()
-            .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)/gi, '')
+            .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)|bayar cicilan utang:|cicilan utang:/gi, '')
             .trim();
           const rawTxNote = (tx.note || '').toLowerCase().trim();
 
           // 1. Try matching subcategory in the same budget group first (if txGroup is known)
-          let matchSub = budgetConfig.subcategories.find((s) => {
+          let matchSub = effectiveSubcategories.find((s) => {
             if (txGroup && s.group !== txGroup) return false;
 
             const subNameLower = s.name.toLowerCase().trim();
+            const cleanSubName = subNameLower.replace(/^cicilan\s+/i, '').trim();
 
             // A. Direct ID match (e.g. sub-makan vs cat-makan)
             if (tx.categoryId && s.id.replace('sub-', '') === tx.categoryId.replace('cat-', '')) {
@@ -182,15 +179,16 @@ export function BudgetTab() {
             if (subNameLower) {
               if (
                 cleanTxNote === subNameLower ||
+                (cleanSubName && cleanTxNote.includes(cleanSubName)) ||
                 rawTxNote.includes(subNameLower) ||
                 cleanTxNote.includes(subNameLower) ||
-                subNameLower.includes(cleanTxNote)
+                (cleanTxNote && subNameLower.includes(cleanTxNote))
               ) {
                 return true;
               }
 
               // C. Keyword overlap (e.g. "wifi" in "wifi & internet")
-              const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
+              const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3 && w !== 'cicilan');
               const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
               if (subWords.length > 0 && noteWords.length > 0) {
                 const hasCommon = subWords.some((sw) =>
@@ -212,18 +210,20 @@ export function BudgetTab() {
 
           // 2. If no match within group, search all subcategories by note / keywords
           if (!matchSub && (cleanTxNote || rawTxNote)) {
-            matchSub = budgetConfig.subcategories.find((s) => {
+            matchSub = effectiveSubcategories.find((s) => {
               const subNameLower = s.name.toLowerCase().trim();
+              const cleanSubName = subNameLower.replace(/^cicilan\s+/i, '').trim();
               if (!subNameLower) return false;
               if (
                 cleanTxNote === subNameLower ||
+                (cleanSubName && cleanTxNote.includes(cleanSubName)) ||
                 rawTxNote.includes(subNameLower) ||
                 cleanTxNote.includes(subNameLower) ||
-                subNameLower.includes(cleanTxNote)
+                (cleanTxNote && subNameLower.includes(cleanTxNote))
               ) {
                 return true;
               }
-              const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
+              const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3 && w !== 'cicilan');
               const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
               return subWords.some((sw) =>
                 noteWords.some((nw) => nw === sw || nw.includes(sw) || sw.includes(nw))
@@ -239,7 +239,7 @@ export function BudgetTab() {
             unallocatedMap['kebutuhan'] = (unallocatedMap['kebutuhan'] || 0) + tx.amount;
           }
         } else if (tx.type === 'transfer' && tx.budgetGroup === 'tabungan') {
-          const matchSub = budgetConfig.subcategories.find((s) => s.group === 'tabungan');
+          const matchSub = effectiveSubcategories.find((s) => s.group === 'tabungan');
           if (matchSub) {
             map[matchSub.id] = (map[matchSub.id] || 0) + tx.amount;
           } else {
@@ -249,11 +249,79 @@ export function BudgetTab() {
       }
     });
 
+    // Also include payable debt payments recorded in DebtTab this month that did not create a wallet transaction
+    (debts || []).forEach((debt) => {
+      if (debt.type !== 'payable') return;
+      (debt.payments || []).forEach((p) => {
+        if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
+        const pd = new Date(p.date);
+        if (pd.getFullYear() === activeYear && pd.getMonth() === activeMonth) {
+          const debtSubId = `sub-debt-${debt.id}`;
+          const cleanDebtName = debt.name.toLowerCase().trim();
+          const matchSub = effectiveSubcategories.find((s) => {
+            const sLower = s.name.toLowerCase().trim();
+            return (
+              s.id === debtSubId ||
+              sLower === `cicilan ${cleanDebtName}` ||
+              sLower === cleanDebtName
+            );
+          });
+          if (matchSub) {
+            map[matchSub.id] = (map[matchSub.id] || 0) + p.amount;
+          } else {
+            unallocatedMap['kebutuhan'] = (unallocatedMap['kebutuhan'] || 0) + p.amount;
+          }
+        }
+      });
+    });
+
     return { subSpentMap: map, unallocatedGroupSpent: unallocatedMap };
-  }, [transactions, categories, budgetConfig.subcategories, activeYear, activeMonth]);
+  }, [transactions, categories, effectiveSubcategories, debts, activeYear, activeMonth]);
+
+  // Subcategories recognized as fixed monthly obligations (Wi-Fi, Netflix, Listrik, Cicilan Utang, etc.)
+  const fixedSubcategories = useMemo(() => {
+    const expenseSubs = (subscriptions || []).filter((s) => s.type === 'expense');
+    const list: { id: string; name: string; allocatedAmount: number }[] = [];
+
+    effectiveSubcategories.forEach((sub) => {
+      if (sub.group === 'tabungan') return;
+
+      const subNameLower = sub.name.toLowerCase().trim();
+      const linkedRec = expenseSubs.find(
+        (rec) =>
+          rec.id === sub.subscriptionId ||
+          rec.subcategoryId === sub.id ||
+          rec.name.toLowerCase().trim() === subNameLower
+      );
+      if (linkedRec) {
+        if (!linkedRec.isActive) return;
+      } else if (sub.isSubscriptionActive === false) {
+        return;
+      }
+
+      const isFixed =
+        Boolean(sub.dueDateDay) ||
+        Boolean(sub.subscriptionId) ||
+        Boolean(linkedRec) ||
+        sub.id.startsWith('sub-debt-') ||
+        FIXED_CATEGORY_IDS.has(sub.id.replace('sub-', 'cat-')) ||
+        FIXED_EXPENSE_KEYWORDS_REGEX.test(sub.name);
+
+      if (isFixed) {
+        const spent = subSpentMap[sub.id] || 0;
+        list.push({
+          id: sub.id,
+          name: sub.name,
+          allocatedAmount: Math.max(sub.allocatedAmount, spent),
+        });
+      }
+    });
+
+    return list;
+  }, [effectiveSubcategories, subscriptions, subSpentMap]);
 
   const calculateGroupSpent = (group: BudgetGroup) => {
-    const subTotal = budgetConfig.subcategories
+    const subTotal = effectiveSubcategories
       .filter((s) => s.group === group)
       .reduce((acc, s) => acc + (subSpentMap[s.id] || 0), 0);
     return subTotal + (unallocatedGroupSpent[group] || 0);

@@ -15,6 +15,8 @@ function AddTransactionForm() {
     editingTransaction,
     categories,
     wallets,
+    walletsWithBalance,
+    settings,
     addTransaction,
     updateTransaction,
     deleteTransaction,
@@ -36,7 +38,11 @@ function AddTransactionForm() {
     return match ? match.id : categories[0]?.id || '';
   });
   const [selectedWalletId, setSelectedWalletId] = useState<string>(() => {
-    return editingTransaction?.transaction.walletId || wallets[0]?.id || '';
+    if (editingTransaction?.transaction.walletId) return editingTransaction.transaction.walletId;
+    const funded = walletsWithBalance.find(
+      (w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance > 0
+    );
+    return funded?.id || wallets[0]?.id || '';
   });
   const [transferTargetWalletId, setTransferTargetWalletId] = useState<string>(() => {
     return (
@@ -416,20 +422,29 @@ function AddTransactionForm() {
               Pilih Dompet
             </label>
             <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-              {wallets.map((w) => {
+              {walletsWithBalance.map((w) => {
                 const isSelected = selectedWalletId === w.id;
                 return (
                   <button
                     key={w.id}
                     type="button"
                     onClick={() => setSelectedWalletId(w.id)}
-                    className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0 ${
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer ${
                       isSelected
                         ? 'bg-[#0F766E] text-white shadow-xs'
                         : 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
                     }`}
                   >
                     <span>{w.name}</span>
+                    <span
+                      className={`text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-md ${
+                        isSelected
+                          ? 'bg-white/20 text-white'
+                          : 'bg-black/5 dark:bg-white/10 text-gray-500 dark:text-gray-400'
+                      }`}
+                    >
+                      { settings.hideBalance ? 'Rp ••••' : `Rp${formatNumberOnly(w.balance)}` }
+                    </span>
                     {isSelected && <Check size={14} />}
                   </button>
                 );

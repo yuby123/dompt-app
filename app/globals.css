@@ -7,6 +7,13 @@
   .tabular-nums {
     font-variant-numeric: tabular-nums;
   }
+  .font-display {
+    font-family: var(--font-display), var(--font-sans), sans-serif;
+  }
+  .font-mono-num {
+    font-family: var(--font-mono), monospace;
+    font-variant-numeric: tabular-nums;
+  }
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
@@ -19,6 +26,10 @@
   }
   .safe-area-right {
     padding-right: max(0.75rem, env(safe-area-inset-right));
+  }
+  .bg-noise-subtle {
+    background-image: radial-gradient(rgba(139, 92, 246, 0.07) 1px, transparent 0);
+    background-size: 24px 24px;
   }
 }
 

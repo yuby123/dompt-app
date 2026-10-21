@@ -1,126 +1,67 @@
 'use client';
 
 import React from 'react';
-import { BookOpen, LogIn, Megaphone, Moon, Sun } from 'lucide-react';
-import { useApp } from './AppContext';
-
-const emptySubscribe = () => () => {};
+import { Plus } from 'lucide-react';
+import { TabType, useApp } from './AppContext';
 
 export function Header() {
-  const { settings, setThemeMode, setActiveTab, activeTab, addToast, user, openLoginModal } = useApp();
-  const mounted = React.useSyncExternalStore(
-    emptySubscribe,
-    () => true,
-    () => false
-  );
-
-  const isDarkMode = mounted
-    ? settings.themeMode === 'dark' ||
-      (settings.themeMode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-    : settings.themeMode === 'dark';
-
-  const toggleTheme = () => {
-    const nextMode = isDarkMode ? 'light' : 'dark';
-    setThemeMode(nextMode);
-  };
-
-  const handleOpenAnnouncements = () => {
-    addToast(
-      'Dompt v2.0 Live',
-      'Fitur Atur Budget 50/30/20, AI Advisor, dan Goals telah aktif!',
-      'info'
-    );
-  };
+  const { settings, setActiveTab, activeTab, openAddTransaction } = useApp();
 
   const isPink = settings.accentColor === 'pink';
-  const accentBg = isPink ? 'bg-[#FFA4A4]' : 'bg-[#D4F826]';
-  const accentBtn = isPink ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e]' : 'bg-[#D4F826] hover:bg-[#cbf11e]';
+  const primaryBtnClass = isPink
+    ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] text-black'
+    : 'bg-[#D4F826] hover:bg-[#cbf11e] text-black';
+
+  const topNavLinks: { id: TabType; label: string }[] = [
+    { id: 'dashboard', label: 'Ikhtisar' },
+    { id: 'wallets', label: 'Dompet' },
+    { id: 'transactions', label: 'Transaksi' },
+    { id: 'budget', label: 'Anggaran' },
+    { id: 'reports', label: 'Laporan' },
+  ];
 
   return (
-    <header className="px-3 pt-4 pb-2 flex items-center justify-between lg:hidden">
-      {/* Brand Logo */}
-      <div
+    <header className="sticky top-0 z-30 backdrop-blur-xl bg-[#F6F7FB]/85 dark:bg-[#08090F]/85 border-b border-slate-200/80 dark:border-white/[0.08] px-3 sm:px-6 py-3.5 mb-4 flex items-center justify-between gap-8">
+      {/* Zone 1: Single text element wordmark */}
+      <button
+        type="button"
         onClick={() => setActiveTab('dashboard')}
-        className="flex items-center gap-2 cursor-pointer select-none group"
+        className="font-display text-xl font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0 cursor-pointer"
       >
-        <div className={`w-8 h-8 rounded-xl ${accentBg} text-black font-black flex items-center justify-center text-base shadow-xs group-hover:scale-105 transition-all`}>
-          D.
-        </div>
-        <span className="text-xl font-black tracking-tight text-gray-900 dark:text-white">
-          Dompt.
-        </span>
-      </div>
+        Dompt.
+      </button>
 
-      {/* Action Icons */}
-      <div className="flex items-center gap-1">
-        {/* Tutorial Button */}
+      {/* Zone 2: 5 clean single-line text navigation links */}
+      <nav className="hidden md:flex items-center gap-6 text-xs font-semibold text-slate-500 dark:text-slate-400">
+        {topNavLinks.map((link) => {
+          const isActive = activeTab === link.id;
+          return (
+            <button
+              key={link.id}
+              type="button"
+              onClick={() => setActiveTab(link.id)}
+              className={`py-1 transition-colors whitespace-nowrap shrink-0 cursor-pointer border-b-2 ${
+                isActive
+                  ? 'text-slate-900 dark:text-white border-indigo-600 dark:border-[#D4F826] font-bold'
+                  : 'border-transparent hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              {link.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* Zone 3: 1 primary action */}
+      <div className="flex items-center shrink-0">
         <button
           type="button"
-          onClick={() => setActiveTab('tutorial')}
-          className={`p-2 rounded-xl transition-colors cursor-pointer ${
-            activeTab === 'tutorial'
-              ? 'bg-gray-200 dark:bg-gray-800 text-black dark:text-white'
-              : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800/60'
-          }`}
-          title="Panduan & Tutorial"
-          aria-label="Panduan & Tutorial"
+          onClick={() => openAddTransaction()}
+          className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 shadow-xs cursor-pointer whitespace-nowrap shrink-0 ${primaryBtnClass}`}
         >
-          <BookOpen size={20} strokeWidth={2.2} />
+          <Plus size={14} strokeWidth={2.8} />
+          <span>Catat Transaksi</span>
         </button>
-
-        {/* Megaphone / Announcement Button */}
-        <button
-          type="button"
-          onClick={handleOpenAnnouncements}
-          className="p-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800/60 rounded-xl transition-colors cursor-pointer"
-          title="Pengumuman & Tips"
-          aria-label="Pengumuman & Tips"
-        >
-          <Megaphone size={20} strokeWidth={2.2} />
-        </button>
-
-        {/* Dark / Light Mode Switch */}
-        <button
-          type="button"
-          onClick={toggleTheme}
-          className="p-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800/60 rounded-xl transition-colors cursor-pointer"
-          title={isDarkMode ? 'Beralih ke Mode Terang' : 'Beralih ke Mode Gelap'}
-          aria-label="Ganti Tema"
-        >
-          {isDarkMode ? <Sun size={20} strokeWidth={2.2} /> : <Moon size={20} strokeWidth={2.2} />}
-        </button>
-
-        {/* User Profile / Login Button */}
-        {user ? (
-          <button
-            type="button"
-            onClick={openLoginModal}
-            className="flex items-center gap-1.5 p-1 pl-1.5 pr-2.5 rounded-full bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 transition-colors cursor-pointer border border-gray-200/60 dark:border-gray-700/60 text-xs font-bold"
-            title={`Akun: ${user.displayName || user.email}`}
-          >
-            <div className={`relative w-6 h-6 rounded-full overflow-hidden ${accentBg} text-black font-black flex items-center justify-center text-[11px] transition-colors`}>
-              {user.photoURL ? (
-                <img src={user.photoURL} alt="Avatar" className="w-full h-full object-cover" />
-              ) : (
-                (user.displayName || user.email || 'U')[0].toUpperCase()
-              )}
-              <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-emerald-500 ring-1 ring-white" />
-            </div>
-            <span className="max-w-[70px] truncate hidden sm:inline text-gray-800 dark:text-gray-200">
-              {user.displayName?.split(' ')[0] || 'Saya'}
-            </span>
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={openLoginModal}
-            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl ${accentBtn} text-black font-black text-xs transition-transform active:scale-95 shadow-xs cursor-pointer ml-1`}
-            title="Masuk dengan Akun Pribadi"
-          >
-            <LogIn size={14} strokeWidth={2.5} />
-            <span>Masuk</span>
-          </button>
-        )}
       </div>
     </header>
   );

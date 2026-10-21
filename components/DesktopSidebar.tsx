@@ -14,7 +14,7 @@ import {
   FileText,
   Settings,
   Plus,
-  Megaphone,
+  Camera,
   Moon,
   Sun,
   BookOpen,
@@ -30,11 +30,10 @@ export function DesktopSidebar() {
     activeTab,
     setActiveTab,
     openAddTransaction,
+    openScanModal,
     settings,
     setThemeMode,
-    addToast,
     user,
-    openLoginModal,
   } = useApp();
 
   const mounted = React.useSyncExternalStore(
@@ -54,237 +53,189 @@ export function DesktopSidebar() {
     setThemeMode(nextMode);
   };
 
-  const handleOpenAnnouncements = () => {
-    addToast(
-      'Dompt v2.0 Live',
-      'Fitur Atur Budget 50/30/20, AI Advisor, dan Laporan Keuangan telah aktif!',
-      'info'
-    );
-  };
-
   const isPink = settings.accentColor === 'pink';
   const primaryBtnBg = isPink
-    ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] shadow-[#FFA4A4]/25'
-    : 'bg-[#D4F826] hover:bg-[#c6ec15] shadow-[#D4F826]/25';
+    ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] text-black'
+    : 'bg-[#D4F826] hover:bg-[#c6ec15] text-black';
 
-  const activeNavBg = isPink
-    ? 'bg-[#FFA4A4] text-black font-extrabold shadow-xs'
-    : 'bg-[#D4F826] text-black font-extrabold shadow-xs';
-
-  const navItems: {
-    id: TabType;
-    label: string;
-    icon: React.ElementType;
-    onClick: () => void;
+  const navSections: {
+    heading: string;
+    items: {
+      id: TabType;
+      label: string;
+      icon: React.ElementType;
+    }[];
   }[] = [
     {
-      id: 'dashboard',
-      label: 'Home',
-      icon: LayoutGrid,
-      onClick: () => setActiveTab('dashboard'),
+      heading: 'Arus Kas Utama',
+      items: [
+        { id: 'dashboard', label: 'Ikhtisar', icon: LayoutGrid },
+        { id: 'wallets', label: 'Dompet & Akun', icon: Wallet },
+        { id: 'transactions', label: 'Transaksi', icon: ArrowRightLeft },
+        { id: 'budget', label: 'Anggaran 50/30/20', icon: PieChart },
+        { id: 'subscriptions', label: 'Tagihan Rutin', icon: CalendarClock },
+      ],
     },
     {
-      id: 'wallets',
-      label: 'Dompet',
-      icon: Wallet,
-      onClick: () => setActiveTab('wallets'),
+      heading: 'Portofolio & Kekayaan',
+      items: [
+        { id: 'goals', label: 'Target Tabungan', icon: Target },
+        { id: 'assets', label: 'Aset Bersih', icon: Landmark },
+        { id: 'debt', label: 'Utang & Cicilan', icon: CreditCard },
+        { id: 'invest', label: 'Investasi', icon: TrendingUp },
+      ],
     },
     {
-      id: 'transactions',
-      label: 'Transaksi',
-      icon: ArrowRightLeft,
-      onClick: () => setActiveTab('transactions'),
-    },
-    {
-      id: 'budget',
-      label: 'Budget',
-      icon: PieChart,
-      onClick: () => setActiveTab('budget'),
-    },
-    {
-      id: 'goals',
-      label: 'Goals',
-      icon: Target,
-      onClick: () => setActiveTab('goals'),
-    },
-    {
-      id: 'assets',
-      label: 'Aset',
-      icon: Landmark,
-      onClick: () => setActiveTab('assets'),
-    },
-    {
-      id: 'subscriptions',
-      label: 'Langganan',
-      icon: CalendarClock,
-      onClick: () => setActiveTab('subscriptions'),
-    },
-    {
-      id: 'health-score',
-      label: 'Skor Sehat',
-      icon: Activity,
-      onClick: () => setActiveTab('health-score'),
-    },
-    {
-      id: 'debt',
-      label: 'Utang',
-      icon: CreditCard,
-      onClick: () => setActiveTab('debt'),
-    },
-    {
-      id: 'invest',
-      label: 'Investasi',
-      icon: TrendingUp,
-      onClick: () => setActiveTab('invest'),
-    },
-    {
-      id: 'ai-advisor',
-      label: 'AI Advisor',
-      icon: Sparkles,
-      onClick: () => setActiveTab('ai-advisor'),
-    },
-    {
-      id: 'reports',
-      label: 'Laporan',
-      icon: FileText,
-      onClick: () => setActiveTab('reports'),
-    },
-    {
-      id: 'tutorial',
-      label: 'Panduan',
-      icon: BookOpen,
-      onClick: () => setActiveTab('tutorial'),
-    },
-    {
-      id: 'settings',
-      label: 'Profil',
-      icon: Settings,
-      onClick: () => setActiveTab('settings'),
+      heading: 'Analitik & Sistem',
+      items: [
+        { id: 'health-score', label: 'Skor Finansial', icon: Activity },
+        { id: 'ai-advisor', label: 'AI Advisor', icon: Sparkles },
+        { id: 'reports', label: 'Laporan & CSV', icon: FileText },
+        { id: 'tutorial', label: 'Panduan Sistem', icon: BookOpen },
+        { id: 'settings', label: 'Pengaturan', icon: Settings },
+      ],
     },
   ];
 
   const displayName = user?.displayName || settings.userName || 'Trisna';
 
   return (
-    <aside className="hidden lg:flex flex-col w-[240px] shrink-0 h-screen sticky top-0 bg-white dark:bg-[#16181D] border-r border-gray-200/70 dark:border-gray-800/80 px-4 py-5 select-none justify-between z-30">
-      {/* Top Section: Brand + Quick Actions + CTA */}
+    <aside className="hidden lg:flex flex-col w-[264px] shrink-0 h-screen sticky top-0 bg-white/90 dark:bg-[#0B0D14]/95 backdrop-blur-2xl border-r border-slate-200/80 dark:border-white/[0.08] px-4 py-5 select-none justify-between z-30">
+      {/* Top Section: Brand + Primary Actions + Navigation */}
       <div className="space-y-4 flex-1 flex flex-col min-h-0">
-        {/* Brand Row */}
-        <div className="flex items-center justify-between px-1.5">
-          <div
+        {/* Brand Row + Theme Switcher */}
+        <div className="flex items-center justify-between px-2">
+          <button
+            type="button"
             onClick={() => setActiveTab('dashboard')}
-            className="flex items-center gap-2.5 cursor-pointer group"
+            className="flex items-center gap-2.5 cursor-pointer group text-left"
           >
-            <div className={`w-8 h-8 rounded-xl ${isPink ? 'bg-[#FFA4A4]' : 'bg-[#D4F826]'} text-black font-black flex items-center justify-center text-base shadow-xs group-hover:scale-105 transition-all`}>
+            <div
+              className={`w-8 h-8 rounded-xl ${
+                isPink ? 'bg-[#FFA4A4]' : 'bg-[#D4F826]'
+              } text-black font-display font-extrabold flex items-center justify-center text-base shadow-xs group-hover:scale-105 transition-transform`}
+            >
               D.
             </div>
-            <span className="text-xl font-black tracking-tight text-gray-900 dark:text-white">
+            <span className="font-display text-xl font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0">
               Dompt.
             </span>
-          </div>
+          </button>
 
-          <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              onClick={handleOpenAnnouncements}
-              className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors cursor-pointer"
-              title="Pengumuman"
-            >
-              <Megaphone size={16} strokeWidth={2.2} />
-            </button>
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors cursor-pointer"
-              title={isDarkMode ? 'Mode Terang' : 'Mode Gelap'}
-            >
-              {isDarkMode ? (
-                <Sun size={16} strokeWidth={2.2} />
-              ) : (
-                <Moon size={16} strokeWidth={2.2} />
-              )}
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="p-2 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] rounded-xl transition-colors cursor-pointer"
+            title={isDarkMode ? 'Beralih ke Mode Terang' : 'Beralih ke Mode Gelap'}
+            aria-label="Ganti Tema"
+          >
+            {isDarkMode ? (
+              <Sun size={16} strokeWidth={2.2} />
+            ) : (
+              <Moon size={16} strokeWidth={2.2} />
+            )}
+          </button>
         </div>
 
-        {/* + Catat Transaksi Primary Button */}
-        <button
-          type="button"
-          onClick={() => openAddTransaction()}
-          className={`w-full py-3 px-4 rounded-2xl text-black font-black text-xs flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98] cursor-pointer ${primaryBtnBg}`}
-        >
-          <Plus size={16} strokeWidth={3} />
-          <span>Catat Transaksi</span>
-        </button>
+        {/* Action Pair: + Catat Transaksi & Scan Struk */}
+        <div className="grid grid-cols-5 gap-2">
+          <button
+            type="button"
+            onClick={() => openAddTransaction()}
+            className={`col-span-4 py-2.5 px-4 rounded-full font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all active:scale-[0.98] cursor-pointer whitespace-nowrap shrink-0 ${primaryBtnBg}`}
+          >
+            <Plus size={15} strokeWidth={2.8} />
+            <span>Catat Transaksi</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => openScanModal()}
+            className="col-span-1 rounded-full bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] text-slate-700 dark:text-slate-200 flex items-center justify-center transition-colors cursor-pointer"
+            title="Scan Struk Otomatis"
+            aria-label="Scan Struk Otomatis"
+          >
+            <Camera size={15} strokeWidth={2.2} />
+          </button>
+        </div>
 
-        {/* Navigation Links */}
-        <nav className="flex-1 overflow-y-auto no-scrollbar space-y-1 pr-0.5">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
+        {/* Grouped Navigation Links */}
+        <nav className="flex-1 overflow-y-auto no-scrollbar space-y-5 pr-0.5 pt-1">
+          {navSections.map((section) => (
+            <div key={section.heading} className="space-y-1">
+              <p className="px-3 text-[11px] font-semibold text-slate-400 dark:text-slate-500 tracking-tight">
+                {section.heading}
+              </p>
+              <div className="space-y-0.5">
+                {section.items.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = activeTab === item.id;
 
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={item.onClick}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-xs transition-all cursor-pointer ${
-                  isActive
-                    ? activeNavBg
-                    : 'font-bold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 hover:text-gray-900 dark:hover:text-white'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <Icon
-                    size={17}
-                    strokeWidth={isActive ? 2.5 : 2}
-                    className={
-                      isActive
-                        ? 'text-black'
-                        : 'text-gray-400 dark:text-gray-500'
-                    }
-                  />
-                  <span>{item.label}</span>
-                </div>
-              </button>
-            );
-          })}
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveTab(item.id)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-all cursor-pointer whitespace-nowrap ${
+                        isActive
+                          ? isPink
+                            ? 'bg-[#FFA4A4] text-black font-bold shadow-2xs'
+                            : 'bg-[#D4F826] text-black font-bold shadow-2xs'
+                          : 'font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100/80 dark:hover:bg-white/[0.05] hover:text-slate-900 dark:hover:text-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Icon
+                          size={16}
+                          strokeWidth={isActive ? 2.4 : 2}
+                          className={
+                            isActive
+                              ? 'text-black shrink-0'
+                              : 'text-slate-400 dark:text-slate-500 shrink-0'
+                          }
+                        />
+                        <span className="truncate">{item.label}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
       </div>
 
-      {/* Bottom User Card */}
-      <div className="pt-3 border-t border-gray-100 dark:border-gray-800/80">
-        <div
+      {/* Bottom User Card (Clean unboxed metadata) */}
+      <div className="pt-3 border-t border-slate-200/70 dark:border-white/[0.08]">
+        <button
+          type="button"
           onClick={() => setActiveTab('settings')}
-          className="flex items-center gap-3 p-2.5 rounded-2xl bg-gray-50/90 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer border border-gray-100 dark:border-gray-700/50"
+          className="w-full flex items-center gap-3 p-2.5 rounded-2xl bg-slate-50/90 dark:bg-white/[0.04] hover:bg-slate-100 dark:hover:bg-white/[0.08] transition-colors cursor-pointer border border-slate-200/60 dark:border-white/[0.06] text-left"
         >
-          <div className={`relative w-10 h-10 rounded-full border-2 ${isPink ? 'border-[#FFA4A4]' : 'border-[#D4F826]'} overflow-hidden bg-white dark:bg-gray-700 flex items-center justify-center shrink-0 text-lg transition-colors`}>
+          <div
+            className={`relative w-9 h-9 rounded-full border ${
+              isPink ? 'border-[#FFA4A4]' : 'border-[#D4F826]'
+            } overflow-hidden bg-slate-900 text-white font-display font-bold flex items-center justify-center shrink-0 text-xs`}
+          >
             {user?.photoURL ? (
               <img
                 src={user.photoURL}
                 alt={displayName}
+                referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
               />
             ) : (
-              <span>👩‍💼</span>
+              <span>{displayName.slice(0, 2).toUpperCase()}</span>
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-black text-gray-900 dark:text-white truncate">
+            <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
               {displayName}
             </p>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className={`inline-block text-[9px] font-black ${isPink ? 'bg-[#FFA4A4]' : 'bg-[#D4F826]'} text-black px-1.5 py-0.2 rounded-md uppercase transition-colors`}>
-                PRO
-              </span>
-              {user && (
-                <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 truncate">
-                  • Cloud
-                </span>
-              )}
-            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+              Ruang Pribadi · {user ? 'Cloud Sync' : 'Lokal'}
+            </p>
           </div>
-        </div>
+        </button>
       </div>
     </aside>
   );

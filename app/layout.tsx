@@ -1,15 +1,30 @@
 import type {Metadata, Viewport} from 'next';
-import { Plus_Jakarta_Sans } from 'next/font/google';
+import { Plus_Jakarta_Sans, Bricolage_Grotesque, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 
 const plusJakartaSans = Plus_Jakarta_Sans({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-sans',
+  display: 'swap',
+});
+
+const bricolageGrotesque = Bricolage_Grotesque({
+  subsets: ['latin'],
+  weight: ['600', '700', '800'],
+  variable: '--font-display',
+  display: 'swap',
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  weight: ['500', '600', '700'],
+  variable: '--font-mono',
   display: 'swap',
 });
 
 export const viewport: Viewport = {
-  themeColor: '#D4F826',
+  themeColor: '#090A10',
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
@@ -43,7 +58,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
-    <html lang="id" className="h-full antialiased" suppressHydrationWarning>
+    <html
+      lang="id"
+      className={`${plusJakartaSans.variable} ${bricolageGrotesque.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
       <head>
         <script
           dangerouslySetInnerHTML={{
@@ -79,7 +98,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
       </head>
       <body
         suppressHydrationWarning
-        className={`${plusJakartaSans.className} h-full bg-[#F6F7F9] dark:bg-[#0E1015] text-[#111827] dark:text-[#F9FAFB] transition-colors duration-200`}
+        className={`${plusJakartaSans.className} h-full bg-[#F6F7FB] dark:bg-[#08090F] text-[#0F172A] dark:text-[#F8FAFC] transition-colors duration-200`}
       >
         {children}
       </body>

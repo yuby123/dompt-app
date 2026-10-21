@@ -167,7 +167,7 @@ interface AppContextType {
   setIsScanModalOpen: (open: boolean) => void;
   scanInitialImage: { base64: string; mimeType: string } | null;
   setScanInitialImage: (img: { base64: string; mimeType: string } | null) => void;
-  openScanModal: (initialImageBase64?: string, mimeType?: string) => void;
+  openScanModal: (initialImageBase64?: string | React.MouseEvent<HTMLElement>, mimeType?: string) => void;
   
   isTransferOpen: boolean;
   setIsTransferOpen: (open: boolean) => void;
@@ -855,6 +855,92 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     applyThemeToDOM(settings.themeMode, settings.accentColor);
   }, [settings.themeMode, settings.accentColor]);
 
+  // Helper to resolve which wallet a transaction should affect (handles deleted/orphaned wallets
+  // or expenses accidentally recorded on an untouched Rp0 default wallet when another wallet is funded)
+  const resolvedWalletIdMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (wallets.length === 0) return map;
+
+    const walletSet = new Set(wallets.map((w) => w.id));
+
+    // Calculate total inflows (initialBalance + income + transfer-in) per wallet
+    const inflowByWallet = new Map<string, number>();
+    wallets.forEach((w) => {
+      inflowByWallet.set(w.id, w.initialBalance > 0 ? w.initialBalance : 0);
+    });
+    transactions.forEach((tx) => {
+      if (tx.type === 'income' && walletSet.has(tx.walletId)) {
+        inflowByWallet.set(tx.walletId, (inflowByWallet.get(tx.walletId) || 0) + tx.amount);
+      } else if (tx.type === 'transfer' && tx.transferWalletId && walletSet.has(tx.transferWalletId)) {
+        inflowByWallet.set(
+          tx.transferWalletId,
+          (inflowByWallet.get(tx.transferWalletId) || 0) + tx.amount
+        );
+      }
+    });
+
+    // Find primary funded non-credit wallet (or fallback to first wallet)
+    const fundedWallets = wallets
+      .filter((w) => w.type !== 'credit' && w.type !== 'paylater' && (inflowByWallet.get(w.id) || 0) > 0)
+      .sort((a, b) => (inflowByWallet.get(b.id) || 0) - (inflowByWallet.get(a.id) || 0));
+
+    const primaryWalletId = fundedWallets[0]?.id || wallets[0].id;
+
+    transactions.forEach((tx) => {
+      // 1. If walletId is missing or points to a deleted wallet, route to primaryWalletId
+      if (!tx.walletId || !walletSet.has(tx.walletId)) {
+        map.set(tx.id, primaryWalletId);
+        return;
+      }
+
+      // 2. If it's an expense on a wallet with 0 initialBalance and 0 inflows, while user has a funded wallet,
+      // route to the funded wallet so the expense actually deducts from their active funded wallet
+      const txWalletInflow = inflowByWallet.get(tx.walletId) || 0;
+      const txWallet = wallets.find((w) => w.id === tx.walletId);
+      if (
+        tx.type === 'expense' &&
+        txWallet &&
+        txWallet.type !== 'credit' &&
+        txWallet.type !== 'paylater' &&
+        txWallet.initialBalance === 0 &&
+        txWalletInflow === 0 &&
+        fundedWallets.length > 0 &&
+        fundedWallets[0].id !== tx.walletId
+      ) {
+        map.set(tx.id, fundedWallets[0].id);
+        return;
+      }
+
+      map.set(tx.id, tx.walletId);
+    });
+
+    return map;
+  }, [wallets, transactions]);
+
+  // Persist healed transaction walletIds to localStorage/Firestore when resolvedWalletIdMap maps an orphan/unfunded wallet
+  useEffect(() => {
+    if (wallets.length === 0 || transactions.length === 0) return;
+    let changed = false;
+    const healed = transactions.map((tx) => {
+      const effectiveWalletId = resolvedWalletIdMap.get(tx.id);
+      if (effectiveWalletId && effectiveWalletId !== tx.walletId) {
+        changed = true;
+        return { ...tx, walletId: effectiveWalletId, updatedAt: new Date().toISOString() };
+      }
+      return tx;
+    });
+    if (changed) {
+      saveStoredTransactions(healed, localScopeUid);
+      if (isCloudUser && user?.uid) {
+        healed.forEach((tx, idx) => {
+          if (tx.walletId !== transactions[idx]?.walletId) {
+            saveUserTransaction(user.uid, tx).catch(() => {});
+          }
+        });
+      }
+    }
+  }, [resolvedWalletIdMap, wallets.length, transactions, localScopeUid, isCloudUser, user?.uid]);
+
   // Calculate wallet balances
   const walletsWithBalance = useMemo<WalletWithBalance[]>(() => {
     return wallets.map((wallet) => {
@@ -864,10 +950,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       let txCount = 0;
 
       transactions.forEach((tx) => {
+        const effectiveWalletId = resolvedWalletIdMap.get(tx.id) || tx.walletId;
         const txDate = new Date(tx.date);
         const isThisMonth = txDate.getFullYear() === activeYear && txDate.getMonth() === activeMonth;
 
-        if (tx.walletId === wallet.id) {
+        if (effectiveWalletId === wallet.id) {
           txCount++;
           if (tx.type === 'expense') {
             balance -= tx.amount;
@@ -890,7 +977,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         .filter((g) => g.walletId === wallet.id && g.currentAmount > 0)
         .reduce((acc, g) => acc + g.currentAmount, 0);
       const reserved = goalsReserved > 0 ? goalsReserved : wallet.reservedAmount || 0;
-      const available = Math.max(0, balance - reserved);
+      const available = balance - reserved;
 
       return {
         ...wallet,
@@ -902,7 +989,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         availableBalance: available,
       };
     });
-  }, [wallets, transactions, goals, activeYear, activeMonth]);
+  }, [wallets, transactions, goals, activeYear, activeMonth, resolvedWalletIdMap]);
 
   // Total balance
   const totalBalance = useMemo(() => {
@@ -915,30 +1002,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const categoryMap = new Map<string, Category>(categories.map((c) => [c.id, c]));
 
     return transactions
-      .map((tx) => ({
-        transaction: tx,
-        wallet: walletMap.get(tx.walletId) || {
-          id: tx.walletId,
-          name: 'Dompet Tidak Diketahui',
-          type: 'other' as const,
-          initialBalance: 0,
-          createdAt: '',
-          updatedAt: '',
-        },
-        category: tx.categoryId ? categoryMap.get(tx.categoryId) || null : null,
-        transferWallet: tx.transferWalletId ? walletMap.get(tx.transferWalletId) || null : null,
-      }))
+      .map((tx) => {
+        const effectiveWalletId = resolvedWalletIdMap.get(tx.id) || tx.walletId;
+        return {
+          transaction: { ...tx, walletId: effectiveWalletId },
+          wallet: walletMap.get(effectiveWalletId) || wallets[0] || {
+            id: effectiveWalletId,
+            name: 'Dompet Utama',
+            type: 'other' as const,
+            initialBalance: 0,
+            createdAt: '',
+            updatedAt: '',
+          },
+          category: tx.categoryId ? categoryMap.get(tx.categoryId) || null : null,
+          transferWallet: tx.transferWalletId ? walletMap.get(tx.transferWalletId) || null : null,
+        };
+      })
       .sort((a, b) => new Date(b.transaction.date).getTime() - new Date(a.transaction.date).getTime());
-  }, [transactions, wallets, categories]);
+  }, [transactions, wallets, categories, resolvedWalletIdMap]);
 
-  // Monthly and today income and expense
+  // Monthly and today income and expense (including any payable debt payments recorded this month)
   const { totalIncome, totalExpense, todayIncome, todayExpense } = useMemo(() => {
     let inc = 0;
     let exp = 0;
     let todayInc = 0;
     let todayExp = 0;
+    const txIdSet = new Set<string>();
 
     transactions.forEach((tx) => {
+      txIdSet.add(tx.id);
       const txDate = new Date(tx.date);
       if (txDate.getFullYear() === activeYear && txDate.getMonth() === activeMonth) {
         if (tx.type === 'income') inc += tx.amount;
@@ -951,8 +1043,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
+    debts.forEach((d) => {
+      if (d.type !== 'payable') return;
+      (d.payments || []).forEach((p) => {
+        if (p.transactionId && txIdSet.has(p.transactionId)) return;
+        const pd = new Date(p.date);
+        if (pd.getFullYear() === activeYear && pd.getMonth() === activeMonth) {
+          exp += p.amount;
+          if (pd.getDate() === activeDay) {
+            todayExp += p.amount;
+          }
+        }
+      });
+    });
+
     return { totalIncome: inc, totalExpense: exp, todayIncome: todayInc, todayExpense: todayExp };
-  }, [transactions, activeYear, activeMonth, activeDay]);
+  }, [transactions, debts, activeYear, activeMonth, activeDay]);
 
   // Dynamic upcoming bills derived from negative credit/paylater wallets, active subscriptions, and scheduled budget subcategories
   const upcomingBills = useMemo<UpcomingBill[]>(() => {
@@ -1026,6 +1132,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       activeMonth,
       activeDay,
       subscriptions,
+      debts,
     });
 
     // Liquid assets: Bank + E-wallet + Cash + Savings
@@ -1078,6 +1185,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     activeMonth,
     activeDay,
     subscriptions,
+    debts,
     walletsWithBalance,
     totalBalance,
     totalIncome,
@@ -1357,6 +1465,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteDebt = (id: string) => {
+    const targetDebt = debts.find((d) => d.id === id);
     const nextDebts = debts.filter((d) => d.id !== id);
     setDebts(nextDebts);
     saveStoredDebts(nextDebts, localScopeUid);
@@ -1365,7 +1474,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         console.warn('Error deleting debt from Firestore:', err)
       );
     }
-    addToast('Catatan Dihapus', 'Data utang/piutang telah dihapus.', 'info');
+
+    // Also remove any linked debt subcategory from budgetConfig so deleted debt doesn't leave a ghost allocation
+    if (targetDebt) {
+      const debtSubId = `sub-debt-${id}`;
+      const debtSubNameLower = `cicilan ${targetDebt.name}`.toLowerCase().trim();
+      const updatedSubs = budgetConfig.subcategories.filter(
+        (s) => s.id !== debtSubId && s.name.toLowerCase().trim() !== debtSubNameLower
+      );
+      if (updatedSubs.length !== budgetConfig.subcategories.length) {
+        const nextBudget = { ...budgetConfig, subcategories: updatedSubs };
+        setBudgetConfig(nextBudget);
+        saveStoredBudgetConfig(nextBudget, localScopeUid);
+        if (isCloudUser && user?.uid) {
+          saveUserBudgetConfig(user.uid, nextBudget).catch((err) =>
+            console.warn('Error saving budget config to Firestore:', err)
+          );
+        }
+      }
+    }
+
+    addToast('Catatan Dihapus', 'Data utang/piutang & alokasi cicilan terkait telah dihapus.', 'info');
   };
 
   const payDebtInstallment = (
@@ -1377,15 +1506,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!debt || amount <= 0) return;
 
     const paymentDate = options?.date || new Date().toISOString().slice(0, 10);
-    const selectedWallet = options?.walletId ? wallets.find((w) => w.id === options.walletId) : undefined;
+    const selectedWallet =
+      (options?.walletId ? wallets.find((w) => w.id === options.walletId) : undefined) ||
+      wallets[0];
 
     let createdTxId: string | undefined = undefined;
 
-    // Create real cashflow transaction
+    // Create real cashflow transaction so wallet & monthly budget are updated
     if (selectedWallet) {
       const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
       if (debt.type === 'payable') {
-        // Paying off our debt -> Fixed Expense from selected wallet (does NOT cut daily variable budget)
+        // Paying off our debt -> Fixed Expense in Kebutuhan (automatically cuts monthly & daily budget!)
         createdTxId = addTransaction({
           id: txId,
           type: 'expense',
@@ -1424,6 +1555,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const newRemaining = Math.max(0, debt.remainingAmount - amount);
     const newStatus = newRemaining <= 0 ? 'paid' : debt.status;
+    const allPayments = [...(debt.payments || []), newPayment];
 
     const nextDebts = debts.map((d) => {
       if (d.id !== debtId) return d;
@@ -1431,7 +1563,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         ...d,
         remainingAmount: newRemaining,
         status: newStatus,
-        payments: [...(d.payments || []), newPayment],
+        payments: allPayments,
         updatedAt: new Date().toISOString(),
       };
     });
@@ -1445,12 +1577,72 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
     }
 
+    // Sync payable debt installment directly into BudgetConfig (KEBUTUHAN & POS TAGIHAN BULANAN)
+    if (debt.type === 'payable') {
+      const payD = new Date(paymentDate);
+      const totalPaidInMonth = allPayments.reduce((sum, p) => {
+        const d = new Date(p.date);
+        if (d.getFullYear() === payD.getFullYear() && d.getMonth() === payD.getMonth()) {
+          return sum + p.amount;
+        }
+        return sum;
+      }, 0);
+
+      const debtSubId = `sub-debt-${debt.id}`;
+      const subDisplayName = `Cicilan ${debt.name}`;
+      const cleanDebtName = debt.name.toLowerCase().trim();
+
+      let updatedSubcategories = [...(budgetConfig.subcategories || [])];
+      const existingSub = updatedSubcategories.find((s) => {
+        const sLower = s.name.toLowerCase().trim();
+        return (
+          s.id === debtSubId ||
+          sLower === subDisplayName.toLowerCase() ||
+          sLower === cleanDebtName
+        );
+      });
+
+      if (existingSub) {
+        updatedSubcategories = updatedSubcategories.map((s) =>
+          s.id === existingSub.id
+            ? {
+                ...s,
+                allocatedAmount: Math.max(s.allocatedAmount, totalPaidInMonth),
+              }
+            : s
+        );
+      } else {
+        updatedSubcategories.push({
+          id: debtSubId,
+          name: subDisplayName,
+          group: 'kebutuhan',
+          allocatedAmount: totalPaidInMonth,
+          emoji: '💳',
+        });
+      }
+
+      const nextBudgetConfig: BudgetConfig = {
+        ...budgetConfig,
+        subcategories: updatedSubcategories,
+      };
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (isCloudUser && user?.uid) {
+        saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
+          console.warn('Error saving budget config to Firestore:', err)
+        );
+      }
+    }
+
     if (newRemaining <= 0) {
-      addToast('🎉 Lunas Sempurna!', `Selamat! ${debt.name} telah lunas seluruhnya.`);
+      addToast(
+        '🎉 Lunas Sempurna!',
+        `Selamat! ${debt.name} telah lunas & memotong budget bulan ini sebesar ${formatRupiah(amount)}.`
+      );
     } else {
       addToast(
-        'Pembayaran Dicatat',
-        `Berhasil mencatat pembayaran sebesar ${formatRupiah(amount)}. Sisa: ${formatRupiah(newRemaining)}.`
+        'Pembayaran Utang & Budget Tersinkron',
+        `Cicilan ${formatRupiah(amount)} tercatat di Pos Tagihan & memotong budget tersedia bulan ini.`
       );
     }
   };
@@ -2114,8 +2306,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setIsAddTransactionOpen(true);
   };
 
-  const openScanModal = (initialImageBase64?: string, mimeType?: string) => {
-    if (initialImageBase64) {
+  const openScanModal = (initialImageBase64?: string | React.MouseEvent<HTMLElement>, mimeType?: string) => {
+    if (typeof initialImageBase64 === 'string' && initialImageBase64) {
       setScanInitialImage({ base64: initialImageBase64, mimeType: mimeType || 'image/jpeg' });
     } else {
       setScanInitialImage(null);

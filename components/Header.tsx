@@ -21,7 +21,7 @@ export function Header() {
   ];
 
   return (
-    <header className="sticky top-0 z-30 backdrop-blur-xl bg-[#F6F7FB]/85 dark:bg-[#08090F]/85 border-b border-slate-200/80 dark:border-white/[0.08] px-3 sm:px-6 py-3.5 mb-4 flex items-center justify-between gap-8">
+    <header className="lg:hidden sticky top-0 z-30 backdrop-blur-xl bg-[#F6F7FB]/85 dark:bg-[#08090F]/85 border-b border-slate-200/80 dark:border-white/[0.08] px-3 sm:px-6 py-3.5 mb-4 flex items-center justify-between gap-8">
       {/* Zone 1: Single text element wordmark */}
       <button
         type="button"

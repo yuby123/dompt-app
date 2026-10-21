@@ -47,6 +47,10 @@ export interface BudgetSubcategory {
   dueDateDay?: number;
   subscriptionId?: string;
   isSubscriptionActive?: boolean;
+  walletId?: string;
+  categoryId?: string;
+  frequency?: 'monthly' | 'yearly' | 'weekly';
+  lastRecordedPeriod?: string;
 }
 
 export interface RecurringItem {

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccentColor,
   AppSettings,
@@ -98,6 +98,9 @@ import {
   fetchUserDebts,
   saveUserDebt,
   deleteUserDebt,
+  fetchUserSubscriptions,
+  saveUserSubscription,
+  deleteUserSubscription,
   resetUserFirestoreData,
 } from '@/lib/firestoreService';
 
@@ -354,6 +357,166 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
+  const isCloudSyncingRef = useRef(false);
+
+  // Reconcile subscriptions across Cloud Firestore (/subscriptions), localStorage, and budgetConfig.subcategories
+  // so opening the same account on any Chrome browser or device always shows the exact same subscriptions.
+  const reconcileAndSyncSubscriptions = async (
+    uid: string,
+    cloudSubs: RecurringItem[],
+    localSubs: RecurringItem[],
+    budget: BudgetConfig,
+    activeWallets: Wallet[],
+    mirrorUid?: string
+  ): Promise<RecurringItem[]> => {
+    const cloudIds = new Set(cloudSubs.map((s) => s.id));
+
+    // 1. Merge cloudSubs + localSubs (deduplicating by id or type+name)
+    const mergedMap = new Map<string, RecurringItem>();
+    for (const item of cloudSubs) {
+      mergedMap.set(item.id, item);
+    }
+    for (const localItem of localSubs) {
+      const lowerName = localItem.name.toLowerCase().trim();
+      const alreadyExists = Array.from(mergedMap.values()).some(
+        (c) =>
+          c.id === localItem.id ||
+          (c.type === localItem.type && c.name.toLowerCase().trim() === lowerName)
+      );
+      if (!alreadyExists) {
+        mergedMap.set(localItem.id, localItem);
+      }
+    }
+
+    const subcats = budget.subcategories || [];
+
+    // 2. Filter out orphaned expense subscriptions whose subcategory was deleted from budgetConfig
+    const validSubs: RecurringItem[] = [];
+    for (const rec of mergedMap.values()) {
+      if (rec.type !== 'expense') {
+        validSubs.push(rec);
+        continue;
+      }
+      if (subcats.length === 0) {
+        if (!rec.subcategoryId) {
+          validSubs.push(rec);
+        } else if (cloudIds.has(rec.id)) {
+          deleteUserSubscription(uid, rec.id).catch(() => {});
+          if (mirrorUid) deleteUserSubscription(mirrorUid, rec.id).catch(() => {});
+        }
+        continue;
+      }
+      const rName = rec.name.toLowerCase().trim();
+      const matchedSub = subcats.find(
+        (s) =>
+          s.id === rec.subcategoryId ||
+          s.subscriptionId === rec.id ||
+          s.name.toLowerCase().trim() === rName
+      );
+      if (matchedSub) {
+        validSubs.push({
+          ...rec,
+          subcategoryId: matchedSub.id,
+          name: matchedSub.name || rec.name,
+          emoji: matchedSub.emoji || rec.emoji,
+          budgetGroup: matchedSub.group || rec.budgetGroup,
+          billingDay: matchedSub.dueDateDay ?? rec.billingDay,
+          amount:
+            rec.frequency === 'monthly' && matchedSub.allocatedAmount > 0
+              ? matchedSub.allocatedAmount
+              : rec.amount,
+          isActive:
+            matchedSub.isSubscriptionActive !== undefined
+              ? matchedSub.isSubscriptionActive
+              : rec.isActive,
+          walletId: matchedSub.walletId || rec.walletId,
+          categoryId: matchedSub.categoryId || rec.categoryId,
+          lastRecordedPeriod: matchedSub.lastRecordedPeriod || rec.lastRecordedPeriod,
+        });
+      } else if (cloudIds.has(rec.id)) {
+        // Subcategory was deleted on another browser -> delete orphan from Firestore
+        deleteUserSubscription(uid, rec.id).catch(() => {});
+        if (mirrorUid) deleteUserSubscription(mirrorUid, rec.id).catch(() => {});
+      }
+    }
+
+    // 3. Reconstruct any missing expense subscription from budgetConfig.subcategories
+    // (handles subscriptions created on another Chrome browser where budgetConfig was synced to Firestore)
+    const preferredWallet =
+      activeWallets.find((w) => w.name.toLowerCase().includes('dana')) ||
+      activeWallets.find(
+        (w) => w.initialBalance > 0 && w.type !== 'credit' && w.type !== 'paylater'
+      ) ||
+      activeWallets[0];
+
+    for (const sub of subcats) {
+      const subNameLower = sub.name.toLowerCase().trim();
+      // Skip debt installment subcategories
+      if (sub.id.startsWith('sub-debt-') || subNameLower.startsWith('cicilan ')) {
+        continue;
+      }
+      const isSubscriptionSub = Boolean(
+        sub.subscriptionId || sub.dueDateDay !== undefined || sub.isSubscriptionActive !== undefined
+      );
+      if (!isSubscriptionSub) continue;
+
+      const existsInValid = validSubs.some(
+        (rec) =>
+          rec.type === 'expense' &&
+          (rec.id === sub.subscriptionId ||
+            rec.subcategoryId === sub.id ||
+            rec.name.toLowerCase().trim() === subNameLower)
+      );
+
+      if (!existsInValid) {
+        const inferredCatId =
+          sub.categoryId ||
+          (sub.group === 'keinginan'
+            ? 'cat-hiburan'
+            : subNameLower.includes('listrik')
+            ? 'cat-listrik'
+            : subNameLower.includes('bpjs')
+            ? 'cat-bpjs'
+            : subNameLower.includes('air')
+            ? 'cat-air'
+            : 'cat-tagihan');
+
+        const reconstructed: RecurringItem = {
+          id: sub.subscriptionId || `sub-rec-${sub.id}`,
+          name: sub.name,
+          emoji: sub.emoji || (sub.group === 'keinginan' ? '🎬' : '🛜'),
+          type: 'expense',
+          amount: sub.allocatedAmount,
+          frequency: sub.frequency || 'monthly',
+          billingDay: sub.dueDateDay || 1,
+          walletId: sub.walletId || preferredWallet?.id || 'wallet-cash',
+          categoryId: inferredCatId,
+          subcategoryId: sub.id,
+          budgetGroup: sub.group,
+          isActive: sub.isSubscriptionActive !== false,
+          lastRecordedPeriod: sub.lastRecordedPeriod,
+        };
+        validSubs.push(reconstructed);
+      }
+    }
+
+    // 4. Persist any new/reconstructed/migrated subscriptions to Cloud Firestore & localStorage
+    saveStoredSubscriptions(validSubs, uid);
+    if (mirrorUid) {
+      saveStoredSubscriptions(validSubs, mirrorUid);
+    }
+    for (const item of validSubs) {
+      if (!cloudIds.has(item.id)) {
+        saveUserSubscription(uid, item).catch(() => {});
+      }
+      if (mirrorUid) {
+        saveUserSubscription(mirrorUid, item).catch(() => {});
+      }
+    }
+
+    return validSubs;
+  };
+
   // Load and sync an Email/Password account session with Cloud Firestore Database
   const loadAndSyncCloudAccountSession = async (
     profile: LocalAccountProfile,
@@ -367,6 +530,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       isLocalAccount: false,
     };
 
+    isCloudSyncingRef.current = true;
     saveActiveLocalUser(normalizedProfile);
     setUser(normalizedProfile);
     setSettings((prev) => {
@@ -382,13 +546,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setActiveDate(getTodayDateStr());
 
     try {
-      const [loadedWallets, loadedTx, loadedGoals, loadedBudget, loadedDebts] = await Promise.all([
-        fetchUserWallets(cloudUid),
-        fetchUserTransactions(cloudUid),
-        fetchUserGoals(cloudUid),
-        fetchUserBudgetConfig(cloudUid),
-        fetchUserDebts(cloudUid),
-      ]);
+      const [loadedWallets, loadedTx, loadedGoals, loadedBudget, loadedDebts, loadedSubs] =
+        await Promise.all([
+          fetchUserWallets(cloudUid),
+          fetchUserTransactions(cloudUid),
+          fetchUserGoals(cloudUid),
+          fetchUserBudgetConfig(cloudUid),
+          fetchUserDebts(cloudUid),
+          fetchUserSubscriptions(cloudUid),
+        ]);
 
       // Check if user had local data under legacy uid (e.g. user_...) that needs one-time upload to Firestore
       const legacyUid = `user_${normalizedProfile.email.replace(/[^a-z0-9]/g, '_')}`;
@@ -408,13 +574,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         saveStoredTransactions(finalTx, cloudUid);
       }
 
-      if (loadedWallets && loadedWallets.length > 0) {
-        setWallets(loadedWallets);
-        saveStoredWallets(loadedWallets, cloudUid);
+      let finalWallets: Wallet[] = [];
+      const localWallets = loadStoredWallets(cloudUid);
+      const cloudOnlyHasEmptyDefaults =
+        loadedWallets &&
+        loadedWallets.length > 0 &&
+        loadedWallets.every(
+          (w) =>
+            w.initialBalance === 0 &&
+            (w.name === 'Dompet Tunai' || w.name === 'Rekening Bank' || w.name === 'Dompet Utama')
+        );
+      const localHasCustomOrFunded =
+        !isNewRegistration &&
+        localWallets.length > 0 &&
+        localWallets.some(
+          (w) =>
+            w.initialBalance > 0 ||
+            (w.name !== 'Dompet Tunai' &&
+              w.name !== 'Rekening Bank' &&
+              w.name !== 'Dompet Utama' &&
+              !w.id.startsWith('wallet-bca'))
+        );
+
+      if (cloudOnlyHasEmptyDefaults && localHasCustomOrFunded) {
+        finalWallets = localWallets;
+        for (const w of localWallets) {
+          await saveUserWallet(cloudUid, w);
+        }
+      } else if (loadedWallets && loadedWallets.length > 0) {
+        finalWallets = loadedWallets;
       } else {
-        const fallbackWallets = loadStoredWallets(cloudUid);
-        setWallets(fallbackWallets);
+        finalWallets = localWallets;
       }
+      setWallets(finalWallets);
+      saveStoredWallets(finalWallets, cloudUid);
 
       const finalGoals = loadedGoals || [];
       setGoals(finalGoals);
@@ -427,50 +620,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const finalBudget = loadedBudget || EMPTY_BUDGET_CONFIG;
       setBudgetConfig(finalBudget);
       saveStoredBudgetConfig(finalBudget, cloudUid);
-      const rawSubs = loadStoredSubscriptions(cloudUid);
-      const cleanedSubs = rawSubs.filter((rec) => {
-        if (rec.type !== 'expense') return true;
-        if (!finalBudget.subcategories || finalBudget.subcategories.length === 0) {
-          return !rec.subcategoryId;
-        }
-        const rName = rec.name.toLowerCase().trim();
-        return finalBudget.subcategories.some(
-          (s) =>
-            s.id === rec.subcategoryId ||
-            s.subscriptionId === rec.id ||
-            s.name.toLowerCase().trim() === rName
-        );
-      });
-      if (cleanedSubs.length !== rawSubs.length) {
-        saveStoredSubscriptions(cleanedSubs, cloudUid);
-      }
-      setSubscriptions(cleanedSubs);
+
+      const localRawSubs = loadStoredSubscriptions(cloudUid);
+      const legacyRawSubs = loadStoredSubscriptions(legacyUid);
+      const combinedLocalSubs = localRawSubs.length > 0 ? localRawSubs : legacyRawSubs;
+      const reconciledSubs = await reconcileAndSyncSubscriptions(
+        cloudUid,
+        loadedSubs || [],
+        isNewRegistration ? [] : combinedLocalSubs,
+        finalBudget,
+        finalWallets
+      );
+      setSubscriptions(reconciledSubs);
     } catch (err) {
       console.warn('Fallback to cached account data while syncing Firestore:', err);
-      setWallets(loadStoredWallets(cloudUid));
+      const fallbackWallets = loadStoredWallets(cloudUid);
+      setWallets(fallbackWallets);
       setTransactions(loadStoredTransactions(cloudUid));
       setGoals(loadStoredGoals(cloudUid));
       setDebts(loadStoredDebts(cloudUid));
       const localBudget = loadStoredBudgetConfig(cloudUid);
       setBudgetConfig(localBudget);
       const rawSubs = loadStoredSubscriptions(cloudUid);
-      const cleanedSubs = rawSubs.filter((rec) => {
-        if (rec.type !== 'expense') return true;
-        if (!localBudget.subcategories || localBudget.subcategories.length === 0) {
-          return !rec.subcategoryId;
-        }
-        const rName = rec.name.toLowerCase().trim();
-        return localBudget.subcategories.some(
-          (s) =>
-            s.id === rec.subcategoryId ||
-            s.subscriptionId === rec.id ||
-            s.name.toLowerCase().trim() === rName
-        );
-      });
-      if (cleanedSubs.length !== rawSubs.length) {
-        saveStoredSubscriptions(cleanedSubs, cloudUid);
-      }
-      setSubscriptions(cleanedSubs);
+      const reconciledSubs = await reconcileAndSyncSubscriptions(
+        cloudUid,
+        [],
+        rawSubs,
+        localBudget,
+        fallbackWallets
+      );
+      setSubscriptions(reconciledSubs);
+    } finally {
+      isCloudSyncingRef.current = false;
     }
 
     setDataResetVersion((v) => v + 1);
@@ -759,46 +940,114 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
+        isCloudSyncingRef.current = true;
         saveActiveLocalUser(null);
         setUser(currentUser);
         setAuthLoading(true);
         try {
           await syncUserProfile(currentUser);
-          const [loadedWallets, loadedTx, loadedGoals, loadedBudget, loadedDebts] = await Promise.all([
-            fetchUserWallets(currentUser.uid),
-            fetchUserTransactions(currentUser.uid),
-            fetchUserGoals(currentUser.uid),
-            fetchUserBudgetConfig(currentUser.uid),
-            fetchUserDebts(currentUser.uid),
-          ]);
-          if (loadedWallets && loadedWallets.length > 0) {
-            setWallets(loadedWallets);
+          const acctUid = currentUser.email ? getCloudAccountUid(currentUser.email) : undefined;
+          const [loadedWallets, loadedTx, loadedGoals, loadedBudget, loadedDebts, loadedSubs] =
+            await Promise.all([
+              fetchUserWallets(currentUser.uid),
+              fetchUserTransactions(currentUser.uid),
+              fetchUserGoals(currentUser.uid),
+              fetchUserBudgetConfig(currentUser.uid),
+              fetchUserDebts(currentUser.uid),
+              fetchUserSubscriptions(currentUser.uid),
+            ]);
+
+          // Check if user previously logged in via Email/Password with the same email (acct_...)
+          let acctWallets: Wallet[] = [];
+          let acctTx: Transaction[] = [];
+          let acctGoals: Goal[] = [];
+          let acctBudget: BudgetConfig | null = null;
+          let acctDebts: Debt[] = [];
+          let acctSubs: RecurringItem[] = [];
+
+          if (acctUid && acctUid !== currentUser.uid) {
+            try {
+              [acctWallets, acctTx, acctGoals, acctBudget, acctDebts, acctSubs] = await Promise.all([
+                fetchUserWallets(acctUid),
+                fetchUserTransactions(acctUid),
+                fetchUserGoals(acctUid),
+                fetchUserBudgetConfig(acctUid),
+                fetchUserDebts(acctUid),
+                fetchUserSubscriptions(acctUid),
+              ]);
+            } catch {
+              // Ignore secondary UID lookup error
+            }
           }
-          setTransactions(loadedTx || []);
-          setGoals(loadedGoals || []);
-          const finalDebts = loadedDebts || [];
+
+          // Merge transactions by id
+          const txMap = new Map<string, Transaction>();
+          (acctTx || []).forEach((t) => txMap.set(t.id, t));
+          (loadedTx || []).forEach((t) => txMap.set(t.id, t));
+          const finalTx = Array.from(txMap.values());
+          setTransactions(finalTx);
+          saveStoredTransactions(finalTx, currentUser.uid);
+
+          // Choose wallets (prefer non-default/funded wallets if one of the profiles has them)
+          const primaryHasFunded = (loadedWallets || []).some((w) => w.initialBalance > 0);
+          const acctHasFunded = (acctWallets || []).some((w) => w.initialBalance > 0);
+          const finalWallets =
+            !primaryHasFunded && acctHasFunded
+              ? acctWallets
+              : loadedWallets && loadedWallets.length > 0
+              ? loadedWallets
+              : acctWallets;
+          if (finalWallets && finalWallets.length > 0) {
+            setWallets(finalWallets);
+            saveStoredWallets(finalWallets, currentUser.uid);
+          }
+
+          // Merge goals by id
+          const goalMap = new Map<string, Goal>();
+          (acctGoals || []).forEach((g) => goalMap.set(g.id, g));
+          (loadedGoals || []).forEach((g) => goalMap.set(g.id, g));
+          const finalGoals = Array.from(goalMap.values());
+          setGoals(finalGoals);
+          saveStoredGoals(finalGoals, currentUser.uid);
+
+          // Merge debts by id
+          const debtMap = new Map<string, Debt>();
+          (acctDebts || []).forEach((d) => debtMap.set(d.id, d));
+          (loadedDebts || []).forEach((d) => debtMap.set(d.id, d));
+          const finalDebts = Array.from(debtMap.values());
           setDebts(finalDebts);
           saveStoredDebts(finalDebts, currentUser.uid);
-          const finalLoadedBudget = loadedBudget || EMPTY_BUDGET_CONFIG;
+
+          // Pick populated budgetConfig
+          const primaryBudgetPopulated =
+            loadedBudget &&
+            (loadedBudget.estimatedIncome > 0 || (loadedBudget.subcategories?.length || 0) > 0);
+          const acctBudgetPopulated =
+            acctBudget &&
+            (acctBudget.estimatedIncome > 0 || (acctBudget.subcategories?.length || 0) > 0);
+          const finalLoadedBudget = primaryBudgetPopulated
+            ? loadedBudget!
+            : acctBudgetPopulated
+            ? acctBudget!
+            : loadedBudget || EMPTY_BUDGET_CONFIG;
           setBudgetConfig(finalLoadedBudget);
+          saveStoredBudgetConfig(finalLoadedBudget, currentUser.uid);
+
+          // Reconcile and sync subscriptions across both UIDs, localStorage, and budgetConfig
           const rawAuthSubs = loadStoredSubscriptions(currentUser.uid);
-          const cleanedAuthSubs = rawAuthSubs.filter((rec) => {
-            if (rec.type !== 'expense') return true;
-            if (!finalLoadedBudget.subcategories || finalLoadedBudget.subcategories.length === 0) {
-              return !rec.subcategoryId;
-            }
-            const rName = rec.name.toLowerCase().trim();
-            return finalLoadedBudget.subcategories.some(
-              (s) =>
-                s.id === rec.subcategoryId ||
-                s.subscriptionId === rec.id ||
-                s.name.toLowerCase().trim() === rName
-            );
-          });
-          if (cleanedAuthSubs.length !== rawAuthSubs.length) {
-            saveStoredSubscriptions(cleanedAuthSubs, currentUser.uid);
-          }
-          setSubscriptions(cleanedAuthSubs);
+          const rawAcctSubs = acctUid ? loadStoredSubscriptions(acctUid) : [];
+          const combinedCloudSubs = [...(loadedSubs || []), ...(acctSubs || [])];
+          const combinedLocalSubs = [...rawAuthSubs, ...rawAcctSubs];
+          const reconciledSubs = await reconcileAndSyncSubscriptions(
+            currentUser.uid,
+            combinedCloudSubs,
+            combinedLocalSubs,
+            finalLoadedBudget,
+            finalWallets || [],
+            acctUid
+          );
+          setSubscriptions(reconciledSubs);
+
           setSettings((prev) => ({
             ...prev,
             userName: currentUser.displayName || prev.userName,
@@ -810,6 +1059,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         } catch (err) {
           console.warn('Error loading user data from Firestore:', err);
         } finally {
+          isCloudSyncingRef.current = false;
           setAuthLoading(false);
         }
       } else {
@@ -828,6 +1078,54 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
 
     return () => unsubscribe();
+  }, []);
+
+  // Re-sync cloud account data when user switches back to this browser window/tab
+  useEffect(() => {
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (isCloudSyncingRef.current) return;
+      const activeLocal = loadActiveLocalUser();
+      if (activeLocal?.email) {
+        loadAndSyncCloudAccountSession(activeLocal, false, true).catch(() => {});
+      } else if (auth.currentUser) {
+        const currentUser = auth.currentUser;
+        const acctUid = currentUser.email ? getCloudAccountUid(currentUser.email) : undefined;
+        Promise.all([
+          fetchUserWallets(currentUser.uid),
+          fetchUserTransactions(currentUser.uid),
+          fetchUserGoals(currentUser.uid),
+          fetchUserBudgetConfig(currentUser.uid),
+          fetchUserDebts(currentUser.uid),
+          fetchUserSubscriptions(currentUser.uid),
+        ])
+          .then(async ([w, tx, g, b, d, s]) => {
+            if (w && w.length > 0) setWallets(w);
+            if (tx) setTransactions(tx);
+            if (g) setGoals(g);
+            if (d) setDebts(d);
+            const finalB = b || EMPTY_BUDGET_CONFIG;
+            setBudgetConfig(finalB);
+            const reconciled = await reconcileAndSyncSubscriptions(
+              currentUser.uid,
+              s || [],
+              loadStoredSubscriptions(currentUser.uid),
+              finalB,
+              w || [],
+              acctUid
+            );
+            setSubscriptions(reconciled);
+          })
+          .catch(() => {});
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
   }, []);
 
   const applyThemeToDOM = (mode: ThemeMode, accent?: AccentColor) => {
@@ -919,6 +1217,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Persist healed transaction walletIds to localStorage/Firestore when resolvedWalletIdMap maps an orphan/unfunded wallet
   useEffect(() => {
+    if (isCloudSyncingRef.current || authLoading) return;
     if (wallets.length === 0 || transactions.length === 0) return;
     let changed = false;
     const healed = transactions.map((tx) => {
@@ -939,7 +1238,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         });
       }
     }
-  }, [resolvedWalletIdMap, wallets.length, transactions, localScopeUid, isCloudUser, user?.uid]);
+  }, [resolvedWalletIdMap, wallets.length, transactions, localScopeUid, isCloudUser, user?.uid, authLoading]);
 
   // Calculate wallet balances
   const walletsWithBalance = useMemo<WalletWithBalance[]>(() => {
@@ -1725,7 +2024,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           rec.subcategoryId === id ||
           (targetSubName && rec.name.toLowerCase().trim() === targetSubName)
         ) {
-          return {
+          const updatedRec: RecurringItem = {
             ...rec,
             subcategoryId: id,
             name: data.name !== undefined ? data.name : rec.name,
@@ -1737,6 +2036,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 ? data.allocatedAmount
                 : rec.amount,
           };
+          if (isCloudUser && user?.uid) {
+            saveUserSubscription(user.uid, updatedRec).catch((err) =>
+              console.warn('Error updating subscription in Firestore:', err)
+            );
+          }
+          return updatedRec;
         }
         return rec;
       });
@@ -1762,10 +2067,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Also delete any subscription linked to this deleted subcategory so it never stays as a ghost bill
+    const removedSubs: RecurringItem[] = [];
     const nextSubs = subscriptions.filter((rec) => {
-      if (rec.subcategoryId === id) return false;
-      if (targetSub?.subscriptionId && rec.id === targetSub.subscriptionId) return false;
+      if (rec.subcategoryId === id) {
+        removedSubs.push(rec);
+        return false;
+      }
+      if (targetSub?.subscriptionId && rec.id === targetSub.subscriptionId) {
+        removedSubs.push(rec);
+        return false;
+      }
       if (targetNameLower && rec.type === 'expense' && rec.name.toLowerCase().trim() === targetNameLower) {
+        removedSubs.push(rec);
         return false;
       }
       return true;
@@ -1773,12 +2086,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (nextSubs.length !== subscriptions.length) {
       setSubscriptions(nextSubs);
       saveStoredSubscriptions(nextSubs, localScopeUid);
+      if (isCloudUser && user?.uid) {
+        for (const rem of removedSubs) {
+          deleteUserSubscription(user.uid, rem.id).catch((err) =>
+            console.warn('Error deleting subscription from Firestore:', err)
+          );
+        }
+      }
     }
 
     addToast('Subkategori Dihapus', 'Subkategori & jadwal tagihan terkait telah dihapus.', 'info');
   };
 
-  // CRUD: Subscriptions & Recurring Transactions (Two-way integrated with BudgetConfig)
+  // CRUD: Subscriptions & Recurring Transactions (Two-way integrated with BudgetConfig & Cloud Firestore)
   const addSubscription = (itemData: Omit<RecurringItem, 'id'>) => {
     const newId = `sub-rec-${Date.now()}`;
     const cleanName = itemData.name.trim();
@@ -1812,6 +2132,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 dueDateDay: itemData.billingDay,
                 subscriptionId: newId,
                 isSubscriptionActive: itemData.isActive,
+                walletId: itemData.walletId,
+                categoryId: itemData.categoryId,
+                frequency: itemData.frequency,
+                lastRecordedPeriod: itemData.lastRecordedPeriod,
               }
             : s
         );
@@ -1827,6 +2151,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           dueDateDay: itemData.billingDay,
           subscriptionId: newId,
           isSubscriptionActive: itemData.isActive,
+          walletId: itemData.walletId,
+          categoryId: itemData.categoryId,
+          frequency: itemData.frequency,
+          lastRecordedPeriod: itemData.lastRecordedPeriod,
         });
       }
 
@@ -1867,6 +2195,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const nextSubs = [...subscriptions, newItem];
     setSubscriptions(nextSubs);
     saveStoredSubscriptions(nextSubs, localScopeUid);
+    if (isCloudUser && user?.uid) {
+      saveUserSubscription(user.uid, newItem).catch((err) =>
+        console.warn('Error saving subscription to Firestore:', err)
+      );
+      if (user.email && getCloudAccountUid(user.email) !== user.uid) {
+        saveUserSubscription(getCloudAccountUid(user.email), newItem).catch(() => {});
+      }
+    }
     addToast(
       'Jadwal & Budget Disimpan',
       itemData.type === 'expense'
@@ -1919,6 +2255,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 dueDateDay: merged.billingDay,
                 subscriptionId: id,
                 isSubscriptionActive: merged.isActive,
+                walletId: merged.walletId,
+                categoryId: merged.categoryId,
+                frequency: merged.frequency,
+                lastRecordedPeriod: merged.lastRecordedPeriod,
               }
             : s
         );
@@ -1934,6 +2274,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           dueDateDay: merged.billingDay,
           subscriptionId: id,
           isSubscriptionActive: merged.isActive,
+          walletId: merged.walletId,
+          categoryId: merged.categoryId,
+          frequency: merged.frequency,
+          lastRecordedPeriod: merged.lastRecordedPeriod,
         });
       }
 
@@ -1976,6 +2320,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const nextSubs = subscriptions.map((i) => (i.id === id ? finalUpdatedItem : i));
     setSubscriptions(nextSubs);
     saveStoredSubscriptions(nextSubs, localScopeUid);
+    if (isCloudUser && user?.uid) {
+      saveUserSubscription(user.uid, finalUpdatedItem).catch((err) =>
+        console.warn('Error updating subscription in Firestore:', err)
+      );
+      if (user.email && getCloudAccountUid(user.email) !== user.uid) {
+        saveUserSubscription(getCloudAccountUid(user.email), finalUpdatedItem).catch(() => {});
+      }
+    }
     addToast(
       'Jadwal Diperbarui',
       `${finalUpdatedItem.name} & alokasi budget terkait berhasil diperbarui.`
@@ -1986,11 +2338,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const target = subscriptions.find((i) => i.id === id);
     if (!target) return;
     const nextActive = !target.isActive;
-    const nextSubs = subscriptions.map((i) =>
-      i.id === id ? { ...i, isActive: nextActive } : i
-    );
+    const updatedItem: RecurringItem = { ...target, isActive: nextActive };
+    const nextSubs = subscriptions.map((i) => (i.id === id ? updatedItem : i));
     setSubscriptions(nextSubs);
     saveStoredSubscriptions(nextSubs, localScopeUid);
+    if (isCloudUser && user?.uid) {
+      saveUserSubscription(user.uid, updatedItem).catch((err) =>
+        console.warn('Error toggling subscription in Firestore:', err)
+      );
+      if (user.email && getCloudAccountUid(user.email) !== user.uid) {
+        saveUserSubscription(getCloudAccountUid(user.email), updatedItem).catch(() => {});
+      }
+    }
 
     if (target.type === 'expense') {
       const targetNameLower = target.name.toLowerCase().trim();
@@ -2031,6 +2390,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const nextSubs = subscriptions.filter((i) => i.id !== id);
     setSubscriptions(nextSubs);
     saveStoredSubscriptions(nextSubs, localScopeUid);
+    if (isCloudUser && user?.uid) {
+      deleteUserSubscription(user.uid, id).catch((err) =>
+        console.warn('Error deleting subscription from Firestore:', err)
+      );
+      if (user.email && getCloudAccountUid(user.email) !== user.uid) {
+        deleteUserSubscription(getCloudAccountUid(user.email), id).catch(() => {});
+      }
+    }
 
     if (target && target.type === 'expense') {
       const targetNameLower = target.name.toLowerCase().trim();
@@ -2094,11 +2461,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       date: dateStr,
     });
 
-    const nextSubs = subscriptions.map((i) =>
-      i.id === item.id ? { ...i, lastRecordedPeriod: currentPeriodKey } : i
-    );
+    const updatedItem: RecurringItem = { ...item, lastRecordedPeriod: currentPeriodKey };
+    const nextSubs = subscriptions.map((i) => (i.id === item.id ? updatedItem : i));
     setSubscriptions(nextSubs);
     saveStoredSubscriptions(nextSubs, localScopeUid);
+    if (isCloudUser && user?.uid) {
+      saveUserSubscription(user.uid, updatedItem).catch((err) =>
+        console.warn('Error updating recorded subscription in Firestore:', err)
+      );
+      if (user.email && getCloudAccountUid(user.email) !== user.uid) {
+        saveUserSubscription(getCloudAccountUid(user.email), updatedItem).catch(() => {});
+      }
+    }
     addToast(
       'Pembayaran Dicatat',
       item.type === 'expense'
@@ -2138,6 +2512,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
                 group: determinedGroup,
                 subscriptionId: item.id,
                 isSubscriptionActive: item.isActive,
+                walletId: item.walletId,
+                categoryId: item.categoryId,
+                frequency: item.frequency,
+                lastRecordedPeriod: item.lastRecordedPeriod,
               }
             : s
         );
@@ -2154,6 +2532,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           dueDateDay: item.billingDay,
           subscriptionId: item.id,
           isSubscriptionActive: item.isActive,
+          walletId: item.walletId,
+          categoryId: item.categoryId,
+          frequency: item.frequency,
+          lastRecordedPeriod: item.lastRecordedPeriod,
         });
         return { ...item, subcategoryId: newSubId, budgetGroup: determinedGroup };
       }
@@ -2172,8 +2554,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         saveUserBudgetConfig(user.uid, nextBudgetConfig).catch((err) =>
           console.warn('Error saving budget config to Firestore:', err)
         );
+        for (const subItem of nextSubs) {
+          saveUserSubscription(user.uid, subItem).catch(() => {});
+        }
       }
-      addToast('Sinkronisasi Berhasil', 'Semua jadwal langganan kini terhubung ke Pos Alokasi Budget.');
+      addToast('Sinkronisasi Berhasil', 'Semua jadwal langganan kini terhubung ke Pos Alokasi Budget & Cloud.');
     }
   };
 

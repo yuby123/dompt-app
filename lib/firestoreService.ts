@@ -10,7 +10,7 @@ import {
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
 import { auth, db, handleFirestoreError, isFirestoreOfflineError, OperationType } from './firebase';
-import { BudgetConfig, Debt, Goal, Transaction, Wallet } from './types';
+import { BudgetConfig, Debt, Goal, RecurringItem, Transaction, Wallet } from './types';
 import { EMPTY_BUDGET_CONFIG } from './constants';
 import {
   loadStoredBudgetConfig,
@@ -712,6 +712,110 @@ export async function deleteUserDebt(userId: string, debtId: string): Promise<vo
   }
 }
 
+// Subscriptions & Recurring Bills
+export async function fetchUserSubscriptions(userId: string): Promise<RecurringItem[]> {
+  const path = `users/${userId}/subscriptions`;
+  const mapSubDoc = (d: any): RecurringItem => ({
+    id: d.id,
+    name: d.name || 'Langganan',
+    emoji: d.emoji || (d.type === 'income' ? '💰' : '🔁'),
+    type: d.type === 'income' ? 'income' : 'expense',
+    amount: Number(d.amount) || 0,
+    frequency:
+      d.frequency === 'yearly' || d.frequency === 'weekly' ? d.frequency : 'monthly',
+    billingDay: Number(d.billingDay) || 1,
+    walletId: d.walletId || 'wallet-cash',
+    categoryId: d.categoryId || (d.type === 'income' ? 'cat-gaji' : 'cat-tagihan'),
+    subcategoryId: d.subcategoryId || undefined,
+    budgetGroup:
+      d.budgetGroup === 'kebutuhan' ||
+      d.budgetGroup === 'keinginan' ||
+      d.budgetGroup === 'tabungan'
+        ? d.budgetGroup
+        : undefined,
+    isActive: d.isActive !== undefined ? Boolean(d.isActive) : true,
+    lastRecordedPeriod: d.lastRecordedPeriod || undefined,
+  });
+
+  try {
+    const colRef = collection(db, 'users', userId, 'subscriptions');
+    const snap = await getDocs(query(colRef));
+    return snap.docs.map((docSnap) => mapSubDoc(docSnap.data()));
+  } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const listRes = await cloudRestApi('list', path);
+      if (listRes?.ok && Array.isArray(listRes.docs)) {
+        return listRes.docs.map(mapSubDoc);
+      }
+    }
+    handleFirestoreError(error, OperationType.GET, path);
+    return [];
+  }
+}
+
+export async function saveUserSubscription(
+  userId: string,
+  item: RecurringItem
+): Promise<void> {
+  const path = `users/${userId}/subscriptions/${item.id}`;
+  const restPayload: Record<string, any> = {
+    id: item.id,
+    userId,
+    name: item.name,
+    emoji: item.emoji || (item.type === 'income' ? '💰' : '🔁'),
+    type: item.type,
+    amount: Number(item.amount) || 0,
+    frequency: item.frequency || 'monthly',
+    billingDay: Number(item.billingDay) || 1,
+    walletId: item.walletId || 'wallet-cash',
+    categoryId: item.categoryId || (item.type === 'income' ? 'cat-gaji' : 'cat-tagihan'),
+    isActive: Boolean(item.isActive),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...(item.subcategoryId ? { subcategoryId: item.subcategoryId } : {}),
+    ...(item.budgetGroup ? { budgetGroup: item.budgetGroup } : {}),
+    ...(item.lastRecordedPeriod
+      ? { lastRecordedPeriod: item.lastRecordedPeriod }
+      : {}),
+  };
+
+  try {
+    const docRef = doc(db, 'users', userId, 'subscriptions', item.id);
+    const payload: Record<string, any> = {
+      ...restPayload,
+      subcategoryId: item.subcategoryId ? item.subcategoryId : deleteField(),
+      budgetGroup: item.budgetGroup ? item.budgetGroup : deleteField(),
+      lastRecordedPeriod: item.lastRecordedPeriod
+        ? item.lastRecordedPeriod
+        : deleteField(),
+    };
+    await setDoc(docRef, payload, { merge: true });
+  } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const setRes = await cloudRestApi('set', path, restPayload, false);
+      if (setRes?.ok) return;
+    }
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteUserSubscription(
+  userId: string,
+  subscriptionId: string
+): Promise<void> {
+  const path = `users/${userId}/subscriptions/${subscriptionId}`;
+  try {
+    const docRef = doc(db, 'users', userId, 'subscriptions', subscriptionId);
+    await deleteDoc(docRef);
+  } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      const delRes = await cloudRestApi('delete', path);
+      if (delRes?.ok) return;
+    }
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
 // Reset all user data in Firestore
 export async function resetUserFirestoreData(userId: string): Promise<Wallet[]> {
   try {
@@ -733,6 +837,13 @@ export async function resetUserFirestoreData(userId: string): Promise<Wallet[]> 
     const debtCol = collection(db, 'users', userId, 'debts');
     const debtSnap = await getDocs(query(debtCol));
     for (const d of debtSnap.docs) {
+      await deleteDoc(d.ref);
+    }
+
+    // 2.6 Delete all subscriptions
+    const subCol = collection(db, 'users', userId, 'subscriptions');
+    const subSnap = await getDocs(query(subCol));
+    for (const d of subSnap.docs) {
       await deleteDoc(d.ref);
     }
 

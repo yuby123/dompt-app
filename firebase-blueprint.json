@@ -91,6 +91,7 @@
         "wantsPercent": { "type": "number" },
         "savingsPercent": { "type": "number" },
         "subcategoriesJson": { "type": "string", "maxLength": 10000 },
+        "subscriptionsJson": { "type": "string", "maxLength": 10000 },
         "createdAt": { "type": "string", "maxLength": 64 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
@@ -120,6 +121,30 @@
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "userId", "name", "type", "totalAmount", "remainingAmount", "dueDate", "contactName", "status"]
+    },
+    "Subscription": {
+      "title": "Subscription",
+      "description": "User recurring subscription bills and routine income schedules",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "emoji": { "type": "string", "maxLength": 20 },
+        "type": { "type": "string", "enum": ["expense", "income"] },
+        "amount": { "type": "number" },
+        "frequency": { "type": "string", "enum": ["monthly", "yearly", "weekly"] },
+        "billingDay": { "type": "number" },
+        "walletId": { "type": "string", "maxLength": 128 },
+        "categoryId": { "type": "string", "maxLength": 100 },
+        "subcategoryId": { "type": "string", "maxLength": 128 },
+        "budgetGroup": { "type": "string", "maxLength": 50 },
+        "isActive": { "type": "boolean" },
+        "lastRecordedPeriod": { "type": "string", "maxLength": 20 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "name", "type", "amount", "frequency", "billingDay", "walletId", "categoryId", "isActive"]
     }
   },
   "firestore": {
@@ -146,6 +171,10 @@
     "/users/{userId}/debts/{debtId}": {
       "schema": { "$ref": "#/entities/Debt" },
       "description": "User debts and receivables"
+    },
+    "/users/{userId}/subscriptions/{subscriptionId}": {
+      "schema": { "$ref": "#/entities/Subscription" },
+      "description": "User recurring subscriptions and routine bills"
     }
   }
 }

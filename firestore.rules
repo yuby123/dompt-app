@@ -109,16 +109,36 @@ service cloud.firestore {
         && (!('paymentsJson' in data) || (data.paymentsJson is string && data.paymentsJson.size() <= 20000));
     }
 
+    function isValidSubscription(data) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'type', 'amount', 'frequency', 'billingDay', 'walletId', 'categoryId', 'isActive'])
+        && data.keys().hasOnly(['id', 'userId', 'name', 'emoji', 'type', 'amount', 'frequency', 'billingDay', 'walletId', 'categoryId', 'subcategoryId', 'budgetGroup', 'isActive', 'lastRecordedPeriod', 'createdAt', 'updatedAt'])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 100
+        && (!('emoji' in data) || (data.emoji is string && data.emoji.size() <= 20))
+        && data.type in ['expense', 'income']
+        && data.amount is number
+        && data.frequency in ['monthly', 'yearly', 'weekly']
+        && data.billingDay is number
+        && data.walletId is string && data.walletId.size() <= 128
+        && data.categoryId is string && data.categoryId.size() <= 100
+        && (!('subcategoryId' in data) || (data.subcategoryId is string && data.subcategoryId.size() <= 128))
+        && (!('budgetGroup' in data) || (data.budgetGroup is string && data.budgetGroup.size() <= 50))
+        && data.isActive is bool
+        && (!('lastRecordedPeriod' in data) || (data.lastRecordedPeriod is string && data.lastRecordedPeriod.size() <= 20));
+    }
+
     function isValidBudgetConfig(data) {
       return data.keys().hasAll(['id', 'userId', 'estimatedIncome'])
-        && data.keys().hasOnly(['id', 'userId', 'estimatedIncome', 'needsPercent', 'wantsPercent', 'savingsPercent', 'subcategoriesJson', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'estimatedIncome', 'needsPercent', 'wantsPercent', 'savingsPercent', 'subcategoriesJson', 'subscriptionsJson', 'createdAt', 'updatedAt'])
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.estimatedIncome is number
         && (!('needsPercent' in data) || data.needsPercent is number)
         && (!('wantsPercent' in data) || data.wantsPercent is number)
         && (!('savingsPercent' in data) || data.savingsPercent is number)
-        && (!('subcategoriesJson' in data) || (data.subcategoriesJson is string && data.subcategoriesJson.size() <= 10000));
+        && (!('subcategoriesJson' in data) || (data.subcategoriesJson is string && data.subcategoriesJson.size() <= 10000))
+        && (!('subscriptionsJson' in data) || (data.subscriptionsJson is string && data.subscriptionsJson.size() <= 10000));
     }
 
     // User Resource Rules
@@ -207,6 +227,21 @@ service cloud.firestore {
           && isValidDebt(incoming())
           && incoming().userId == existing().userId;
         allow delete: if isOwner(userId) && isValidId(debtId);
+      }
+
+      // Subscriptions sub-collection
+      match /subscriptions/{subscriptionId} {
+        allow get: if isOwner(userId) && isValidId(subscriptionId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidId(subscriptionId)
+          && isValidSubscription(incoming())
+          && incoming().userId == userId;
+        allow update: if isOwner(userId)
+          && isValidId(subscriptionId)
+          && isValidSubscription(incoming())
+          && incoming().userId == existing().userId;
+        allow delete: if isOwner(userId) && isValidId(subscriptionId);
       }
     }
   }

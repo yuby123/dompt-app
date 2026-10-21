@@ -1856,6 +1856,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteTransaction = (id: string) => {
+    markLocalMutation();
+    const nextDeleted = recordDeletedId(id);
     setTransactions((prev) => {
       const updated = prev.filter((t) => t.id !== id);
       saveStoredTransactions(updated, localScopeUid);
@@ -1866,6 +1868,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deleteUserTransaction(user.uid, id).catch((err) =>
         console.warn('Error deleting transaction from Firestore:', err)
       );
+      const primaryUid = user.uid;
+      const acctUid = user.email ? getCloudAccountUid(user.email) : undefined;
+      persistExtendedBudgetToCloud(primaryUid, acctUid, { deletedIds: nextDeleted });
     }
 
     addToast('Transaksi Dihapus', 'Data transaksi telah dihapus.', 'info');
@@ -1873,6 +1878,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // CRUD: Wallet
   const addWallet = (data: Omit<Wallet, 'id' | 'createdAt' | 'updatedAt'>) => {
+    markLocalMutation();
     const newW: Wallet = {
       ...data,
       id: `wallet-${Date.now()}`,
@@ -1892,6 +1898,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateWallet = (id: string, data: Partial<Wallet>) => {
+    markLocalMutation();
     let targetW: Wallet | undefined;
     const updated = wallets.map((w) => {
       if (w.id === id) {
@@ -1915,6 +1922,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       addToast('Gagal Menghapus', 'Minimal harus ada 1 dompet aktif.', 'error');
       return false;
     }
+    markLocalMutation();
+    const nextDeleted = recordDeletedId(id);
     const updated = wallets.filter((w) => w.id !== id);
     setWallets(updated);
     saveStoredWallets(updated, localScopeUid);
@@ -1922,6 +1931,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deleteUserWallet(user.uid, id).catch((err) =>
         console.warn('Error deleting wallet from Firestore:', err)
       );
+      const primaryUid = user.uid;
+      const acctUid = user.email ? getCloudAccountUid(user.email) : undefined;
+      persistExtendedBudgetToCloud(primaryUid, acctUid, { deletedIds: nextDeleted });
     }
     addToast('Dompet Dihapus', 'Dompet berhasil dihapus.', 'info');
     return true;
@@ -1934,9 +1946,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // CRUD: Goals
   const addGoal = (data: Omit<Goal, 'id'>) => {
+    markLocalMutation();
     const newG: Goal = {
       ...data,
       id: `goal-${Date.now()}`,
+      updatedAt: new Date().toISOString(),
     };
     const updated = [...goals, newG];
     setGoals(updated);
@@ -1950,10 +1964,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateGoal = (id: string, data: Partial<Goal>) => {
+    markLocalMutation();
     let targetG: Goal | undefined;
     const updated = goals.map((g) => {
       if (g.id === id) {
-        targetG = { ...g, ...data };
+        targetG = { ...g, ...data, updatedAt: new Date().toISOString() };
         return targetG;
       }
       return g;
@@ -1969,6 +1984,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteGoal = (id: string) => {
+    markLocalMutation();
+    const nextDeleted = recordDeletedId(id);
     const updated = goals.filter((g) => g.id !== id);
     setGoals(updated);
     saveStoredGoals(updated, localScopeUid);
@@ -1976,6 +1993,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deleteUserGoal(user.uid, id).catch((err) =>
         console.warn('Error deleting goal from Firestore:', err)
       );
+      const primaryUid = user.uid;
+      const acctUid = user.email ? getCloudAccountUid(user.email) : undefined;
+      persistExtendedBudgetToCloud(primaryUid, acctUid, { deletedIds: nextDeleted });
     }
     addToast('Goal Dihapus', 'Target goal telah dihapus.', 'info');
   };
@@ -1993,6 +2013,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     debtData: Omit<Debt, 'id' | 'createdAt' | 'updatedAt'>,
     options?: { disburseWalletId?: string }
   ) => {
+    markLocalMutation();
     const id = `debt-${Date.now()}`;
     const now = new Date().toISOString();
     const initialRem = debtData.remainingAmount !== undefined ? debtData.remainingAmount : debtData.totalAmount;
@@ -2051,6 +2072,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateDebt = (id: string, data: Partial<Debt>) => {
+    markLocalMutation();
     const nextDebts = debts.map((d) => {
       if (d.id !== id) return d;
       const updatedItem: Debt = {
@@ -2076,6 +2098,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteDebt = (id: string) => {
+    markLocalMutation();
+    const nextDeleted = recordDeletedId(id);
     const targetDebt = debts.find((d) => d.id === id);
     const nextDebts = debts.filter((d) => d.id !== id);
     setDebts(nextDebts);
@@ -2084,6 +2108,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       deleteUserDebt(user.uid, id).catch((err) =>
         console.warn('Error deleting debt from Firestore:', err)
       );
+      const primaryUid = user.uid;
+      const acctUid = user.email ? getCloudAccountUid(user.email) : undefined;
+      persistExtendedBudgetToCloud(primaryUid, acctUid, { deletedIds: nextDeleted });
     }
 
     // Also remove any linked debt subcategory from budgetConfig so deleted debt doesn't leave a ghost allocation
@@ -2365,11 +2392,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteBudgetSubcategory = (id: string) => {
+    markLocalMutation();
+    const nextDeleted = recordDeletedId(id);
     const targetSub = budgetConfig.subcategories.find((s) => s.id === id);
     const targetNameLower = targetSub ? targetSub.name.toLowerCase().trim() : '';
 
     const updatedSub = budgetConfig.subcategories.filter((s) => s.id !== id);
-    const updated = { ...budgetConfig, subcategories: updatedSub };
+    const updated = { ...budgetConfig, subcategories: updatedSub, deletedIds: nextDeleted };
     setBudgetConfig(updated);
     saveStoredBudgetConfig(updated, localScopeUid);
     if (isCloudUser && user?.uid) {
@@ -2412,6 +2441,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // CRUD: Subscriptions & Recurring Transactions (Two-way integrated with BudgetConfig & Cloud Firestore)
   const addSubscription = (itemData: Omit<RecurringItem, 'id'>) => {
+    markLocalMutation();
     const newId = `sub-rec-${Date.now()}`;
     const cleanName = itemData.name.trim();
     const cleanNameLower = cleanName.toLowerCase();
@@ -2524,6 +2554,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateSubscription = (id: string, data: Partial<RecurringItem>) => {
+    markLocalMutation();
     const existingItem = subscriptions.find((i) => i.id === id);
     if (!existingItem) return;
 
@@ -2647,6 +2678,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const toggleSubscriptionActive = (id: string) => {
+    markLocalMutation();
     const target = subscriptions.find((i) => i.id === id);
     if (!target) return;
     const nextActive = !target.isActive;
@@ -2698,6 +2730,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteSubscription = (id: string) => {
+    markLocalMutation();
+    const nextDeleted = recordDeletedId(id);
     const target = subscriptions.find((i) => i.id === id);
     const nextSubs = subscriptions.filter((i) => i.id !== id);
     setSubscriptions(nextSubs);
@@ -2709,6 +2743,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (user.email && getCloudAccountUid(user.email) !== user.uid) {
         deleteUserSubscription(getCloudAccountUid(user.email), id).catch(() => {});
       }
+      const primaryUid = user.uid;
+      const acctUid = user.email ? getCloudAccountUid(user.email) : undefined;
+      persistExtendedBudgetToCloud(primaryUid, acctUid, { deletedIds: nextDeleted });
     }
 
     if (target && target.type === 'expense') {

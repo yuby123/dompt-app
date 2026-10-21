@@ -67,6 +67,46 @@ export function GoalsTab() {
 
   const hide = settings.hideBalance;
 
+  const isPink = settings.accentColor === 'pink';
+  const isOrange = settings.accentColor === 'orange';
+
+  const brandAccentBtn = isOrange
+    ? 'bg-[#FF6B00] hover:bg-[#ea5e00] text-white shadow-[#FF6B00]/25'
+    : isPink
+    ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] text-black'
+    : 'bg-[#D4F826] hover:bg-[#c6ec15] text-black';
+
+  const brandAccentBg = isOrange
+    ? 'bg-[#FF6B00] text-white'
+    : isPink
+    ? 'bg-[#FFA4A4] text-black'
+    : 'bg-[#D4F826] text-black';
+
+  const brandAccentFocusRing = isOrange
+    ? 'focus:ring-[#FF6B00]'
+    : isPink
+    ? 'focus:ring-[#FFA4A4]'
+    : 'focus:ring-[#D4F826]';
+
+  const brandAccentBadgeBg = isOrange
+    ? 'bg-[#FF6B00]/20 text-[#FF6B00] dark:text-[#FF7A1A]'
+    : isPink
+    ? 'bg-[#FFA4A4]/30 text-[#F43F5E]'
+    : 'bg-[#D4F826]/30 text-lime-800 dark:text-[#D4F826]';
+
+  const brandAccentIconText = isOrange
+    ? 'text-[#FF6B00]'
+    : isPink
+    ? 'text-[#F43F5E]'
+    : 'text-[#D4F826]';
+
+  const brandProgressBar = isOrange
+    ? 'bg-gradient-to-r from-[#FF6B00] via-[#F59E0B] to-[#EC4899]'
+    : isPink
+    ? 'bg-gradient-to-r from-[#FFA4A4] via-[#F43F5E] to-[#E11D48]'
+    : 'bg-gradient-to-r from-[#D4F826] via-[#8B5CF6] to-[#38BDF8]';
+
+
   // Open Edit Modal with prefilled values
   const handleOpenEdit = (goal: Goal) => {
     setEditingGoal(goal);
@@ -192,7 +232,7 @@ export function GoalsTab() {
         <button
           type="button"
           onClick={() => setIsAddModalOpen(true)}
-          className="h-10 px-4 rounded-xl bg-[#c8f53c] hover:bg-[#bcf026] text-black flex items-center justify-center gap-1.5 font-black text-xs sm:text-sm shadow-xs cursor-pointer transition-transform active:scale-95 shrink-0"
+          className={`h-10 px-4 rounded-xl ${brandAccentBtn} flex items-center justify-center gap-1.5 font-black text-xs sm:text-sm shadow-xs cursor-pointer transition-transform active:scale-95 shrink-0`}
           title="Tambah Goal Baru"
         >
           <Plus size={17} strokeWidth={3} />
@@ -217,7 +257,7 @@ export function GoalsTab() {
           <button
             type="button"
             onClick={() => setIsAddModalOpen(true)}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#c8f53c] hover:bg-[#bcf026] text-black text-xs font-black shadow-xs cursor-pointer transition-all active:scale-95"
+            className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl ${brandAccentBtn} text-xs font-black shadow-xs cursor-pointer transition-all active:scale-95`}
           >
             <Plus size={16} strokeWidth={3} />
             <span>Mulai Buat Goal</span>
@@ -295,7 +335,7 @@ export function GoalsTab() {
                       </span>
                       <div className="w-20 sm:w-28 h-1.5 sm:h-2 rounded-full bg-stone-100 dark:bg-stone-800 overflow-hidden">
                         <div
-                          className="h-full rounded-full bg-[#8B5CF6] transition-all duration-500"
+                          className={`h-full rounded-full ${brandProgressBar} transition-all duration-500`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
@@ -346,7 +386,7 @@ export function GoalsTab() {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-[#c8f53c]/30 flex items-center justify-center text-sm">
+                  <div className={`w-8 h-8 rounded-xl ${brandAccentBadgeBg} flex items-center justify-center text-sm font-bold`}>
                     ✨
                   </div>
                   <h3 className="text-base font-extrabold text-stone-900 dark:text-white">
@@ -374,7 +414,7 @@ export function GoalsTab() {
                       onChange={(e) => setName(e.target.value)}
                       placeholder="e.g. Dana Darurat, Bali Trip"
                       required
-                      className="flex-1 p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c]"
+                      className={`flex-1 p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                     />
                     {/* Interactive Emoji Button */}
                     <button
@@ -384,7 +424,7 @@ export function GoalsTab() {
                       title="Pilih Emoticon Target"
                     >
                       <span>{emoji || '🎯'}</span>
-                      <span className="absolute -bottom-1 -right-1 p-0.5 bg-black text-[#c8f53c] rounded-full shadow-2xs">
+                      <span className={`absolute -bottom-1 -right-1 p-0.5 bg-black ${brandAccentIconText} rounded-full shadow-2xs`}>
                         <Smile size={10} />
                       </span>
                     </button>
@@ -402,7 +442,7 @@ export function GoalsTab() {
                     onChange={(e) => setTargetAmount(formatNominalInput(e.target.value))}
                     placeholder="Contoh: 15.000.000"
                     required
-                    className="w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c]"
+                    className={`w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                   />
                 </div>
 
@@ -413,7 +453,7 @@ export function GoalsTab() {
                   <select
                     value={walletId}
                     onChange={(e) => setWalletId(e.target.value)}
-                    className="w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c]"
+                    className={`w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                   >
                     {wallets.map((w) => (
                       <option key={w.id} value={w.id}>
@@ -431,7 +471,7 @@ export function GoalsTab() {
                     type="date"
                     value={targetDate}
                     onChange={(e) => setTargetDate(e.target.value)}
-                    className="w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c]"
+                    className={`w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                   />
                 </div>
 
@@ -441,7 +481,9 @@ export function GoalsTab() {
                     id="emergencyCheckbox"
                     checked={isEmergencyFund}
                     onChange={(e) => setIsEmergencyFund(e.target.checked)}
-                    className="w-4 h-4 rounded-md accent-[#c8f53c] cursor-pointer"
+                    className={`w-4 h-4 rounded-md cursor-pointer ${
+                      isOrange ? 'accent-[#FF6B00]' : isPink ? 'accent-[#FFA4A4]' : 'accent-[#D4F826]'
+                    }`}
                   />
                   <label
                     htmlFor="emergencyCheckbox"
@@ -461,7 +503,7 @@ export function GoalsTab() {
                     value={initialDeposit}
                     onChange={(e) => setInitialDeposit(formatNominalInput(e.target.value))}
                     placeholder="Contoh: 500.000"
-                    className="w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c]"
+                    className={`w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                   />
                 </div>
 
@@ -475,7 +517,7 @@ export function GoalsTab() {
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-3 rounded-2xl bg-[#c8f53c] text-black text-xs font-black shadow-xs cursor-pointer hover:bg-[#bcf026] transition-transform active:scale-95"
+                    className={`flex-1 py-3 rounded-2xl ${brandAccentBtn} text-xs font-black shadow-xs cursor-pointer transition-transform active:scale-95`}
                   >
                     Simpan Goal
                   </button>
@@ -526,7 +568,7 @@ export function GoalsTab() {
                       onChange={(e) => setEditName(e.target.value)}
                       placeholder="Nama Goal"
                       required
-                      className="flex-1 p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c]"
+                      className={`flex-1 p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                     />
                     {/* Interactive Emoji Button */}
                     <button
@@ -536,7 +578,7 @@ export function GoalsTab() {
                       title="Ganti Emoticon Target"
                     >
                       <span>{editEmoji || '🎯'}</span>
-                      <span className="absolute -bottom-1 -right-1 p-0.5 bg-black text-[#c8f53c] rounded-full shadow-2xs">
+                      <span className={`absolute -bottom-1 -right-1 p-0.5 bg-black ${brandAccentIconText} rounded-full shadow-2xs`}>
                         <Smile size={10} />
                       </span>
                     </button>
@@ -554,7 +596,7 @@ export function GoalsTab() {
                     onChange={(e) => setEditTargetAmount(formatNominalInput(e.target.value))}
                     placeholder="Contoh: 15.000.000"
                     required
-                    className="w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c]"
+                    className={`w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                   />
                 </div>
 
@@ -568,7 +610,7 @@ export function GoalsTab() {
                     value={editCurrentAmount}
                     onChange={(e) => setEditCurrentAmount(formatNominalInput(e.target.value))}
                     placeholder="Contoh: 14.500.000"
-                    className="w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c]"
+                    className={`w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                   />
                 </div>
 
@@ -579,7 +621,7 @@ export function GoalsTab() {
                   <select
                     value={editWalletId}
                     onChange={(e) => setEditWalletId(e.target.value)}
-                    className="w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c]"
+                    className={`w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                   >
                     {wallets.map((w) => (
                       <option key={w.id} value={w.id}>
@@ -597,7 +639,7 @@ export function GoalsTab() {
                     type="date"
                     value={editTargetDate}
                     onChange={(e) => setEditTargetDate(e.target.value)}
-                    className="w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c]"
+                    className={`w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                   />
                 </div>
 
@@ -607,7 +649,9 @@ export function GoalsTab() {
                     id="editEmergencyCheckbox"
                     checked={editIsEmergencyFund}
                     onChange={(e) => setEditIsEmergencyFund(e.target.checked)}
-                    className="w-4 h-4 rounded-md accent-[#c8f53c] cursor-pointer"
+                    className={`w-4 h-4 rounded-md cursor-pointer ${
+                      isOrange ? 'accent-[#FF6B00]' : isPink ? 'accent-[#FFA4A4]' : 'accent-[#D4F826]'
+                    }`}
                   />
                   <label
                     htmlFor="editEmergencyCheckbox"
@@ -627,7 +671,7 @@ export function GoalsTab() {
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-3 rounded-2xl bg-[#c8f53c] text-black text-xs font-black shadow-xs cursor-pointer hover:bg-[#bcf026] transition-transform active:scale-95"
+                    className={`flex-1 py-3 rounded-2xl ${brandAccentBtn} text-xs font-black shadow-xs cursor-pointer transition-transform active:scale-95`}
                   >
                     Simpan Perubahan
                   </button>
@@ -764,7 +808,7 @@ export function GoalsTab() {
                 </div>
                 <div className="w-full h-2.5 rounded-full bg-stone-100 dark:bg-stone-800 overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-[#8B5CF6] transition-all duration-500"
+                    className={`h-full rounded-full ${brandProgressBar} transition-all duration-500`}
                     style={{
                       width: `${
                         selectedGoal.targetAmount > 0
@@ -795,7 +839,7 @@ export function GoalsTab() {
                   onChange={(e) => setDepositDelta(formatNominalInput(e.target.value))}
                   placeholder="Contoh: 250.000"
                   disabled={selectedGoal.isLocked}
-                  className="w-full p-2.5 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#c8f53c] disabled:opacity-50"
+                  className={`w-full p-2.5 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing} disabled:opacity-50`}
                 />
                 <div className="flex gap-2">
                   <button
@@ -841,7 +885,7 @@ export function GoalsTab() {
                   }}
                   className={`flex-1 py-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
                     selectedGoal.isLocked
-                      ? 'bg-[#c8f53c] text-black shadow-xs'
+                      ? `${brandAccentBg} shadow-xs`
                       : 'bg-stone-100 dark:bg-stone-800 text-stone-500'
                   }`}
                 >
@@ -858,7 +902,7 @@ export function GoalsTab() {
                   }}
                   className={`flex-1 py-3 rounded-2xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
                     !selectedGoal.isLocked
-                      ? 'bg-[#c8f53c] text-black shadow-xs'
+                      ? `${brandAccentBg} shadow-xs`
                       : 'bg-stone-100 dark:bg-stone-800 text-stone-500'
                   }`}
                 >

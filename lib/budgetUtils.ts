@@ -128,10 +128,23 @@ function toIsoDateStr(year: number, monthIndex: number, day: number): string {
 }
 
 /**
+ * Safely parses either a Date object, full ISO string, or YYYY-MM-DD string into a local Date
+ * without UTC midnight timezone shifting.
+ */
+export function parseLocalDay(dateOrStr: Date | string): Date {
+  if (dateOrStr instanceof Date) return dateOrStr;
+  if (typeof dateOrStr === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateOrStr.trim())) {
+    const [y, m, d] = dateOrStr.trim().split('-').map(Number);
+    return new Date(y, m - 1, d, 12, 0, 0, 0);
+  }
+  return new Date(dateOrStr);
+}
+
+/**
  * Computes the active budget period based on the user's payday (Tanggal Gajian 1-31).
  * For example, if paydayDay = 25:
- * - On 25 Oct (or 26 Oct), the active period is 25 Oct -> 25 Nov.
- * - On 21 Oct (before the 25th), the active period is 25 Sep -> 25 Oct.
+ * - On 25 Oct (or 26 Oct), the active period is 25 Oct -> 24 Nov 23:59:59 (until 25 Nov payday).
+ * - On 21 Oct (before the 25th), the active period is 25 Sep -> 24 Oct 23:59:59 (until 25 Oct payday).
  */
 export function getBudgetPeriodInfo(
   activeYear: number,
@@ -141,6 +154,8 @@ export function getBudgetPeriodInfo(
 ): BudgetPeriodInfo {
   const paydayDay = Math.max(1, Math.min(31, Math.round(Number(rawPaydayDay) || 1)));
   const isCustomPayday = paydayDay > 1;
+  const now = new Date();
+  const realTodayMidday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
   const refMidday = new Date(activeYear, activeMonth, activeDay, 12, 0, 0);
 
   if (!isCustomPayday) {
@@ -148,7 +163,18 @@ export function getBudgetPeriodInfo(
     const startDate = new Date(activeYear, activeMonth, 1, 0, 0, 0, 0);
     const endDate = new Date(activeYear, activeMonth, totalDays, 23, 59, 59, 999);
     const nextMonthObj = new Date(activeYear, activeMonth + 1, 1, 0, 0, 0, 0);
-    const currentDayOfPeriod = Math.max(1, Math.min(totalDays, activeDay));
+
+    // Determine effective day within period: if viewing a past period, all days have elapsed;
+    // if viewing current real period, use realTodayMidday; if viewing via specific activeDay, use refMidday.
+    const effectiveMidday =
+      realTodayMidday.getTime() >= startDate.getTime() && realTodayMidday.getTime() <= endDate.getTime()
+        ? realTodayMidday
+        : refMidday;
+
+    const isPastPeriod = realTodayMidday.getTime() > endDate.getTime() && refMidday.getDate() === 1;
+    const currentDayOfPeriod = isPastPeriod
+      ? totalDays
+      : Math.max(1, Math.min(totalDays, effectiveMidday.getDate()));
     const daysRemainingUntilPayday = Math.max(1, totalDays - currentDayOfPeriod + 1);
     const mShort = SHORT_MONTHS_ID[activeMonth] || 'Jan';
     const startShortLabel = `01 ${mShort}`;
@@ -211,8 +237,17 @@ export function getBudgetPeriodInfo(
     1,
     Math.round((nextPaydayMidday.getTime() - startMidday.getTime()) / msPerDay)
   );
-  const elapsedDays = Math.floor((refMidday.getTime() - startMidday.getTime()) / msPerDay);
-  const currentDayOfPeriod = Math.max(1, Math.min(totalDays, elapsedDays + 1));
+
+  const isRealTodayInPeriod =
+    realTodayMidday.getTime() >= startDate.getTime() && realTodayMidday.getTime() <= endDate.getTime();
+  const isPastCustomPeriod =
+    !isRealTodayInPeriod && realTodayMidday.getTime() > endDate.getTime() && activeDay === startDay;
+
+  const effectiveRefMidday = isRealTodayInPeriod ? realTodayMidday : refMidday;
+  const elapsedDays = Math.floor((effectiveRefMidday.getTime() - startMidday.getTime()) / msPerDay);
+  const currentDayOfPeriod = isPastCustomPeriod
+    ? totalDays
+    : Math.max(1, Math.min(totalDays, elapsedDays + 1));
   const daysRemainingUntilPayday = Math.max(1, totalDays - currentDayOfPeriod + 1);
 
   const startMShort = SHORT_MONTHS_ID[startMonth] || 'Jan';
@@ -235,9 +270,9 @@ export function getBudgetPeriodInfo(
     startYear,
     startMonth,
     startDay,
-    endYear: nextPaydayYear,
-    endMonth: nextPaydayMonth,
-    endDay: nextPaydayDay,
+    endYear: endDate.getFullYear(),
+    endMonth: endDate.getMonth(),
+    endDay: endDate.getDate(),
     startDateIso: toIsoDateStr(startYear, startMonth, startDay),
     endDateIso: toIsoDateStr(endDate.getFullYear(), endDate.getMonth(), endDate.getDate()),
     nextPaydayIso: toIsoDateStr(nextPaydayYear, nextPaydayMonth, nextPaydayDay),
@@ -259,7 +294,7 @@ export function isDateInBudgetPeriod(
   dateOrStr: Date | string,
   periodInfo: BudgetPeriodInfo
 ): boolean {
-  const d = typeof dateOrStr === 'string' ? new Date(dateOrStr) : dateOrStr;
+  const d = parseLocalDay(dateOrStr);
   if (Number.isNaN(d.getTime())) return false;
   const checkTime = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0).getTime();
   return checkTime >= periodInfo.startDate.getTime() && checkTime <= periodInfo.endDate.getTime();
@@ -419,21 +454,32 @@ export function calculateBudgetBreakdown({
       }
       if (
         cleanNote === subNameLower ||
-        (cleanSubName && cleanNote.includes(cleanSubName)) ||
-        rawNote.includes(subNameLower) ||
-        cleanNote.includes(subNameLower) ||
-        (cleanNote && subNameLower.includes(cleanNote))
+        (cleanSubName.length >= 3 && cleanNote.includes(cleanSubName)) ||
+        (subNameLower.length >= 3 && (rawNote.includes(subNameLower) || cleanNote.includes(subNameLower))) ||
+        (cleanNote.length >= 4 && subNameLower.includes(cleanNote))
       ) {
         return true;
       }
       const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3 && w !== 'cicilan');
       const noteWords = cleanNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
       if (subWords.length > 0 && noteWords.length > 0) {
-        if (subWords.some((sw) => noteWords.some((nw) => nw === sw || nw.includes(sw) || sw.includes(nw)))) {
+        if (
+          subWords.some((sw) =>
+            noteWords.some(
+              (nw) =>
+                nw === sw ||
+                (sw.length >= 4 && nw.length >= 4 && (nw.includes(sw) || sw.includes(nw)))
+            )
+          )
+        ) {
           return true;
         }
       }
-      if (catNameStr && subNameLower && (catNameStr.includes(subNameLower) || subNameLower.includes(catNameStr))) {
+      if (
+        catNameStr.length >= 4 &&
+        subNameLower.length >= 4 &&
+        (catNameStr.includes(subNameLower) || subNameLower.includes(catNameStr))
+      ) {
         return true;
       }
       return false;
@@ -450,7 +496,7 @@ export function calculateBudgetBreakdown({
   transactions.forEach((tx) => {
     recordedTxIds.add(tx.id);
     if (tx.type !== 'expense') return;
-    const d = new Date(tx.date);
+    const d = parseLocalDay(tx.date);
     if (isDateInBudgetPeriod(d, periodInfo)) {
       const cat = tx.categoryId ? categoryMap.get(tx.categoryId) || null : null;
       const fixed = isFixedExpense(tx, cat);
@@ -486,7 +532,7 @@ export function calculateBudgetBreakdown({
     if (debt.type !== 'payable') return;
     (debt.payments || []).forEach((p) => {
       if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
-      const pd = new Date(p.date);
+      const pd = parseLocalDay(p.date);
       if (isDateInBudgetPeriod(pd, periodInfo)) {
         monthlyFixExp += p.amount;
         if (
@@ -517,7 +563,7 @@ export function calculateBudgetBreakdown({
   // 5. Monthly Variable Budget (untuk operasional harian selama periode gajian)
   const monthlyVariableBudget = Math.max(0, monthlySpendingLimit - monthlyFixedBudget);
 
-  // 6. Daily Budget Quota (per hari selama siklus periode gajian, misal 25 ke 25 bulan depan)
+  // 6. Daily Budget Quota (kuota dasar per hari selama siklus periode gajian, misal 25 ke 25 bulan depan)
   const dailyBudgetQuota =
     estIncome > 0 && daysInMonth > 0 ? Math.round(monthlyVariableBudget / daysInMonth) : 0;
 
@@ -526,10 +572,17 @@ export function calculateBudgetBreakdown({
   const remainingMonthlyVarBeforeToday = Math.max(0, monthlyVariableBudget - priorDaysVarExp);
   const remainingVariableBudget = Math.max(0, monthlyVariableBudget - monthlyVarExp);
 
-  // Safe daily budget so that remaining variable budget lasts until the next payday
+  // Safe daily budget so that actual remaining variable budget lasts until the next payday:
+  // If user has already spent today (todayVarExp > 0) and there are remaining days after today,
+  // divide remainingVariableBudget by the remaining future days (or daysRemainingUntilPayday if todayVarExp == 0).
+  const remainingDaysForSafeQuota =
+    todayVarExp > 0 && periodInfo.daysRemainingUntilPayday > 1
+      ? periodInfo.daysRemainingUntilPayday - 1
+      : Math.max(1, periodInfo.daysRemainingUntilPayday);
+
   const safeDailyBudgetUntilPayday =
-    estIncome > 0 && periodInfo.daysRemainingUntilPayday > 0
-      ? Math.round(remainingMonthlyVarBeforeToday / periodInfo.daysRemainingUntilPayday)
+    estIncome > 0 && remainingDaysForSafeQuota > 0
+      ? Math.round(remainingVariableBudget / remainingDaysForSafeQuota)
       : 0;
 
   const effectiveDailyQuota =

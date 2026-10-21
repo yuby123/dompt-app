@@ -23,6 +23,10 @@ export function ReportsTab() {
     transactions,
     categories,
     wallets,
+    walletsWithBalance,
+    liquidAssets: storedLiquidAssets,
+    debts,
+    goals,
     budgetConfig,
     dashboardSummary,
     activeYear,
@@ -98,8 +102,10 @@ export function ReportsTab() {
     const catInfoMap = new Map(categories.map((c) => [c.id, c]));
     const catTotals = new Map<string, number>();
     const walletTypeMap = new Map(wallets.map((w) => [w.id, w.type]));
+    const recordedTxIds = new Set<string>();
 
     transactions.forEach((tx) => {
+      recordedTxIds.add(tx.id);
       const d = new Date(tx.date);
       if (isDateInBudgetPeriod(d, budgetPeriod)) {
         if (tx.type === 'income') {
@@ -141,19 +147,36 @@ export function ReportsTab() {
       }
     });
 
+    // Include payable debt payments recorded in this period without a duplicate transaction
+    (debts || []).forEach((debt) => {
+      if (debt.type !== 'payable') return;
+      (debt.payments || []).forEach((p) => {
+        if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
+        const pd = new Date(p.date);
+        if (isDateInBudgetPeriod(pd, budgetPeriod)) {
+          exp += p.amount;
+          nSpent += p.amount;
+          catTotals.set('cat-tagihan', (catTotals.get('cat-tagihan') || 0) + p.amount);
+        } else if (isDateInBudgetPeriod(pd, prevPeriod)) {
+          prevExp += p.amount;
+        }
+      });
+    });
+
     const incChangePct =
       prevInc > 0 ? Math.round(((inc - prevInc) / prevInc) * 100) : null;
     const expChangePct =
       prevExp > 0 ? Math.round(((exp - prevExp) / prevExp) * 100) : null;
 
-    const baseIncome = Math.max(inc, budgetConfig.estimatedIncome || 0);
+    const baseIncome = inc > 0 ? inc : budgetConfig.estimatedIncome || 0;
     const nTarget = Math.round((baseIncome * (budgetConfig.needsPercent || 50)) / 100);
     const wTarget = Math.round((baseIncome * (budgetConfig.wantsPercent || 30)) / 100);
     const sTarget = Math.round((baseIncome * (budgetConfig.savingsPercent || 20)) / 100);
 
     const net = inc - exp;
-    const effectiveSaved = Math.max(sSpent, Math.max(0, net));
-    const ratio = baseIncome > 0 ? Math.max(0, Math.round((effectiveSaved / baseIncome) * 100)) : 0;
+    const realCashflowSurplus = inc > 0 ? Math.max(0, net) : 0;
+    const effectiveSaved = Math.max(sSpent, realCashflowSurplus);
+    const ratio = baseIncome > 0 ? Math.min(100, Math.max(0, Math.round((effectiveSaved / baseIncome) * 100))) : 0;
 
     const totalCategorizedExp = exp + sSpent;
     const sortedCats = Array.from(catTotals.entries())
@@ -170,21 +193,65 @@ export function ReportsTab() {
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
 
-    // Calculate financial health score (0-100) without artificial floor when empty/deficit
-    const hasActivity = inc > 0 || exp > 0 || sSpent > 0 || baseIncome > 0;
-    const savingsPts = ratio >= 20 ? 35 : Math.max(0, Math.round((ratio / 20) * 35));
+    // Unified 4-Pillar Financial Health Score (aligned with HealthScoreTab & AnalyticsTab)
+    const walletLiquid = walletsWithBalance
+      .filter((w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance > 0)
+      .reduce((acc, w) => acc + w.balance, 0);
+    const extraLiquid = (storedLiquidAssets || []).reduce((acc, a) => acc + Math.max(0, a.amount || 0), 0);
+    const liquidAssets = walletLiquid + extraLiquid;
+
+    const creditWalletDebt = walletsWithBalance
+      .filter((w) => (w.type === 'credit' || w.type === 'paylater') && w.balance < 0)
+      .reduce((acc, w) => acc + Math.abs(w.balance), 0);
+    const activePayableDebt = (debts || [])
+      .filter((d) => d.type === 'payable' && d.status === 'active')
+      .reduce((acc, d) => acc + Math.max(0, d.remainingAmount ?? d.totalAmount), 0);
+    const totalDebt = creditWalletDebt + activePayableDebt;
+
+    const isZeroState =
+      liquidAssets === 0 &&
+      totalDebt === 0 &&
+      baseIncome === 0 &&
+      exp === 0 &&
+      goals.length === 0;
+
+    let savingsScore = 0;
+    if (baseIncome > 0) {
+      savingsScore = ratio >= 20 ? 30 : ratio > 0 ? Math.round((ratio / 20) * 30) : 0;
+    } else if (liquidAssets > 0 && exp === 0) {
+      savingsScore = 25;
+    }
+
+    const runwayMonths = dashboardSummary.emergencyFundRunwayMonths || 0;
+    const runwayScore =
+      runwayMonths >= 6 ? 25 : runwayMonths > 0 ? Math.min(25, Math.round((runwayMonths / 6) * 25)) : 0;
+
+    const budgetLimit = nTarget + wTarget;
+    let budgetScore = 0;
+    if (budgetLimit > 0) {
+      const usagePct = Math.round((exp / budgetLimit) * 100);
+      budgetScore = usagePct <= 80 ? 25 : usagePct <= 100 ? 20 : usagePct <= 120 ? 10 : 0;
+    } else if (exp === 0) {
+      budgetScore = isZeroState ? 0 : 15;
+    } else {
+      budgetScore = 10;
+    }
+
+    let debtScore = isZeroState ? 0 : 20;
+    if (totalDebt > 0) {
+      const denom = Math.max(liquidAssets, baseIncome);
+      const dRatio = denom > 0 ? Math.round((totalDebt / denom) * 100) : 100;
+      debtScore = dRatio <= 15 ? 17 : dRatio <= 30 ? 12 : dRatio <= 50 ? 6 : 0;
+    }
+
     const isBudgetCompliant =
-      hasActivity &&
+      !isZeroState &&
       (nTarget === 0 || nSpent <= nTarget) &&
       (wTarget === 0 || wSpent <= wTarget);
-    const budgetPts = !hasActivity ? 0 : isBudgetCompliant ? 35 : exp <= nTarget + wTarget ? 22 : 10;
-    const runwayPts = Math.min(
-      30,
-      Math.round((dashboardSummary.emergencyFundRunwayMonths / 6) * 30)
-    );
-    const score = !hasActivity
+
+    const score = isZeroState
       ? 0
-      : Math.min(100, Math.max(0, savingsPts + budgetPts + runwayPts));
+      : Math.min(100, Math.max(0, savingsScore + runwayScore + budgetScore + debtScore));
 
     return {
       monthIncome: inc,
@@ -207,6 +274,10 @@ export function ReportsTab() {
     transactions,
     categories,
     wallets,
+    walletsWithBalance,
+    storedLiquidAssets,
+    debts,
+    goals.length,
     budgetConfig,
     activeYear,
     activeMonth,

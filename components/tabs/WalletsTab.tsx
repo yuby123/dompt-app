@@ -76,7 +76,7 @@ export function WalletsTab() {
 
   const totalAvailable = walletsWithBalance
     .filter((w) => w.type !== 'credit' && w.type !== 'paylater')
-    .reduce((acc, w) => acc + w.availableBalance, 0);
+    .reduce((acc, w) => acc + Math.max(0, w.availableBalance), 0);
 
   const totalReserved = walletsWithBalance.reduce((acc, w) => acc + (w.reservedAmount || 0), 0);
 

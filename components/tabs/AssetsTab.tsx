@@ -21,6 +21,7 @@ export function AssetsTab() {
     totalBalance,
     dashboardSummary,
     debts,
+    investments,
     settings,
     liquidAssets,
     fixedAssets,
@@ -37,22 +38,16 @@ export function AssetsTab() {
 
   const totalLiquid = liquidAssets.reduce((acc, a) => acc + a.amount, 0);
   const totalFixed = fixedAssets.reduce((acc, a) => acc + a.amount, 0);
+  const totalInvestments = (investments || []).reduce((acc, inv) => acc + (inv.amount || 0), 0);
   const totalPayableDebts = (debts || [])
     .filter((d) => d.type === 'payable' && d.status === 'active')
     .reduce((acc, d) => acc + Math.max(0, d.remainingAmount ?? d.totalAmount), 0);
 
-  // Net Worth = Total Assets (Wallets + Liquid Assets + Fixed Assets) - Active Payable Debts
-  const totalNetWorth = totalBalance + totalLiquid + totalFixed - totalPayableDebts;
+  // Net Worth = Total Assets (Wallets + Liquid Assets + Fixed Assets + Investments) - Active Payable Debts
+  const totalNetWorth = totalBalance + totalLiquid + totalFixed + totalInvestments - totalPayableDebts;
 
   // Dynamic Runway & Wealth Level (aligned with dashboardSummary baseline)
-  const actualOrBudgetExp = Math.max(
-    dashboardSummary.budgetLimit || 0,
-    dashboardSummary.monthlyExpense || 0
-  );
-  const avgMonthlyExpense = actualOrBudgetExp > 0 ? actualOrBudgetExp : 3000000;
-  const totalLiquidPool = Math.max(0, totalBalance) + totalLiquid;
-  const totalRunwayMonths =
-    totalLiquidPool > 0 ? Number((totalLiquidPool / avgMonthlyExpense).toFixed(1)) : 0;
+  const totalRunwayMonths = dashboardSummary.emergencyFundRunwayMonths || 0;
 
   const nextTarget =
     totalNetWorth <= 0

@@ -21,6 +21,7 @@ export function AnalyticsTab() {
   const {
     wallets,
     walletsWithBalance,
+    liquidAssets: storedLiquidAssets,
     debts,
     goals,
     budgetConfig,
@@ -60,7 +61,7 @@ export function AnalyticsTab() {
     let txCount = 0;
     const catMap = new Map<string, number>();
     const dayExpenseMap = new Map<string, { label: string; amount: number }>();
-    const daysInMonth = budgetPeriod.totalDays;
+    const elapsedDaysInPeriod = Math.max(1, budgetPeriod.currentDayOfPeriod);
     const walletTypeMap = new Map(wallets.map((w) => [w.id, w.type]));
 
     transactions.forEach((tx) => {
@@ -120,7 +121,8 @@ export function AnalyticsTab() {
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 6);
 
-    const avgDaily = Math.round(totalExpense / Math.max(1, daysInMonth));
+    // Use elapsed days in the active period rather than counting future unelapsed days
+    const avgDaily = Math.round(totalExpense / elapsedDaysInPeriod);
 
     let maxDayLabel = '';
     let maxDayAmt = 0;
@@ -136,12 +138,15 @@ export function AnalyticsTab() {
         ? `${maxDayLabel} – ${formatRupiah(maxDayAmt, hide)}`
         : 'Belum ada pengeluaran';
 
-    const zeroDays = Math.max(0, daysInMonth - dayExpenseMap.size);
+    const zeroDays = Math.max(0, elapsedDaysInPeriod - dayExpenseMap.size);
 
     // Unified 4-Pillar Financial Health Score (matching HealthScoreTab)
-    const liquidAssets = walletsWithBalance
+    const walletLiquid = walletsWithBalance
       .filter((w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance > 0)
       .reduce((acc, w) => acc + w.balance, 0);
+    const extraLiquid = (storedLiquidAssets || []).reduce((acc, a) => acc + Math.max(0, a.amount || 0), 0);
+    const liquidAssets = walletLiquid + extraLiquid;
+
     const creditWalletDebt = walletsWithBalance
       .filter((w) => (w.type === 'credit' || w.type === 'paylater') && w.balance < 0)
       .reduce((acc, w) => acc + Math.abs(w.balance), 0);
@@ -159,7 +164,7 @@ export function AnalyticsTab() {
 
     let savingsScore = 0;
     if (effectiveIncome > 0) {
-      const sPct = Math.round(((effectiveIncome - totalExpense) / effectiveIncome) * 100);
+      const sPct = Math.round(rateNum);
       savingsScore = sPct >= 20 ? 30 : sPct > 0 ? Math.round((sPct / 20) * 30) : 0;
     } else if (liquidAssets > 0 && totalExpense === 0) {
       savingsScore = 25;
@@ -218,6 +223,7 @@ export function AnalyticsTab() {
     categories,
     wallets,
     walletsWithBalance,
+    storedLiquidAssets,
     debts,
     goals.length,
     budgetConfig,

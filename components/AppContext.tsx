@@ -81,6 +81,7 @@ import {
   getMonthlySubscriptionAmount,
   isDateInBudgetPeriod,
   isFixedExpense,
+  parseLocalDay,
 } from '@/lib/budgetUtils';
 import {
   auth,
@@ -1722,27 +1723,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const primaryWalletId = fundedWallets[0]?.id || wallets[0].id;
 
     transactions.forEach((tx) => {
-      // 1. If walletId is missing or points to a deleted wallet, route to primaryWalletId
+      // Only fallback to primaryWalletId if walletId is missing or points to a deleted wallet
       if (!tx.walletId || !walletSet.has(tx.walletId)) {
         map.set(tx.id, primaryWalletId);
-        return;
-      }
-
-      // 2. If it's an expense on a wallet with 0 initialBalance and 0 inflows, while user has a funded wallet,
-      // route to the funded wallet so the expense actually deducts from their active funded wallet
-      const txWalletInflow = inflowByWallet.get(tx.walletId) || 0;
-      const txWallet = wallets.find((w) => w.id === tx.walletId);
-      if (
-        tx.type === 'expense' &&
-        txWallet &&
-        txWallet.type !== 'credit' &&
-        txWallet.type !== 'paylater' &&
-        txWallet.initialBalance === 0 &&
-        txWalletInflow === 0 &&
-        fundedWallets.length > 0 &&
-        fundedWallets[0].id !== tx.walletId
-      ) {
-        map.set(tx.id, fundedWallets[0].id);
         return;
       }
 
@@ -1762,7 +1745,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       transactions.forEach((tx) => {
         const effectiveWalletId = resolvedWalletIdMap.get(tx.id) || tx.walletId;
-        const txDate = new Date(tx.date);
+        const txDate = parseLocalDay(tx.date);
         const isThisMonth = isDateInBudgetPeriod(txDate, budgetPeriod);
 
         if (effectiveWalletId === wallet.id) {
@@ -1842,7 +1825,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     transactions.forEach((tx) => {
       txIdSet.add(tx.id);
-      const txDate = new Date(tx.date);
+      const txDate = parseLocalDay(tx.date);
       if (isDateInBudgetPeriod(txDate, budgetPeriod)) {
         if (tx.type === 'income') inc += tx.amount;
         if (tx.type === 'expense') exp += tx.amount;
@@ -1861,7 +1844,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (d.type !== 'payable') return;
       (d.payments || []).forEach((p) => {
         if (p.transactionId && txIdSet.has(p.transactionId)) return;
-        const pd = new Date(p.date);
+        const pd = parseLocalDay(p.date);
         if (isDateInBudgetPeriod(pd, budgetPeriod)) {
           exp += p.amount;
         }
@@ -1885,7 +1868,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
     const curMonthShort = shortMonths[activeMonth] || 'Jan';
     const nextMonthShort = shortMonths[(activeMonth + 1) % 12] || 'Feb';
-    const currentPeriodKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
+    const currentCalendarKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
+    const activePeriodKey = budgetPeriod.periodKey;
+
+    const periodExpenseNotes = transactions
+      .filter((tx) => tx.type === 'expense' && isDateInBudgetPeriod(tx.date, budgetPeriod))
+      .map((tx) => (tx.note || '').toLowerCase().trim());
 
     walletsWithBalance.forEach((w) => {
       if ((w.type === 'credit' || w.type === 'paylater') && w.balance < 0) {
@@ -1905,9 +1893,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     subscriptions.forEach((item) => {
       if (!item.isActive || item.type !== 'expense') return;
-      if (item.lastRecordedPeriod === currentPeriodKey) return;
+      const cleanName = item.name.toLowerCase().trim();
+      const alreadyPaidInPeriod =
+        item.lastRecordedPeriod === activePeriodKey ||
+        item.lastRecordedPeriod === currentCalendarKey ||
+        (cleanName.length >= 2 && periodExpenseNotes.some((n) => n.includes(cleanName)));
+      if (alreadyPaidInPeriod) {
+        seenNames.add(cleanName);
+        return;
+      }
       const mLabel = activeDay > item.billingDay ? nextMonthShort : curMonthShort;
-      seenNames.add(item.name.toLowerCase().trim());
+      seenNames.add(cleanName);
       bills.push({
         id: `bill-rec-${item.id}`,
         name: item.name,
@@ -1923,6 +1919,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (sub.dueDateDay && sub.allocatedAmount > 0 && sub.isSubscriptionActive !== false) {
           const cleanName = sub.name.toLowerCase().trim();
           if (seenNames.has(cleanName)) return;
+          const alreadyPaidSub =
+            sub.lastRecordedPeriod === activePeriodKey ||
+            sub.lastRecordedPeriod === currentCalendarKey ||
+            (cleanName.length >= 2 && periodExpenseNotes.some((n) => n.includes(cleanName)));
+          if (alreadyPaidSub) return;
           seenNames.add(cleanName);
           const mLabel = activeDay > sub.dueDateDay ? nextMonthShort : curMonthShort;
           bills.push({
@@ -1937,7 +1938,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     }
     return bills;
-  }, [walletsWithBalance, subscriptions, budgetConfig, activeYear, activeMonth, activeDay]);
+  }, [walletsWithBalance, subscriptions, budgetConfig, transactions, budgetPeriod, activeYear, activeMonth, activeDay]);
 
   // Dashboard summary metrics
   const dashboardSummary = useMemo<DashboardSummary>(() => {
@@ -1953,10 +1954,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       debts,
     });
 
-    // Liquid assets: Bank + E-wallet + Cash + Savings
-    const liquidTotal = walletsWithBalance
+    // Liquid assets: Bank + E-wallet + Cash + Savings wallets + extra liquidAssets from AssetsTab
+    const walletLiquidTotal = walletsWithBalance
       .filter((w) => w.type === 'bank' || w.type === 'ewallet' || w.type === 'cash' || w.type === 'savings')
       .reduce((acc, w) => acc + Math.max(0, w.balance), 0);
+    const extraLiquidAssetsTotal = (liquidAssets || []).reduce((acc, a) => acc + Math.max(0, a.amount || 0), 0);
+    const liquidTotal = walletLiquidTotal + extraLiquidAssetsTotal;
 
     // Monthly expense baseline for emergency runway calculation:
     // Uses actual spending budget limit or actual monthly expenses if > 0; only falls back to Rp 3.000.000 if neither is set.
@@ -2014,6 +2017,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     subscriptions,
     debts,
     walletsWithBalance,
+    liquidAssets,
     totalBalance,
     totalIncome,
     totalExpense,
@@ -2100,6 +2104,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (mirrorUid) saveStoredTransactions(updated, mirrorUid);
       return updated;
     });
+
+    // If this transaction was linked to a debt installment payment, revert the payment from the debt
+    let affectedDebt: Debt | undefined;
+    const updatedDebts = debts.map((d) => {
+      const linkedPayment = (d.payments || []).find((p) => p.transactionId === id);
+      if (!linkedPayment) return d;
+      const nextPayments = (d.payments || []).filter((p) => p.transactionId !== id);
+      const restoredRem = Math.min(d.totalAmount, (d.remainingAmount || 0) + linkedPayment.amount);
+      const nextStatus: Debt['status'] = restoredRem > 0 ? 'active' : 'paid';
+      affectedDebt = {
+        ...d,
+        remainingAmount: restoredRem,
+        status: nextStatus,
+        payments: nextPayments,
+        updatedAt: new Date().toISOString(),
+      };
+      return affectedDebt;
+    });
+
+    if (affectedDebt) {
+      setDebts(updatedDebts);
+      saveStoredDebts(updatedDebts, localScopeUid);
+      if (mirrorUid) saveStoredDebts(updatedDebts, mirrorUid);
+      if (isCloudUser && user?.uid) {
+        saveUserDebt(user.uid, affectedDebt).catch(() => {});
+        if (mirrorUid) saveUserDebt(mirrorUid, affectedDebt).catch(() => {});
+      }
+    }
 
     if (isCloudUser && user?.uid) {
       deleteUserTransaction(user.uid, id).catch((err) =>
@@ -2525,10 +2557,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     // Sync payable debt installment directly into BudgetConfig (KEBUTUHAN & POS TAGIHAN BULANAN)
     if (debt.type === 'payable') {
-      const payD = new Date(paymentDate);
+      const payD = parseLocalDay(paymentDate);
+      const payPeriod = getBudgetPeriodInfo(
+        payD.getFullYear(),
+        payD.getMonth(),
+        payD.getDate(),
+        effectivePaydayDay
+      );
       const totalPaidInMonth = allPayments.reduce((sum, p) => {
-        const d = new Date(p.date);
-        if (d.getFullYear() === payD.getFullYear() && d.getMonth() === payD.getMonth()) {
+        const d = parseLocalDay(p.date);
+        if (isDateInBudgetPeriod(d, payPeriod)) {
           return sum + p.amount;
         }
         return sum;
@@ -3182,7 +3220,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     markLocalMutation();
     const now = new Date().toISOString();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
-    const currentPeriodKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
+    const currentPeriodKey = budgetPeriod.periodKey;
     const dateStr = new Date(activeYear, activeMonth, activeDay, 9, 0, 0).toISOString();
 
     const cleanItemName = item.name.toLowerCase().trim();

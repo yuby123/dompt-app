@@ -19,8 +19,12 @@ import { formatRupiah } from '@/lib/formatters';
 
 export function HealthScoreTab() {
   const {
+    wallets,
     walletsWithBalance,
     totalBalance,
+    liquidAssets: storedLiquidAssets,
+    transactions,
+    budgetPeriod,
     dashboardSummary,
     budgetConfig,
     goals,
@@ -32,18 +36,19 @@ export function HealthScoreTab() {
   const hide = settings.hideBalance;
 
   const healthMetrics = useMemo(() => {
-    const monthlyIncome =
-      dashboardSummary.monthlyIncome > 0
-        ? dashboardSummary.monthlyIncome
-        : budgetConfig?.estimatedIncome || 0;
+    const actualIncome = dashboardSummary.monthlyIncome || 0;
+    const estIncome = budgetConfig?.estimatedIncome || 0;
+    const monthlyIncome = actualIncome > 0 ? actualIncome : estIncome;
     const monthlyExpense = dashboardSummary.monthlyExpense || 0;
     const budgetLimit = dashboardSummary.budgetLimit || 0;
     const runwayMonths = dashboardSummary.emergencyFundRunwayMonths || 0;
 
-    // Liquid balance vs Credit/Paylater + Active Payable Debts
-    const liquidAssets = walletsWithBalance
+    // Liquid balance (positive non-credit wallets + extra liquidAssets) vs Credit/Paylater + Active Payable Debts
+    const walletLiquid = walletsWithBalance
       .filter((w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance > 0)
       .reduce((acc, w) => acc + w.balance, 0);
+    const extraLiquid = (storedLiquidAssets || []).reduce((acc, a) => acc + Math.max(0, a.amount || 0), 0);
+    const liquidAssets = walletLiquid + extraLiquid;
 
     const creditWalletDebt = walletsWithBalance
       .filter((w) => (w.type === 'credit' || w.type === 'paylater') && w.balance < 0)
@@ -54,6 +59,24 @@ export function HealthScoreTab() {
       .reduce((acc, d) => acc + Math.max(0, d.remainingAmount ?? d.totalAmount), 0);
 
     const creditDebt = creditWalletDebt + activePayableDebt;
+
+    // Calculate explicit savings transactions in active period
+    const walletTypeMap = new Map(wallets.map((w) => [w.id, w.type]));
+    let explicitSaved = 0;
+    transactions.forEach((tx) => {
+      const d = new Date(tx.date);
+      if (d.getTime() >= budgetPeriod.startDate.getTime() && d.getTime() <= budgetPeriod.endDate.getTime()) {
+        const targetType = tx.transferWalletId ? walletTypeMap.get(tx.transferWalletId) : undefined;
+        if (
+          tx.budgetGroup === 'tabungan' ||
+          tx.categoryId === 'cat-tabungan' ||
+          tx.categoryId === 'cat-investasi' ||
+          (tx.type === 'transfer' && (targetType === 'savings' || targetType === 'investment'))
+        ) {
+          explicitSaved += tx.amount;
+        }
+      }
+    });
 
     const isZeroState =
       liquidAssets === 0 &&
@@ -85,11 +108,13 @@ export function HealthScoreTab() {
     }
 
     // 1. Savings Rate Pillar (Max 30 pts) — Target >= 20% savings rate
+    // Only count real cashflow surplus when actualIncome > 0; otherwise use explicit savings recorded
     let savingsRatePct = 0;
     let savingsScore = 0;
     if (monthlyIncome > 0) {
-      const netSavings = monthlyIncome - monthlyExpense;
-      savingsRatePct = Math.round((netSavings / monthlyIncome) * 100);
+      const realSurplus = actualIncome > 0 ? Math.max(0, actualIncome - monthlyExpense) : 0;
+      const netSavings = Math.max(explicitSaved, realSurplus);
+      savingsRatePct = Math.min(100, Math.max(0, Math.round((netSavings / monthlyIncome) * 100)));
       if (savingsRatePct >= 20) {
         savingsScore = 30;
       } else if (savingsRatePct > 0) {
@@ -190,7 +215,11 @@ export function HealthScoreTab() {
       monthlyExpense,
     };
   }, [
+    wallets,
     walletsWithBalance,
+    storedLiquidAssets,
+    transactions,
+    budgetPeriod,
     dashboardSummary,
     budgetConfig,
     goals.length,

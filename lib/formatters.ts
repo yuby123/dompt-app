@@ -63,8 +63,19 @@ export function formatMonthYear(date: Date = new Date()): string {
   return `${MONTH_NAMES_ID[date.getMonth()]} ${date.getFullYear()}`;
 }
 
+export function parseSafeDate(dateStr: string | Date): Date {
+  if (dateStr instanceof Date) return dateStr;
+  if (!dateStr) return new Date();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
+    const [y, m, d] = dateStr.trim().split('-').map(Number);
+    return new Date(y, m - 1, d, 12, 0, 0, 0);
+  }
+  return new Date(dateStr);
+}
+
 export function formatFullDateIndo(dateStr: string): string {
-  const d = new Date(dateStr);
+  const d = parseSafeDate(dateStr);
+  if (Number.isNaN(d.getTime())) return dateStr || '-';
   const day = d.getDate();
   const month = MONTH_NAMES_ID[d.getMonth()];
   const year = d.getFullYear();
@@ -72,10 +83,8 @@ export function formatFullDateIndo(dateStr: string): string {
 }
 
 export function formatRelativeDate(dateStr: string, baseDateStr?: string): string {
-  const target = new Date(dateStr);
-  const now = baseDateStr
-    ? new Date(baseDateStr.includes('T') ? baseDateStr : `${baseDateStr}T12:00:00`)
-    : new Date();
+  const target = parseSafeDate(dateStr);
+  const now = baseDateStr ? parseSafeDate(baseDateStr) : new Date();
   
   const isToday =
     target.getDate() === now.getDate() &&
@@ -96,7 +105,7 @@ export function formatRelativeDate(dateStr: string, baseDateStr?: string): strin
 }
 
 export function formatTimeOnly(dateStr: string): string {
-  const d = new Date(dateStr);
+  const d = parseSafeDate(dateStr);
   const hours = String(d.getHours()).padStart(2, '0');
   const minutes = String(d.getMinutes()).padStart(2, '0');
   return `${hours}:${minutes}`;

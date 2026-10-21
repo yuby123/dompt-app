@@ -193,14 +193,13 @@ export function BudgetTab() {
               return true;
             }
 
-            // B. Note matches subcategory name (bidirectional)
+            // B. Note matches subcategory name (with minimum length guard to avoid false positives)
             if (subNameLower) {
               if (
                 cleanTxNote === subNameLower ||
-                (cleanSubName && cleanTxNote.includes(cleanSubName)) ||
-                rawTxNote.includes(subNameLower) ||
-                cleanTxNote.includes(subNameLower) ||
-                (cleanTxNote && subNameLower.includes(cleanTxNote))
+                (cleanSubName.length >= 3 && cleanTxNote.includes(cleanSubName)) ||
+                (subNameLower.length >= 3 && (rawTxNote.includes(subNameLower) || cleanTxNote.includes(subNameLower))) ||
+                (cleanTxNote.length >= 4 && subNameLower.includes(cleanTxNote))
               ) {
                 return true;
               }
@@ -210,14 +209,18 @@ export function BudgetTab() {
               const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
               if (subWords.length > 0 && noteWords.length > 0) {
                 const hasCommon = subWords.some((sw) =>
-                  noteWords.some((nw) => nw === sw || nw.includes(sw) || sw.includes(nw))
+                  noteWords.some(
+                    (nw) =>
+                      nw === sw ||
+                      (sw.length >= 4 && nw.length >= 4 && (nw.includes(sw) || sw.includes(nw)))
+                  )
                 );
                 if (hasCommon) return true;
               }
             }
 
             // D. Category Name matches subcategory name
-            if (catName && subNameLower) {
+            if (catName.length >= 4 && subNameLower.length >= 4) {
               if (catName.includes(subNameLower) || subNameLower.includes(catName)) {
                 return true;
               }
@@ -234,17 +237,20 @@ export function BudgetTab() {
               if (!subNameLower) return false;
               if (
                 cleanTxNote === subNameLower ||
-                (cleanSubName && cleanTxNote.includes(cleanSubName)) ||
-                rawTxNote.includes(subNameLower) ||
-                cleanTxNote.includes(subNameLower) ||
-                (cleanTxNote && subNameLower.includes(cleanTxNote))
+                (cleanSubName.length >= 3 && cleanTxNote.includes(cleanSubName)) ||
+                (subNameLower.length >= 3 && (rawTxNote.includes(subNameLower) || cleanTxNote.includes(subNameLower))) ||
+                (cleanTxNote.length >= 4 && subNameLower.includes(cleanTxNote))
               ) {
                 return true;
               }
               const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3 && w !== 'cicilan');
               const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
               return subWords.some((sw) =>
-                noteWords.some((nw) => nw === sw || nw.includes(sw) || sw.includes(nw))
+                noteWords.some(
+                  (nw) =>
+                    nw === sw ||
+                    (sw.length >= 4 && nw.length >= 4 && (nw.includes(sw) || sw.includes(nw)))
+                )
               );
             });
           }
@@ -257,7 +263,13 @@ export function BudgetTab() {
             unallocatedMap['kebutuhan'] = (unallocatedMap['kebutuhan'] || 0) + tx.amount;
           }
         } else if (tx.type === 'transfer' && tx.budgetGroup === 'tabungan') {
-          const matchSub = effectiveSubcategories.find((s) => s.group === 'tabungan');
+          const rawNote = (tx.note || '').toLowerCase().trim();
+          const savingsList = effectiveSubcategories.filter((s) => s.group === 'tabungan');
+          const matchSub =
+            savingsList.find((s) => {
+              const sName = s.name.toLowerCase().trim();
+              return sName && (rawNote.includes(sName) || sName.includes(rawNote));
+            }) || savingsList[0];
           if (matchSub) {
             map[matchSub.id] = (map[matchSub.id] || 0) + tx.amount;
           } else {

@@ -50,7 +50,41 @@ export function SubscriptionsTab() {
   } = useApp();
 
   const hide = settings.hideBalance;
-  const currentPeriodKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
+  const currentCalendarKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
+  const currentPeriodKey = budgetPeriod.periodKey;
+
+  // Compute day difference to billingDay within the active budget period (handles cross-month periods)
+  const getDaysUntilBilling = (billingDay: number): number => {
+    const refMidday = new Date(activeYear, activeMonth, activeDay, 12, 0, 0);
+    const maxDayThisMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
+    const clampedThisMonth = Math.min(billingDay, maxDayThisMonth);
+    let targetDate = new Date(activeYear, activeMonth, clampedThisMonth, 12, 0, 0);
+
+    // If custom payday period spans two months and billingDay is before startDay, its occurrence in this period is in next month
+    if (budgetPeriod.isCustomPayday && billingDay < budgetPeriod.startDay && activeMonth === budgetPeriod.startMonth) {
+      const nextMonthMax = new Date(budgetPeriod.endYear, budgetPeriod.endMonth + 1, 0).getDate();
+      targetDate = new Date(
+        budgetPeriod.endYear,
+        budgetPeriod.endMonth,
+        Math.min(billingDay, nextMonthMax),
+        12,
+        0,
+        0
+      );
+    } else if (budgetPeriod.isCustomPayday && billingDay >= budgetPeriod.startDay && activeMonth !== budgetPeriod.startMonth) {
+      const startMonthMax = new Date(budgetPeriod.startYear, budgetPeriod.startMonth + 1, 0).getDate();
+      targetDate = new Date(
+        budgetPeriod.startYear,
+        budgetPeriod.startMonth,
+        Math.min(billingDay, startMonthMax),
+        12,
+        0,
+        0
+      );
+    }
+
+    return Math.round((targetDate.getTime() - refMidday.getTime()) / (1000 * 60 * 60 * 24));
+  };
 
   const [filterType, setFilterType] = useState<'all' | 'expense' | 'income'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -182,8 +216,10 @@ export function SubscriptionsTab() {
 
       const status = itemBudgetStatusMap[item.id];
       const isRecordedThisMonth =
-        item.lastRecordedPeriod === currentPeriodKey || Boolean(status?.paidViaTx);
-      const daysUntil = item.billingDay - activeDay;
+        item.lastRecordedPeriod === currentPeriodKey ||
+        item.lastRecordedPeriod === currentCalendarKey ||
+        Boolean(status?.paidViaTx);
+      const daysUntil = getDaysUntilBilling(item.billingDay);
       if (!isRecordedThisMonth && daysUntil >= -3 && daysUntil <= 7) {
         dueSoonCount += 1;
       }
@@ -195,7 +231,7 @@ export function SubscriptionsTab() {
       monthlyIncome,
       dueSoonCount,
     };
-  }, [items, activeDay, currentPeriodKey, itemBudgetStatusMap]);
+  }, [items, activeYear, activeMonth, activeDay, budgetPeriod, currentPeriodKey, currentCalendarKey, itemBudgetStatusMap]);
 
   const filteredItems = useMemo(() => {
     return items
@@ -539,10 +575,12 @@ export function SubscriptionsTab() {
           {filteredItems.map((item) => {
             const status = itemBudgetStatusMap[item.id];
             const isRecorded =
-              item.lastRecordedPeriod === currentPeriodKey || Boolean(status?.paidViaTx);
+              item.lastRecordedPeriod === currentPeriodKey ||
+              item.lastRecordedPeriod === currentCalendarKey ||
+              Boolean(status?.paidViaTx);
             const wallet = wallets.find((w) => w.id === item.walletId);
             const category = categories.find((c) => c.id === item.categoryId);
-            const daysDiff = item.billingDay - activeDay;
+            const daysDiff = getDaysUntilBilling(item.billingDay);
             const isDueSoon = !isRecorded && item.isActive && daysDiff >= 0 && daysDiff <= 7;
             const isOverdue = !isRecorded && item.isActive && daysDiff < 0;
             const monthlyEq = getMonthlySubscriptionAmount(item.amount, item.frequency);
@@ -1037,7 +1075,9 @@ export function SubscriptionsTab() {
                 )}
 
                 {/* Option to reset recorded status this month when editing */}
-                {editingItem && editingItem.lastRecordedPeriod === currentPeriodKey && (
+                {editingItem &&
+                  (editingItem.lastRecordedPeriod === currentPeriodKey ||
+                    editingItem.lastRecordedPeriod === currentCalendarKey) && (
                   <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-between gap-2">
                     <div className="text-[11px] text-amber-700 dark:text-amber-300 font-semibold">
                       Jadwal ini ditandai sudah dicatat bulan ini.

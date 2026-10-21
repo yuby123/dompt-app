@@ -350,17 +350,22 @@ export function DashboardTab() {
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[28px] lg:rounded-[32px] p-6 sm:p-8 lg:px-10 lg:py-8 bg-gradient-to-br from-[#110F18] via-[#14111F] to-[#1C162E] text-white shadow-xl border border-white/5 flex flex-col justify-between"
+          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[24px] sm:rounded-[28px] lg:rounded-[32px] p-4 sm:p-7 lg:px-10 lg:py-8 bg-gradient-to-br from-[#110F18] via-[#14111F] to-[#1C162E] text-white shadow-xl border border-white/5 flex flex-col justify-between"
         >
           {/* Top Row: Sekilas Hari Ini • Kuota Operasional Harian | Hari X/Y + Eye */}
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs sm:text-sm">
-              <span className="font-extrabold text-[#D4F826]">Sekilas Hari Ini</span>
-              <span className="text-gray-500">•</span>
-              <span className="font-medium text-gray-300">Kuota Operasional Harian</span>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] sm:text-sm min-w-0">
+              <span className="font-extrabold text-[#D4F826] whitespace-nowrap shrink-0">
+                Sekilas Hari Ini
+              </span>
+              <span className="text-gray-500 shrink-0">•</span>
+              <span className="font-medium text-gray-300 truncate">
+                <span className="sm:hidden">Kuota Harian</span>
+                <span className="hidden sm:inline">Kuota Operasional Harian</span>
+              </span>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xs sm:text-sm font-mono font-semibold text-gray-300 tracking-wide">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              <span className="text-[11px] sm:text-sm font-mono font-semibold text-gray-300 tracking-wide whitespace-nowrap">
                 Hari {currentDay}/{daysInMonth}
               </span>
               <button
@@ -369,18 +374,18 @@ export function DashboardTab() {
                 className="p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
                 title={hide ? 'Tampilkan Saldo' : 'Sembunyikan Saldo'}
               >
-                {hide ? <Eye size={16} /> : <EyeOff size={16} />}
+                {hide ? <Eye size={15} /> : <EyeOff size={15} />}
               </button>
             </div>
           </div>
 
           {/* Middle Row: Left Big Monospace Balance + Right Outlined Cards */}
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mt-5 lg:mt-6">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3.5 sm:gap-6 mt-3 sm:mt-5 lg:mt-6">
             <div>
-              <div className="text-4xl sm:text-5xl lg:text-[54px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
+              <div className="text-[28px] sm:text-5xl lg:text-[54px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
                 {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.dailyBudgetRemaining, false)}
               </div>
-              <p className="text-xs sm:text-sm text-gray-400 font-medium mt-3">
+              <p className="text-[11px] sm:text-sm text-gray-400 font-medium mt-1.5 sm:mt-3 leading-snug">
                 {dashboardSummary.dailyOverbudget
                   ? `Melebihi kuota harian (${formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari`
                   : `Tersedia dari kuota harian ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari di luar tagihan tetap`}
@@ -388,21 +393,21 @@ export function DashboardTab() {
             </div>
 
             {/* Right: 2 Outlined Box Cards (PEMASUKAN HARI INI & PENGELUARAN HARI INI) */}
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 shrink-0">
-              <div className="rounded-2xl bg-white/[0.03] border border-white/10 px-4 sm:px-5 py-3.5 sm:py-4 min-w-[140px] sm:min-w-[175px]">
-                <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block">
+            <div className="grid grid-cols-2 gap-2.5 sm:gap-4 shrink-0">
+              <div className="rounded-xl sm:rounded-2xl bg-white/[0.03] border border-white/10 px-3 py-2.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
+                <span className="text-[9px] sm:text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block whitespace-nowrap truncate">
                   PEMASUKAN HARI INI
                 </span>
-                <div className="text-lg sm:text-xl font-mono font-bold text-[#D4F826] mt-1.5 tabular-nums">
+                <div className="text-sm sm:text-xl font-mono font-bold text-[#D4F826] mt-1 sm:mt-1.5 tabular-nums truncate">
                   {hide ? 'Rp ••••••' : `+${formatRupiah(todayIncome, false)}`}
                 </div>
               </div>
 
-              <div className="rounded-2xl bg-white/[0.03] border border-white/10 px-4 sm:px-5 py-3.5 sm:py-4 min-w-[140px] sm:min-w-[175px]">
-                <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block">
+              <div className="rounded-xl sm:rounded-2xl bg-white/[0.03] border border-white/10 px-3 py-2.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
+                <span className="text-[9px] sm:text-[10px] font-extrabold text-gray-400 uppercase tracking-wider block whitespace-nowrap truncate">
                   PENGELUARAN HARI INI
                 </span>
-                <div className="text-lg sm:text-xl font-mono font-bold text-[#FB7185] mt-1.5 tabular-nums">
+                <div className="text-sm sm:text-xl font-mono font-bold text-[#FB7185] mt-1 sm:mt-1.5 tabular-nums truncate">
                   {hide ? 'Rp ••••••' : `-${formatRupiah(todayExpense, false)}`}
                 </div>
               </div>
@@ -410,12 +415,12 @@ export function DashboardTab() {
           </div>
 
           {/* Progress Section: Kapasitas Kuota Harian + Gradient Bar */}
-          <div className="mt-6 lg:mt-7">
-            <div className="flex items-center justify-between text-xs mb-2">
+          <div className="mt-3.5 sm:mt-6 lg:mt-7">
+            <div className="flex items-center justify-between text-[11px] sm:text-xs mb-1.5 sm:mb-2">
               <span className="text-gray-400 font-medium">Kapasitas Kuota Harian</span>
               <span className="text-white font-extrabold tabular-nums">{dailyCapacityPct}%</span>
             </div>
-            <div className="w-full h-2.5 bg-white/10 rounded-full overflow-hidden">
+            <div className="w-full h-2 sm:h-2.5 bg-white/10 rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-500 ${
                   dashboardSummary.dailyOverbudget
@@ -428,23 +433,23 @@ export function DashboardTab() {
           </div>
 
           {/* Bottom Action Buttons */}
-          <div className="flex flex-wrap items-center gap-3 mt-6">
+          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3 mt-4 sm:mt-6">
             <button
               type="button"
               onClick={() => openAddTransaction()}
-              className="px-5 py-3 rounded-full bg-[#D4F826] hover:bg-[#c8ed1d] text-black font-extrabold text-xs sm:text-sm flex items-center gap-2 shadow-md transition-transform active:scale-95 cursor-pointer"
+              className="px-3.5 py-2.5 sm:px-5 sm:py-3 rounded-full bg-[#D4F826] hover:bg-[#c8ed1d] text-black font-extrabold text-[11px] sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-md transition-transform active:scale-95 cursor-pointer whitespace-nowrap"
             >
-              <Plus size={16} strokeWidth={2.5} />
+              <Plus size={14} strokeWidth={2.5} className="shrink-0" />
               <span>Catat Transaksi</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('wallets')}
-              className="px-5 py-3 rounded-full bg-white/[0.03] hover:bg-white/[0.08] border border-white/15 text-white font-bold text-xs sm:text-sm flex items-center gap-2 transition-colors cursor-pointer"
+              className="px-3.5 py-2.5 sm:px-5 sm:py-3 rounded-full bg-white/[0.03] hover:bg-white/[0.08] border border-white/15 text-white font-bold text-[11px] sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-colors cursor-pointer whitespace-nowrap"
             >
               <span>Lihat Saldo Dompet</span>
-              <ArrowUpRight size={15} className="text-gray-400" />
+              <ArrowUpRight size={14} className="text-gray-400 shrink-0" />
             </button>
           </div>
         </motion.div>

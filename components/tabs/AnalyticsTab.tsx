@@ -4,7 +4,6 @@ import React, { useMemo, useState } from 'react';
 import {
   Download,
   Calendar,
-  Heart,
   TrendingUp,
   PieChart,
   BarChart3,
@@ -13,9 +12,12 @@ import {
   ShieldCheck,
   CreditCard,
   ArrowUpRight,
-  Info,
   CheckCircle2,
   AlertTriangle,
+  Check,
+  Wallet as WalletIcon,
+  ArrowDownRight,
+  PiggyBank,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { TabType, useApp } from '../AppContext';
@@ -98,12 +100,18 @@ export function AnalyticsTab() {
       }
     });
 
-    const actualIncome = dashboardSummary.monthlyIncome || 0;
+    const actualIncome = dashboardSummary.monthlyIncome || totalIncome || 0;
     const estIncome = budgetConfig?.estimatedIncome || 0;
     const monthlyIncome = actualIncome > 0 ? actualIncome : estIncome;
+    const hasActualIncome = actualIncome > 0;
     const monthlyExpense = dashboardSummary.monthlyExpense || totalExpense || 0;
     const budgetLimit = dashboardSummary.budgetLimit || 0;
     const runwayMonths = dashboardSummary.emergencyFundRunwayMonths || 0;
+
+    // Baseline monthly living cost used for emergency fund target
+    const baselineLivingCost =
+      Math.max(budgetLimit > 0 ? budgetLimit : 0, monthlyExpense) || 3000000;
+    const minEmergencyTarget = baselineLivingCost * 3; // Minimal 3 bulan biaya hidup
 
     // Liquid balance (positive non-credit wallets + extra liquidAssets) vs Credit/Paylater + Active Payable Debts
     const walletLiquid = walletsWithBalance
@@ -137,6 +145,7 @@ export function AnalyticsTab() {
     let savingsScore = 0;
     const realSurplus = actualIncome > 0 ? Math.max(0, actualIncome - monthlyExpense) : 0;
     const netSavings = Math.max(explicitSaved, realSurplus);
+    const idealSavingsAmount = monthlyIncome > 0 ? Math.round(monthlyIncome * 0.2) : 0;
 
     if (monthlyIncome > 0) {
       savingsRatePct = Math.min(100, Math.max(0, Math.round((netSavings / monthlyIncome) * 100)));
@@ -192,9 +201,11 @@ export function AnalyticsTab() {
     // 4. Debt Ratio Pillar (Max 20 pts) — Target 0% or < 20%
     let debtRatioPct = 0;
     let debtScore = isZeroState ? 0 : 20;
+    const debtDenominator = Math.max(liquidAssets, monthlyIncome);
+    const safeDebtLimit = Math.round(debtDenominator * 0.2);
+
     if (creditDebt > 0) {
-      const denominator = Math.max(liquidAssets, monthlyIncome);
-      debtRatioPct = denominator > 0 ? Math.round((creditDebt / denominator) * 100) : 100;
+      debtRatioPct = debtDenominator > 0 ? Math.round((creditDebt / debtDenominator) * 100) : 100;
       if (debtRatioPct <= 15) {
         debtScore = 17;
       } else if (debtRatioPct <= 30) {
@@ -223,12 +234,12 @@ export function AnalyticsTab() {
     const summaryText = isZeroState
       ? 'Data keuangan Anda masih Rp 0. Isi saldo dompet, estimasi pemasukan di menu Budget, atau catat transaksi untuk melihat analisis Skor Kesehatan Keuangan Anda.'
       : totalScore >= 85
-      ? 'Luar biasa! Rasio tabungan, dana darurat, dan kendali anggaran Anda berada di level sangat sehat.'
+      ? 'Luar biasa! Rasio tabungan, dana darurat, dan kendali anggaran Anda sudah berada di level sangat sehat.'
       : totalScore >= 70
-      ? 'Kondisi keuangan Anda sudah stabil. Pertahankan disiplin anggaran dan terus tingkatkan dana darurat hingga 6 bulan.'
+      ? 'Kondisi keuangan Anda sudah sehat dan stabil. Pertahankan disiplin budget dan terus tingkatkan dana darurat.'
       : totalScore >= 50
-      ? 'Keuangan Anda cukup terkendali, namun masih ada ruang perbaikan pada porsi tabungan atau dana darurat.'
-      : 'Perhatikan kembali batas pengeluaran bulanan, rasio utang konsumtif, serta mulailah menyisihkan dana darurat.';
+      ? 'Keuangan Anda cukup terkendali, namun skor masih bisa ditingkatkan dengan menambah porsi tabungan atau dana darurat.'
+      : 'Skor Anda masih di bawah 50 karena porsi tabungan atau dana darurat masih di bawah target ideal. Cek rincian 4 pilar di bawah untuk melihat angka yang perlu diperbaiki.';
 
     // Category sorting for donut & list
     const catInfoMap = new Map(categories.map((c) => [c.id, c]));
@@ -261,7 +272,7 @@ export function AnalyticsTab() {
 
     const maxDayStr =
       maxDayAmt > 0
-        ? `${maxDayLabel} – ${formatRupiah(maxDayAmt, hide)}`
+        ? `${maxDayLabel} (${formatRupiah(maxDayAmt, hide)})`
         : 'Belum ada pengeluaran';
 
     const zeroDays = Math.max(0, elapsedDaysInPeriod - dayExpenseMap.size);
@@ -271,17 +282,25 @@ export function AnalyticsTab() {
       totalScore,
       grade,
       summaryText,
+      monthlyIncome,
+      hasActualIncome,
+      estIncome,
+      budgetLimit,
       savingsScore,
       savingsRatePct,
+      idealSavingsAmount,
       runwayScore,
       runwayMonths,
       runwayPct,
+      baselineLivingCost,
+      minEmergencyTarget,
       budgetScore,
       budgetUsagePct,
       budgetDisciplinePct,
       debtScore,
       debtRatioPct,
       creditDebt,
+      safeDebtLimit,
       liquidAssets,
       savedAmount: Math.max(0, netSavings),
       savingsRateStr: savingsRatePct.toString(),
@@ -305,88 +324,171 @@ export function AnalyticsTab() {
     goals.length,
     debts,
     categories,
+    totalIncome,
     totalExpense,
     hide,
   ]);
 
-  const pillars = [
-    {
-      id: 'savings',
-      title: 'Rasio Menabung (Savings Rate)',
-      icon: TrendingUp,
-      score: metrics.savingsScore,
-      maxScore: 30,
-      metricText: `${metrics.savingsRatePct}% dari pemasukan`,
-      targetText: 'Ideal: Minimal 20% disisihkan per bulan',
-      actionTab: 'budget' as TabType,
-      actionLabel: 'Atur Pemasukan & Tabungan',
-    },
-    {
-      id: 'runway',
-      title: 'Ketahanan Dana Darurat',
-      icon: ShieldCheck,
-      score: metrics.runwayScore,
-      maxScore: 25,
-      metricText: `${metrics.runwayMonths} bulan biaya hidup`,
-      targetText: 'Ideal: 3 - 6 bulan pengeluaran rutin',
-      actionTab: 'goals' as TabType,
-      actionLabel: 'Buka Dana Darurat',
-    },
-    {
-      id: 'budget',
-      title: 'Kedisiplinan Budget Bulanan',
-      icon: PieChart,
-      score: metrics.budgetScore,
-      maxScore: 25,
-      metricText:
-        dashboardSummary.budgetLimit > 0
-          ? `${metrics.budgetUsagePct}% kuota terpakai`
-          : 'Budget belum diatur',
-      targetText: 'Ideal: Pengeluaran <= 85% batas budget',
-      actionTab: 'budget' as TabType,
-      actionLabel: 'Kelola Pos Budget',
-    },
-    {
-      id: 'debt',
-      title: 'Kesehatan Beban Utang & Kredit',
-      icon: CreditCard,
-      score: metrics.debtScore,
-      maxScore: 20,
-      metricText:
-        metrics.creditDebt === 0
-          ? 'Bebas utang konsumtif (0%)'
-          : `Rasio kewajiban ${metrics.debtRatioPct}%`,
-      targetText: 'Ideal: Cicilan & kredit < 20% aset likuid',
-      actionTab: 'debt' as TabType,
-      actionLabel: 'Pantau Utang',
-    },
-  ];
+  const pillars = useMemo(() => {
+    const savingsShortfall = Math.max(0, metrics.idealSavingsAmount - metrics.savedAmount);
+    const emergencyShortfall = Math.max(0, metrics.minEmergencyTarget - metrics.liquidAssets);
+
+    return [
+      {
+        id: 'savings',
+        step: '1',
+        title: 'Rasio Menabung',
+        subtitle: 'Seberapa besar pemasukan yang berhasil disisihkan',
+        icon: PiggyBank,
+        score: metrics.savingsScore,
+        maxScore: 30,
+        currentLabel: 'Ditabung Saat Ini',
+        currentValue:
+          metrics.monthlyIncome > 0
+            ? `${metrics.savingsRatePct}% (${formatRupiah(metrics.savedAmount, hide)})`
+            : formatRupiah(metrics.savedAmount, hide),
+        targetLabel: 'Target Ideal (Min. 20%)',
+        targetValue:
+          metrics.idealSavingsAmount > 0
+            ? `${formatRupiah(metrics.idealSavingsAmount, hide)} / bln`
+            : 'Atur pemasukan dulu',
+        advice:
+          metrics.monthlyIncome === 0
+            ? 'Isi estimasi pemasukan di menu Budget agar target tabungan 20% dapat dihitung.'
+            : savingsShortfall > 0
+            ? `Sisihkan ${formatRupiah(savingsShortfall, hide)} lagi bulan ini untuk meraih poin penuh (30 poin).`
+            : 'Target tabungan minimal 20% dari pemasukan sudah tercapai.',
+        actionTab: 'budget' as TabType,
+        actionLabel: 'Atur Tabungan',
+      },
+      {
+        id: 'runway',
+        step: '2',
+        title: 'Ketahanan Dana Darurat',
+        subtitle: 'Berapa bulan kas likuid bisa menopang biaya hidup',
+        icon: ShieldCheck,
+        score: metrics.runwayScore,
+        maxScore: 25,
+        currentLabel: 'Ketahanan Kas Saat Ini',
+        currentValue: `${metrics.runwayMonths} Bulan (${formatRupiah(metrics.liquidAssets, hide)})`,
+        targetLabel: 'Target Aman (3–6 Bulan)',
+        targetValue: `Min. ${formatRupiah(metrics.minEmergencyTarget, hide)}`,
+        advice:
+          emergencyShortfall > 0
+            ? `Dihitung dari biaya hidup ${formatRupiah(metrics.baselineLivingCost, hide)}/bln. Tambah kas/tabungan ${formatRupiah(emergencyShortfall, hide)} untuk capai batas aman 3 bulan.`
+            : 'Dana likuid Anda sudah mencukupi minimal 3 bulan biaya hidup rutin.',
+        actionTab: 'goals' as TabType,
+        actionLabel: 'Buka Dana Darurat',
+      },
+      {
+        id: 'budget',
+        step: '3',
+        title: 'Kedisiplinan Budget Bulanan',
+        subtitle: 'Kendali pengeluaran dibandingkan batas kuota budget',
+        icon: PieChart,
+        score: metrics.budgetScore,
+        maxScore: 25,
+        currentLabel: 'Pengeluaran Saat Ini',
+        currentValue:
+          metrics.budgetLimit > 0
+            ? `${metrics.budgetUsagePct}% (${formatRupiah(totalExpense, hide)})`
+            : formatRupiah(totalExpense, hide),
+        targetLabel: 'Batas Aman Budget (≤ 85%)',
+        targetValue:
+          metrics.budgetLimit > 0
+            ? formatRupiah(metrics.budgetLimit, hide)
+            : 'Budget belum diatur',
+        advice:
+          metrics.budgetLimit === 0
+            ? 'Tentukan batas anggaran bulanan di menu Atur Budget untuk memantau kedisiplinan belanja.'
+            : metrics.budgetUsagePct <= 80
+            ? `Sangat terkendali! Anda baru memakai ${metrics.budgetUsagePct}% dari kuota anggaran.`
+            : metrics.budgetUsagePct <= 100
+            ? 'Pengeluaran mendekati batas kuota. Rem belanja non-prioritas hingga akhir periode.'
+            : 'Pengeluaran sudah melewati batas budget bulanan. Evaluasi pos yang bocor.',
+        actionTab: 'budget' as TabType,
+        actionLabel: 'Kelola Pos Budget',
+      },
+      {
+        id: 'debt',
+        step: '4',
+        title: 'Kesehatan Beban Utang',
+        subtitle: 'Perbandingan total tagihan kredit/utang terhadap aset likuid',
+        icon: CreditCard,
+        score: metrics.debtScore,
+        maxScore: 20,
+        currentLabel: 'Total Utang & Kredit',
+        currentValue:
+          metrics.creditDebt === 0
+            ? 'Rp 0 (0% Bebas Utang)'
+            : `${metrics.debtRatioPct}% (${formatRupiah(metrics.creditDebt, hide)})`,
+        targetLabel: 'Batas Maksimal (< 20%)',
+        targetValue:
+          metrics.safeDebtLimit > 0
+            ? `Maks. ${formatRupiah(metrics.safeDebtLimit, hide)}`
+            : 'Di bawah 20% kas',
+        advice:
+          metrics.creditDebt === 0
+            ? 'Sangat sehat! Anda tidak memiliki beban tagihan kredit atau utang konsumtif aktif.'
+            : metrics.debtRatioPct <= 20
+            ? 'Rasio kewajiban utang dan kartu kredit masih dalam batas aman (< 20%).'
+            : 'Beban utang cukup tinggi dibanding kas likuid. Prioritaskan pelunasan tagihan berbunga.',
+        actionTab: 'debt' as TabType,
+        actionLabel: 'Pantau Utang',
+      },
+    ];
+  }, [metrics, totalExpense, hide]);
+
+  const priorityActions = useMemo(() => {
+    return [...pillars]
+      .map((p) => ({
+        ...p,
+        missingPoints: Math.max(0, p.maxScore - p.score),
+        pct: Math.round((p.score / p.maxScore) * 100),
+      }))
+      .sort((a, b) => b.missingPoints - a.missingPoints);
+  }, [pillars]);
 
   const donutColors = ['#7C3AED', '#F97316', '#EC4899', '#10B981', '#3B82F6', '#EAB308'];
   const circumference = 219.8; // 2 * pi * 35
 
+  const scoreRanges = [
+    { label: 'Perlu Perhatian', range: '0 – 49', active: !metrics.isZeroState && metrics.totalScore < 50 },
+    { label: 'Cukup Sehat', range: '50 – 69', active: metrics.totalScore >= 50 && metrics.totalScore < 70 },
+    { label: 'Sehat & Stabil', range: '70 – 84', active: metrics.totalScore >= 70 && metrics.totalScore < 85 },
+    { label: 'Sangat Prima', range: '85 – 100', active: metrics.totalScore >= 85 },
+  ];
+
+  const getScoreBadgeColor = (score: number, isZero: boolean) => {
+    if (isZero) return 'bg-white/15 text-gray-200 border border-white/20';
+    if (score >= 85) return 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+    if (score >= 70) return 'bg-lime-500/20 text-lime-300 border border-lime-500/30';
+    if (score >= 50) return 'bg-amber-500/20 text-amber-300 border border-amber-500/30';
+    return 'bg-orange-500/20 text-orange-300 border border-orange-500/30';
+  };
+
   return (
-    <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
+    <div className="space-y-5 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header with Title and Quick Action Buttons */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 lg:pt-0 px-0.5">
         <div>
-          <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight flex items-center gap-2">
-            <span>Analisis & Skor Keuangan</span>
+          <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
+            Analisis & Skor Keuangan
           </h1>
-          <p className="text-xs lg:text-sm font-semibold text-gray-400 mt-0.5">
-            Diagnostik kesehatan finansial, rincian pengeluaran, dan tren arus kas bulanan.
+          <p className="text-xs lg:text-sm font-medium text-gray-500 dark:text-gray-400 mt-0.5">
+            Ringkasan mudah untuk melihat seberapa sehat kondisi uang, tabungan, dan pengeluaran Anda.
           </p>
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <div className="h-10 flex items-center justify-center gap-1.5 px-3.5 rounded-full bg-white dark:bg-[#16181D] border border-gray-200/80 dark:border-gray-800 text-xs font-black text-gray-700 dark:text-gray-300 shadow-2xs whitespace-nowrap">
+          <div className="h-10 flex items-center justify-center gap-1.5 px-3.5 rounded-xl bg-white dark:bg-[#16181D] border border-gray-200/80 dark:border-gray-800 text-xs font-extrabold text-gray-700 dark:text-gray-300 shadow-2xs whitespace-nowrap">
             <Calendar size={14} className="shrink-0" />
             <span className="truncate">{monthLabel}</span>
           </div>
           <button
             type="button"
             onClick={exportToCSV}
-            className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-extrabold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
+            className="h-10 px-4 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-extrabold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap shrink-0"
             title="Unduh Laporan CSV"
           >
             <Download size={15} strokeWidth={2.5} className="shrink-0" />
@@ -400,7 +502,7 @@ export function AnalyticsTab() {
         <button
           type="button"
           onClick={() => setActiveView('all')}
-          className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+          className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer whitespace-nowrap ${
             activeView === 'all'
               ? 'bg-white dark:bg-[#16181D] text-gray-950 dark:text-white shadow-xs'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
@@ -411,172 +513,329 @@ export function AnalyticsTab() {
         <button
           type="button"
           onClick={() => setActiveView('health')}
-          className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+          className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap ${
             activeView === 'health'
               ? 'bg-white dark:bg-[#16181D] text-gray-950 dark:text-white shadow-xs'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
           }`}
         >
           <Activity size={14} className="text-[#84CC16] dark:text-[#D4F826]" />
-          <span>Skor Sehat & 4 Pilar</span>
+          <span>Skor & 4 Pilar</span>
         </button>
         <button
           type="button"
           onClick={() => setActiveView('expenses')}
-          className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+          className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 whitespace-nowrap ${
             activeView === 'expenses'
               ? 'bg-white dark:bg-[#16181D] text-gray-950 dark:text-white shadow-xs'
               : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
           }`}
         >
           <BarChart3 size={14} className="text-blue-500" />
-          <span>Tren & Pengeluaran</span>
+          <span>Pengeluaran & Tren</span>
         </button>
       </div>
 
-      {/* SECTION 1: FINANCIAL HEALTH SCORE HERO (Visible in 'all' and 'health') */}
-      {(activeView === 'all' || activeView === 'health') && (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white p-5 lg:px-9 lg:py-7 rounded-[28px] lg:rounded-[32px] shadow-xl border border-white/10 space-y-4"
+      {/* SECTION 1: UNIFIED HERO CARD (Score + 4 Key Cashflow Metrics) */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white p-5 lg:p-8 rounded-[28px] lg:rounded-[32px] shadow-xl border border-white/10 space-y-6"
+      >
+        <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/15 blur-3xl pointer-events-none" />
+        <div
+          className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none ${
+            settings.accentColor === 'orange'
+              ? 'bg-[#FF6B2B]/15'
+              : settings.accentColor === 'pink'
+              ? 'bg-[#FFA4A4]/15'
+              : 'bg-[#D4F826]/15'
+          }`}
+        />
+
+        {/* Top Part: Score Overview & Level Scale (shown in 'all' and 'health') */}
+        {(activeView === 'all' || activeView === 'health') && (
+          <div className="relative z-10 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-extrabold text-[#D4F826] tracking-wide flex items-center gap-1.5">
+                <Activity size={15} />
+                <span>Skor Kesehatan Finansial</span>
+              </span>
+              <span
+                className={`px-3 py-1 rounded-lg text-xs font-extrabold ${getScoreBadgeColor(
+                  metrics.totalScore,
+                  metrics.isZeroState
+                )}`}
+              >
+                Status: {metrics.grade}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:items-center">
+              {/* Left: Big Score + Explanation */}
+              <div className="lg:col-span-7 space-y-3">
+                <div className="flex items-baseline gap-2.5">
+                  <span className="text-5xl lg:text-6xl font-black tabular-nums text-[#D4F826] leading-none">
+                    {metrics.totalScore}
+                  </span>
+                  <div className="flex flex-col">
+                    <span className="text-base font-extrabold text-gray-300">dari 100 Poin</span>
+                    <span className="text-[11px] text-gray-400">
+                      Gabungan nilai dari 4 pilar keuangan di bawah
+                    </span>
+                  </div>
+                </div>
+
+                {/* Progress Bar */}
+                <div className="w-full h-3 rounded-full bg-white/10 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-[#D4F826] transition-all duration-500"
+                    style={{ width: `${metrics.totalScore}%` }}
+                  />
+                </div>
+
+                <p className="text-xs lg:text-sm text-gray-200 leading-relaxed font-medium">
+                  {metrics.summaryText}
+                </p>
+              </div>
+
+              {/* Right: Clear 4-Level Score Guide so user immediately understands what the number means */}
+              <div className="lg:col-span-5 bg-white/[0.04] border border-white/10 rounded-2xl p-4 space-y-2.5">
+                <span className="text-[11px] font-bold text-gray-400 block">
+                  Panduan Arti Skor (0 – 100)
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  {scoreRanges.map((item) => (
+                    <div
+                      key={item.label}
+                      className={`px-3 py-2 rounded-xl border text-xs transition-colors ${
+                        item.active
+                          ? 'bg-white/15 border-[#D4F826] text-white'
+                          : 'bg-white/[0.02] border-white/5 text-gray-400'
+                      }`}
+                    >
+                      <div className="font-black tabular-nums text-[11px] text-[#D4F826]">
+                        {item.range} Poin
+                      </div>
+                      <div className="font-bold text-xs truncate">{item.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {metrics.isZeroState && (
+              <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('wallets')}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black cursor-pointer"
+                >
+                  1. Isi Saldo Dompet
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('budget')}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-extrabold cursor-pointer"
+                >
+                  2. Atur Pemasukan Bulanan
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Bottom Part: 4 Key Cashflow Numbers in Plain Indonesian */}
+        <div
+          className={`relative z-10 grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 ${
+            activeView === 'all' || activeView === 'health'
+              ? 'pt-5 border-t border-white/10'
+              : ''
+          }`}
         >
-          <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
-          <div
-            className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
-              settings.accentColor === 'orange'
-                ? 'bg-[#FF6B2B]/15'
-                : settings.accentColor === 'pink'
-                ? 'bg-[#FFA4A4]/15'
-                : 'bg-[#D4F826]/15'
-            }`}
-          />
-          <div className="relative z-10 flex items-center justify-between">
-            <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider flex items-center gap-1.5">
-              <Activity size={13} />
-              <span>SKOR KESEHATAN FINANSIAL</span>
+          <div className="space-y-1">
+            <span className="text-[11px] font-semibold text-gray-400 flex items-center gap-1">
+              <WalletIcon size={12} className="text-gray-400" />
+              <span>Kas Likuid Bersih</span>
             </span>
-            <span className="px-2.5 py-0.5 rounded-md bg-[#D4F826] text-black text-[10px] font-black uppercase">
-              Status: {metrics.grade}
+            <div className="text-lg sm:text-xl font-black text-white tabular-nums truncate">
+              {formatRupiah(totalBalance, hide)}
+            </div>
+            <span className="text-[11px] text-gray-400 block">
+              Total saldo aktif di dompet
             </span>
           </div>
 
-          <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
-            <div className="flex items-baseline gap-2">
-              <span className="text-5xl lg:text-6xl font-black tabular-nums text-[#D4F826] leading-none">
-                {metrics.totalScore}
-              </span>
-              <span className="text-lg font-extrabold text-gray-400">/ 100</span>
+          <div className="space-y-1">
+            <span className="text-[11px] font-semibold text-gray-400 flex items-center gap-1">
+              <TrendingUp size={12} className="text-emerald-400" />
+              <span>Pemasukan Periode Ini</span>
+            </span>
+            <div className="text-lg sm:text-xl font-black text-white tabular-nums truncate">
+              {formatRupiah(metrics.monthlyIncome, hide)}
             </div>
-
-            <div className="lg:text-right text-xs">
-              <span className="text-[10px] text-gray-400 uppercase font-bold block">
-                KAS LIKUID BERSIH
-              </span>
-              <span className="text-lg lg:text-2xl font-black text-white tabular-nums">
-                {formatRupiah(totalBalance, hide)}
-              </span>
-            </div>
+            <span className="text-[11px] text-gray-400 block">
+              {metrics.hasActualIncome
+                ? 'Dari transaksi pemasukan'
+                : metrics.estIncome > 0
+                ? 'Dari estimasi menu Budget'
+                : 'Belum ada pemasukan'}
+            </span>
           </div>
 
-          {/* Score Progress Bar */}
-          <div className="w-full h-3 rounded-full bg-white/10 overflow-hidden">
-            <div
-              className="h-full rounded-full bg-[#D4F826] transition-all duration-500"
-              style={{ width: `${metrics.totalScore}%` }}
-            />
+          <div className="space-y-1 pt-3 lg:pt-0 border-t lg:border-t-0 border-white/10">
+            <span className="text-[11px] font-semibold text-gray-400 flex items-center gap-1">
+              <ArrowDownRight size={12} className="text-rose-400" />
+              <span>Total Pengeluaran</span>
+            </span>
+            <div className="text-lg sm:text-xl font-black text-rose-400 tabular-nums truncate">
+              {formatRupiah(totalExpense, hide)}
+            </div>
+            <span className="text-[11px] text-gray-400 block">
+              {metrics.budgetLimit > 0
+                ? `${metrics.budgetUsagePct}% dari batas budget`
+                : `${metrics.txCountThisMonth} transaksi tercatat`}
+            </span>
           </div>
 
-          <p className="text-xs lg:text-sm text-gray-300 leading-relaxed font-medium">
-            {metrics.summaryText}
-          </p>
-
-          {metrics.isZeroState && (
-            <div className="flex gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setActiveTab('wallets')}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black cursor-pointer"
-              >
-                1. Isi Saldo Dompet
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('budget')}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-extrabold cursor-pointer"
-              >
-                2. Atur Pemasukan
-              </button>
+          <div className="space-y-1 pt-3 lg:pt-0 border-t lg:border-t-0 border-white/10">
+            <span className="text-[11px] font-semibold text-gray-400 flex items-center gap-1">
+              <PiggyBank size={12} className="text-[#D4F826]" />
+              <span>Ditabung / Disisihkan</span>
+            </span>
+            <div className="text-lg sm:text-xl font-black text-[#D4F826] tabular-nums truncate">
+              {formatRupiah(metrics.savedAmount, hide)}
             </div>
-          )}
-        </motion.div>
-      )}
+            <span className="text-[11px] text-gray-400 block">
+              Rasio menabung {metrics.savingsRatePct}% (Ideal ≥ 20%)
+            </span>
+          </div>
+        </div>
+      </motion.div>
 
-      {/* SECTION 2: 4 PILLARS BREAKDOWN (Visible in 'all' and 'health') */}
+      {/* SECTION 2: 4 PILLARS BREAKDOWN WITH CLEAR RUPIAH COMPARISON (Visible in 'all' and 'health') */}
       {(activeView === 'all' || activeView === 'health') && (
-        <div className="space-y-3">
-          <div className="px-1 flex items-center justify-between">
-            <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white flex items-center gap-2">
-              <Activity size={16} className="text-[#84CC16] dark:text-[#D4F826]" />
-              <span>Rincian 4 Pilar Finansial</span>
-            </h3>
-            <span className="text-[11px] font-bold text-gray-400">Total Bobot: 100 Poin</span>
+        <div className="space-y-3.5">
+          <div className="px-1 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+            <div>
+              <h2 className="text-base lg:text-lg font-black text-gray-900 dark:text-white flex items-center gap-2">
+                <Activity size={18} className="text-[#84CC16] dark:text-[#D4F826]" />
+                <span>Rincian 4 Pilar Penentu Skor</span>
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Perbandingan langsung antara kondisi keuangan Anda saat ini dengan target idealnya.
+              </p>
+            </div>
+            <span className="text-xs font-bold text-gray-500 dark:text-gray-400">
+              Total Bobot Maksimal: 100 Poin
+            </span>
           </div>
 
-          <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {pillars.map((p) => {
               const Icon = p.icon;
               const pct = Math.round((p.score / p.maxScore) * 100);
+              const isGood = pct >= 75;
+              const isMedium = pct >= 40 && pct < 75;
+
+              const statusText = isGood
+                ? 'Sudah Ideal'
+                : isMedium
+                ? 'Cukup Baik'
+                : 'Perlu Ditingkatkan';
+
+              const statusColorClass = isGood
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : isMedium
+                ? 'text-amber-600 dark:text-amber-400'
+                : 'text-rose-600 dark:text-rose-400';
+
+              const barColorClass = isGood
+                ? 'bg-emerald-500'
+                : isMedium
+                ? 'bg-amber-500'
+                : 'bg-rose-500';
+
               return (
                 <div
                   key={p.id}
-                  className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3 hover:border-[#D4F826]/60 transition-colors"
+                  className="bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-200/70 dark:border-gray-800 flex flex-col justify-between gap-4 hover:border-gray-300 dark:hover:border-gray-700 transition-colors"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-2xl bg-gray-50 dark:bg-gray-800 flex items-center justify-center text-gray-800 dark:text-gray-200 shrink-0">
-                        <Icon size={18} />
+                  <div className="space-y-3.5">
+                    {/* Card Header: Icon, Title, Status & Score */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-gray-800 dark:text-gray-200 shrink-0 mt-0.5">
+                          <Icon size={19} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h3 className="text-sm lg:text-base font-black text-gray-900 dark:text-white">
+                              {p.step}. {p.title}
+                            </h3>
+                          </div>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                            {p.subtitle}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="text-xs lg:text-sm font-extrabold text-gray-900 dark:text-white">
-                          {p.title}
-                        </h4>
-                        <p className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 mt-0.5">
-                          {p.metricText}
-                        </p>
+
+                      <div className="text-right shrink-0">
+                        <div className="flex items-baseline justify-end gap-1">
+                          <span className="text-lg lg:text-xl font-black text-gray-900 dark:text-white tabular-nums">
+                            {p.score}
+                          </span>
+                          <span className="text-xs font-bold text-gray-400">
+                            / {p.maxScore} Poin
+                          </span>
+                        </div>
+                        <span className={`text-[11px] font-extrabold ${statusColorClass}`}>
+                          {statusText}
+                        </span>
                       </div>
                     </div>
 
-                    <div className="text-right shrink-0">
-                      <span className="text-sm lg:text-base font-black text-gray-900 dark:text-white tabular-nums">
-                        {p.score}
-                      </span>
-                      <span className="text-xs font-bold text-gray-400"> / {p.maxScore}</span>
+                    {/* Semantic Progress Bar */}
+                    <div className="w-full h-2.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${barColorClass}`}
+                        style={{ width: `${Math.max(4, pct)}%` }}
+                      />
+                    </div>
+
+                    {/* Side-by-side Comparison: Kondisi Anda vs Target Ideal */}
+                    <div className="grid grid-cols-2 gap-3 p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800">
+                      <div className="space-y-0.5">
+                        <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 block">
+                          {p.currentLabel}
+                        </span>
+                        <span className="text-xs lg:text-sm font-black text-gray-900 dark:text-white tabular-nums block truncate">
+                          {p.currentValue}
+                        </span>
+                      </div>
+                      <div className="space-y-0.5 border-l border-gray-200 dark:border-gray-700 pl-3">
+                        <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 block">
+                          {p.targetLabel}
+                        </span>
+                        <span className="text-xs lg:text-sm font-extrabold text-gray-700 dark:text-gray-300 tabular-nums block truncate">
+                          {p.targetValue}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-300 ${
-                        pct >= 75
-                          ? 'bg-emerald-500'
-                          : pct >= 45
-                          ? 'bg-[#D4F826]'
-                          : 'bg-amber-500'
-                      }`}
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] pt-0.5">
-                    <span className="text-gray-400 font-medium">{p.targetText}</span>
+                  {/* Plain-language Tip & Action Link */}
+                  <div className="pt-2 border-t border-gray-100 dark:border-gray-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+                    <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
+                      {p.advice}
+                    </p>
                     <button
                       type="button"
                       onClick={() => setActiveTab(p.actionTab)}
-                      className="font-extrabold text-gray-900 dark:text-[#D4F826] hover:underline flex items-center gap-0.5 cursor-pointer"
+                      className="font-extrabold text-gray-900 dark:text-[#D4F826] hover:underline flex items-center gap-1 shrink-0 cursor-pointer self-start sm:self-center whitespace-nowrap"
                     >
                       <span>{p.actionLabel}</span>
-                      <ArrowUpRight size={12} />
+                      <ArrowUpRight size={13} />
                     </button>
                   </div>
                 </div>
@@ -586,164 +845,87 @@ export function AnalyticsTab() {
         </div>
       )}
 
-      {/* SECTION 3: CASHFLOW METRICS (Visible in 'all' and 'expenses') */}
-      {(activeView === 'all' || activeView === 'expenses') && (
-        <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl border border-white/10">
-          <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
+      {/* SECTION 3: ACTIONABLE IMPROVEMENTS & EXPENSE BREAKDOWN */}
+      <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-5 lg:items-start">
+        {/* 1. Prioritas Perbaikan Skor (Left 4 cols - shown in 'all' and 'health') */}
+        {(activeView === 'all' || activeView === 'health') && (
           <div
-            className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
-              settings.accentColor === 'orange'
-                ? 'bg-[#FF6B2B]/15'
-                : settings.accentColor === 'pink'
-                ? 'bg-[#FFA4A4]/15'
-                : 'bg-[#D4F826]/15'
-            }`}
-          />
-          <div className="relative z-10 grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-8">
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                ESTIMASI DITABUNG
-              </span>
-              <div className="text-lg sm:text-2xl font-black text-[#D4F826] tabular-nums truncate">
-                {formatRupiah(metrics.savedAmount, hide)}
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                RASIO MENABUNG
-              </span>
-              <div className="text-lg sm:text-2xl font-black text-[#D4F826] tabular-nums">
-                {metrics.savingsRatePct}%
-              </div>
-            </div>
-
-            <div className="space-y-1 pt-3 lg:pt-0 border-t lg:border-t-0 border-white/10">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                ↗ TOTAL PEMASUKAN
-              </span>
-              <div className="text-lg sm:text-2xl font-black text-white tabular-nums truncate">
-                {formatRupiah(totalIncome, hide)}
-              </div>
-            </div>
-
-            <div className="space-y-1 pt-3 lg:pt-0 border-t lg:border-t-0 border-white/10">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                ↘ TOTAL PENGELUARAN
-              </span>
-              <div className="text-lg sm:text-2xl font-black text-[#FB7185] tabular-nums truncate">
-                {formatRupiah(totalExpense, hide)}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* SECTION 4: DETAILED ANALYTICS 12-COL GRID (Visible in 'all' and 'expenses') */}
-      {(activeView === 'all' || activeView === 'expenses') && (
-        <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-5 lg:items-start">
-          {/* 1. Skor Kesehatan Finansial Gauge (Left 4 cols) */}
-          <div className="lg:col-span-4 bg-white dark:bg-[#16181D] rounded-3xl p-6 shadow-xs border border-gray-100 dark:border-gray-800 text-center space-y-4">
-            <div className="relative w-36 h-36 mx-auto flex items-center justify-center">
-              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="40"
-                  fill="transparent"
-                  stroke="#E5E7EB"
-                  strokeWidth="10"
-                  className="dark:stroke-gray-800"
-                />
-                <circle
-                  cx="50"
-                  cy="50"
-                  r="40"
-                  fill="transparent"
-                  stroke="#2563EB"
-                  strokeWidth="10"
-                  strokeDasharray="251.2"
-                  strokeDashoffset={Math.max(0, 251.2 - (metrics.totalScore / 100) * 251.2)}
-                  strokeLinecap="round"
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-3xl font-black text-gray-900 dark:text-white leading-none tabular-nums">
-                  {metrics.totalScore}
-                </span>
-                <span className="text-[10px] font-bold text-gray-400 mt-0.5">/ 100</span>
-              </div>
-            </div>
-
+            className={`${
+              activeView === 'health' ? 'lg:col-span-12' : 'lg:col-span-4'
+            } bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-200/70 dark:border-gray-800 space-y-4`}
+          >
             <div>
-              <div className="flex items-center justify-center gap-1.5 text-xs font-extrabold text-gray-900 dark:text-white">
-                <Heart size={14} className="text-red-500 fill-red-500" />
-                <span>Skor Kesehatan Finansial</span>
-              </div>
-              <p className="text-[11px] text-gray-400 mt-0.5 max-w-xs mx-auto leading-relaxed">
-                Kalkulasi otomatis dari rasio tabungan, disiplin anggaran, dana darurat, dan beban utang.
+              <h3 className="text-sm lg:text-base font-black text-gray-900 dark:text-white flex items-center gap-2">
+                <CheckCircle2 size={17} className="text-emerald-500 shrink-0" />
+                <span>Cara Menaikkan Skor Anda</span>
+              </h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Urutan langkah dari potensi tambahan poin terbesar.
               </p>
-              <span className="inline-block mt-2 text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 dark:bg-blue-950/40 px-2.5 py-0.5 rounded-md">
-                {metrics.grade}
-              </span>
             </div>
 
-            {/* Health Breakdown Bars */}
-            <div className="space-y-3 pt-2 text-left">
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-500 dark:text-gray-400 font-bold">Rasio Tabungan</span>
-                  <span className="font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums">
-                    {metrics.savingsRatePct}%
-                  </span>
-                </div>
-                <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+            <div
+              className={
+                activeView === 'health'
+                  ? 'grid grid-cols-1 md:grid-cols-2 gap-3'
+                  : 'space-y-3'
+              }
+            >
+              {priorityActions.map((item) => {
+                const isOptimal = item.missingPoints <= 3;
+                return (
                   <div
-                    className="h-full rounded-full bg-emerald-500"
-                    style={{ width: `${Math.min(100, metrics.savingsRatePct)}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-500 dark:text-gray-400 font-bold">Disiplin Anggaran</span>
-                  <span className="font-extrabold text-violet-600 dark:text-violet-400 tabular-nums">
-                    {metrics.budgetDisciplinePct}%
-                  </span>
-                </div>
-                <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-violet-500"
-                    style={{ width: `${metrics.budgetDisciplinePct}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-500 dark:text-gray-400 font-bold">Keamanan & Runway</span>
-                  <span className="font-extrabold text-blue-600 dark:text-blue-400 tabular-nums">
-                    {metrics.runwayPct}%
-                  </span>
-                </div>
-                <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-blue-500"
-                    style={{ width: `${metrics.runwayPct}%` }}
-                  />
-                </div>
-              </div>
+                    key={item.id}
+                    className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 flex items-start justify-between gap-3"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        {isOptimal ? (
+                          <Check size={14} className="text-emerald-500 shrink-0" />
+                        ) : (
+                          <AlertTriangle size={14} className="text-amber-500 shrink-0" />
+                        )}
+                        <span className="text-xs font-extrabold text-gray-900 dark:text-white">
+                          {item.title}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed">
+                        {item.advice}
+                      </p>
+                    </div>
+                    <span
+                      className={`text-[11px] font-black tabular-nums whitespace-nowrap shrink-0 px-2 py-1 rounded-lg ${
+                        isOptimal
+                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                      }`}
+                    >
+                      {isOptimal ? 'Optimal' : `+${item.missingPoints} Poin`}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
+        )}
 
-          {/* 2. Rincian Pengeluaran Donut (Middle 4 cols) */}
-          <div className="lg:col-span-4 bg-white dark:bg-[#16181D] rounded-3xl p-6 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
-            <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
-              Rincian Pengeluaran
-            </h3>
+        {/* 2. Rincian Pengeluaran per Kategori (Middle 4 cols in 'all', 6 cols in 'expenses') */}
+        {(activeView === 'all' || activeView === 'expenses') && (
+          <div
+            className={`${
+              activeView === 'expenses' ? 'lg:col-span-6' : 'lg:col-span-4'
+            } bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-200/70 dark:border-gray-800 space-y-4`}
+          >
+            <div>
+              <h3 className="text-sm lg:text-base font-black text-gray-900 dark:text-white">
+                Porsi Pengeluaran per Kategori
+              </h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                Kategori yang paling banyak menyerap uang Anda periode ini.
+              </p>
+            </div>
 
-            <div className="relative w-40 h-40 mx-auto flex items-center justify-center my-2">
+            <div className="relative w-36 h-36 mx-auto flex items-center justify-center my-1">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
                 <circle
                   cx="50"
@@ -780,116 +962,150 @@ export function AnalyticsTab() {
                   })()}
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center px-2 text-center">
-                <span className="text-[10px] font-bold text-gray-400 uppercase">Total</span>
+                <span className="text-[10px] font-bold text-gray-400">Total Keluar</span>
                 <span className="text-xs font-black text-gray-900 dark:text-white tabular-nums">
                   {formatRupiah(totalExpense, hide)}
                 </span>
               </div>
             </div>
 
-            <div className="space-y-3 pt-2">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
-                KATEGORI TERATAS
-              </span>
-
-              {metrics.topCategories.map((cat) => (
-                <div key={cat.name} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">{cat.emoji}</span>
-                    <span className="font-extrabold text-gray-900 dark:text-white">{cat.name}</span>
+            <div className="space-y-3 pt-1">
+              {metrics.topCategories.map((cat, idx) => (
+                <div key={cat.name} className="space-y-1.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-base shrink-0">{cat.emoji}</span>
+                      <span className="font-extrabold text-gray-900 dark:text-white truncate">
+                        {cat.name}
+                      </span>
+                    </div>
+                    <div className="text-right shrink-0 flex items-center gap-1.5">
+                      <span className="font-black text-gray-900 dark:text-white tabular-nums">
+                        {formatRupiah(cat.amount, hide)}
+                      </span>
+                      <span className="text-[11px] font-bold text-gray-400 tabular-nums">
+                        · {cat.pct}
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className="font-black text-gray-900 dark:text-white tabular-nums">
-                      {formatRupiah(cat.amount, hide)}
-                    </span>
-                    <span className="text-[10px] text-gray-400 block">{cat.pct}</span>
+                  <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.max(cat.amount > 0 ? 4 : 0, cat.pctNum)}%`,
+                        backgroundColor: donutColors[idx % donutColors.length],
+                      }}
+                    />
                   </div>
                 </div>
               ))}
             </div>
           </div>
+        )}
 
-          {/* 3. Ringkasan Cepat + Insight AI (Right 4 cols) */}
-          <div className="lg:col-span-4 space-y-4 lg:space-y-5">
-            {/* Ringkasan Cepat */}
-            <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
-              <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
-                Ringkasan Cepat
-              </h3>
+        {/* 3. Kebiasaan Belanja & Insight AI (Right 4 cols in 'all', 6 cols in 'expenses') */}
+        {(activeView === 'all' || activeView === 'expenses') && (
+          <div
+            className={`${
+              activeView === 'expenses' ? 'lg:col-span-6' : 'lg:col-span-4'
+            } space-y-4 lg:space-y-5`}
+          >
+            {/* Kebiasaan Belanja Harian */}
+            <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-200/70 dark:border-gray-800 space-y-3.5">
+              <div>
+                <h3 className="text-sm lg:text-base font-black text-gray-900 dark:text-white">
+                  Pola Pengeluaran Harian
+                </h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Ringkasan kebiasaan transaksi Anda pada periode {monthLabel}.
+                </p>
+              </div>
 
               <div className="space-y-2.5 text-xs">
-                <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-2xl flex items-center justify-between gap-2">
-                  <span className="text-gray-500 dark:text-gray-400">Rata-rata / hari</span>
+                <div className="p-3.5 bg-gray-50 dark:bg-gray-800/40 rounded-2xl flex items-center justify-between gap-2">
+                  <span className="text-gray-600 dark:text-gray-400 font-medium">
+                    Rata-rata keluar per hari
+                  </span>
                   <span className="font-black text-gray-900 dark:text-white tabular-nums">
                     {formatRupiah(metrics.avgDailyExpense, hide)}/hari
                   </span>
                 </div>
 
-                <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-2xl flex items-center justify-between gap-2">
-                  <span className="text-gray-500 dark:text-gray-400">Hari terboros</span>
-                  <span className="font-black text-red-500 tabular-nums">
+                <div className="p-3.5 bg-gray-50 dark:bg-gray-800/40 rounded-2xl flex items-center justify-between gap-2">
+                  <span className="text-gray-600 dark:text-gray-400 font-medium">
+                    Hari pengeluaran terbesar
+                  </span>
+                  <span className="font-black text-rose-500 tabular-nums text-right">
                     {metrics.maxExpenseDayLabel}
                   </span>
                 </div>
 
-                <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-2xl flex items-center justify-between gap-2">
-                  <span className="text-gray-500 dark:text-gray-400">
-                    Total transaksi bulan ini
+                <div className="p-3.5 bg-gray-50 dark:bg-gray-800/40 rounded-2xl flex items-center justify-between gap-2">
+                  <span className="text-gray-600 dark:text-gray-400 font-medium">
+                    Frekuensi transaksi tercatat
                   </span>
                   <span className="font-black text-gray-900 dark:text-white tabular-nums">
-                    {metrics.txCountThisMonth} transaksi
+                    {metrics.txCountThisMonth} kali transaksi
                   </span>
                 </div>
 
-                <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-2xl flex items-center justify-between gap-2">
-                  <span className="text-gray-500 dark:text-gray-400">Hari tanpa pengeluaran</span>
-                  <span className="font-black text-[#84CC16] dark:text-[#D4F826]">
-                    {metrics.zeroExpenseDays} hari hemat!
+                <div className="p-3.5 bg-gray-50 dark:bg-gray-800/40 rounded-2xl flex items-center justify-between gap-2">
+                  <span className="text-gray-600 dark:text-gray-400 font-medium">
+                    Hari tanpa belanja (No-Spend Day)
+                  </span>
+                  <span className="font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
+                    {metrics.zeroExpenseDays} hari hemat
                   </span>
                 </div>
               </div>
             </div>
 
             {/* Insight AI */}
-            <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3.5">
+            <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-200/70 dark:border-gray-800 space-y-3.5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
                   <Sparkles size={16} className="text-[#84CC16] dark:text-[#D4F826]" />
-                  <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">Insight AI</h3>
+                  <h3 className="text-sm font-black text-gray-900 dark:text-white">
+                    Kesimpulan Singkat
+                  </h3>
                 </div>
-                <span className="text-[10px] font-bold text-gray-400">Periode {monthLabel}</span>
+                <span className="text-[11px] font-bold text-gray-400">Periode {monthLabel}</span>
               </div>
 
-              <div className="bg-gray-50 dark:bg-gray-800/40 p-4 rounded-2xl space-y-1.5 text-xs">
-                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
-                  RINGKASAN PERFORMA
-                </span>
+              <div className="bg-gray-50 dark:bg-gray-800/40 p-4 rounded-2xl space-y-2 text-xs">
                 <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                  Kondisi keuangan Anda periode ini berada pada skor <strong>{metrics.totalScore}/100</strong> ({metrics.grade}) dengan rasio tabungan <strong>{metrics.savingsRatePct}%</strong>. Pertahankan pencatatan rutin dan kendalikan pengeluaran harian.
+                  Skor keuangan Anda saat ini <strong>{metrics.totalScore}/100</strong> (
+                  <strong>{metrics.grade}</strong>). Dari pemasukan{' '}
+                  <strong>{formatRupiah(metrics.monthlyIncome, hide)}</strong>, pengeluaran tercatat{' '}
+                  <strong>{formatRupiah(totalExpense, hide)}</strong> dan dana yang ditabung{' '}
+                  <strong>
+                    {formatRupiah(metrics.savedAmount, hide)} ({metrics.savingsRatePct}%)
+                  </strong>
+                  .
                 </p>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Consult AI Advisor CTA */}
-      <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 flex items-center justify-between gap-3">
+      <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-200/70 dark:border-gray-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="space-y-1">
-          <h4 className="text-xs font-black text-gray-900 dark:text-white flex items-center gap-1.5">
-            <Sparkles size={14} className="text-amber-500" />
-            <span>Ingin meningkatkan skor kesehatan keuangan Anda?</span>
+          <h4 className="text-xs lg:text-sm font-black text-gray-900 dark:text-white flex items-center gap-1.5">
+            <Sparkles size={15} className="text-amber-500 shrink-0" />
+            <span>Butuh saran strategi untuk menaikkan skor keuangan Anda?</span>
           </h4>
-          <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
-            Diskusikan strategi optimasi tabungan, alokasi budget 50/30/20, dan pelunasan utang bersama Dompt AI Advisor.
+          <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+            Diskusikan cara mengatur tabungan 20%, dana darurat, dan pelunasan utang bersama Dompt AI Advisor.
           </p>
         </div>
         <button
           type="button"
           onClick={() => setActiveTab('ai-advisor')}
-          className="px-3.5 py-2.5 rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black shrink-0 cursor-pointer"
+          className="px-4 py-2.5 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black shrink-0 cursor-pointer whitespace-nowrap self-start sm:self-center"
         >
-          Tanya AI
+          Tanya AI Advisor
         </button>
       </div>
     </div>

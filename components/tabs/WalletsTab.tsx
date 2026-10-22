@@ -24,6 +24,7 @@ export function WalletsTab() {
     walletsWithBalance,
     totalBalance,
     goals,
+    debts,
     settings,
     openAddWallet,
     openEditWallet,
@@ -78,11 +79,19 @@ export function WalletsTab() {
     .filter((w) => w.type !== 'credit' && w.type !== 'paylater')
     .reduce((acc, w) => acc + Math.max(0, w.availableBalance), 0);
 
-  const totalReserved = walletsWithBalance.reduce((acc, w) => acc + (w.reservedAmount || 0), 0);
+  const totalReserved = walletsWithBalance
+    .filter((w) => w.type !== 'credit' && w.type !== 'paylater')
+    .reduce((acc, w) => acc + (w.reservedAmount || 0), 0);
 
-  const totalCreditLiability = walletsWithBalance
-    .filter((w) => (w.type === 'credit' || w.type === 'paylater') && w.balance < 0)
+  const creditWalletsTotal = walletsWithBalance
+    .filter((w) => (w.type === 'credit' || w.type === 'paylater') && Math.abs(w.balance) > 0)
     .reduce((acc, w) => acc + Math.abs(w.balance), 0);
+
+  const activePayableDebtsTotal = debts
+    .filter((d) => d.type === 'payable' && d.status !== 'paid')
+    .reduce((acc, d) => acc + Math.max(0, d.remainingAmount || 0), 0);
+
+  const totalCreditLiability = creditWalletsTotal + activePayableDebtsTotal;
 
   return (
     <div className="space-y-5 lg:space-y-6 pb-28 lg:pb-10">
@@ -171,15 +180,39 @@ export function WalletsTab() {
         {walletsWithBalance.map((w: WalletWithBalance) => {
           const Icon = getWalletIcon(w.type);
           const isExpanded = expandedWalletId === w.id;
-          const isNegative = w.balance < 0;
+          const isDebtWallet = w.type === 'credit' || w.type === 'paylater';
+          const isNegative = w.balance < 0 || (isDebtWallet && w.balance > 0);
+          const walletIdSet = new Set(walletsWithBalance.map((item) => item.id));
+          const fallbackLiquidId =
+            walletsWithBalance.find((item) => item.type !== 'credit' && item.type !== 'paylater')?.id ||
+            walletsWithBalance[0]?.id;
 
-          const breakdown = goals
-            .filter((g) => g.walletId === w.id && g.currentAmount > 0)
+          const goalsBreakdown = goals
+            .filter((g) => {
+              if (g.currentAmount <= 0) return false;
+              const resolvedGoalWalletId =
+                g.walletId && walletIdSet.has(g.walletId) ? g.walletId : fallbackLiquidId;
+              return resolvedGoalWalletId === w.id;
+            })
             .map((g) => ({
               name: g.name,
               amount: g.currentAmount,
               emoji: g.emoji || '🎯',
             }));
+
+          const goalsTotalForWallet = goalsBreakdown.reduce((sum, item) => sum + item.amount, 0);
+          const manualReservedPart = Math.max(0, (w.reservedAmount || 0) - goalsTotalForWallet);
+          const breakdown =
+            manualReservedPart > 0
+              ? [
+                  {
+                    name: 'Dana Cadangan Dompet',
+                    amount: manualReservedPart,
+                    emoji: '🛡️',
+                  },
+                  ...goalsBreakdown,
+                ]
+              : goalsBreakdown;
 
           return (
             <div
@@ -218,7 +251,7 @@ export function WalletsTab() {
                         : 'text-slate-900 dark:text-white'
                     }`}
                   >
-                    {formatRupiah(w.balance, hide)}
+                    {isDebtWallet && w.balance > 0 ? `Tagihan ${formatRupiah(w.balance, hide)}` : formatRupiah(w.balance, hide)}
                   </span>
                   {w.expenseThisMonth > 0 && (
                     <span className="font-mono-num text-[11px] font-semibold text-[#FF6B2B] block mt-0.5">
@@ -271,7 +304,7 @@ export function WalletsTab() {
                   )}
 
                   {/* Dicadangkan / Reserved Breakdown */}
-                  {breakdown.length > 0 && (
+                  {((w.reservedAmount || 0) > 0 || breakdown.length > 0) && (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between text-xs font-bold text-gray-400">
                         <span>DICADANGKAN</span>
@@ -279,22 +312,24 @@ export function WalletsTab() {
                           {formatRupiah(w.reservedAmount || 0, hide)}
                         </span>
                       </div>
-                      <div className="bg-gray-50 dark:bg-gray-800/40 rounded-2xl p-3 space-y-2">
-                        {breakdown.map((item) => (
-                          <div
-                            key={item.name}
-                            className="flex items-center justify-between text-xs"
-                          >
-                            <span className="text-gray-700 dark:text-gray-300 flex items-center gap-1.5 font-medium">
-                              <span>{item.emoji}</span>
-                              <span>{item.name}</span>
-                            </span>
-                            <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
-                              {formatRupiah(item.amount, hide)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
+                      {breakdown.length > 0 && (
+                        <div className="bg-gray-50 dark:bg-gray-800/40 rounded-2xl p-3 space-y-2">
+                          {breakdown.map((item) => (
+                            <div
+                              key={item.name}
+                              className="flex items-center justify-between text-xs"
+                            >
+                              <span className="text-gray-700 dark:text-gray-300 flex items-center gap-1.5 font-medium">
+                                <span>{item.emoji}</span>
+                                <span>{item.name}</span>
+                              </span>
+                              <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
+                                {formatRupiah(item.amount, hide)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 

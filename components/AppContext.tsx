@@ -1415,7 +1415,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
     });
 
+    const walletIdSet = new Set(wallets.map((w) => w.id));
+    const fallbackLiquidWalletId =
+      wallets.find((w) => w.type !== 'credit' && w.type !== 'paylater')?.id || wallets[0]?.id;
+
     return wallets.map((wallet) => {
+      const isDebtWallet = wallet.type === 'credit' || wallet.type === 'paylater';
       let balance = Math.max(0, Number(wallet.initialBalance) || 0);
       let expenseThisMonth = 0;
       let incomeThisMonth = 0;
@@ -1432,7 +1437,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             balance = Math.max(0, balance - tx.amount);
             if (isThisMonth) expenseThisMonth += tx.amount;
           } else if (tx.type === 'income') {
-            balance += tx.amount;
+            balance = isDebtWallet ? Math.max(0, balance - tx.amount) : balance + tx.amount;
             if (isThisMonth) incomeThisMonth += tx.amount;
           } else if (tx.type === 'transfer') {
             balance = Math.max(0, balance - tx.amount);
@@ -1441,17 +1446,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
         if (tx.type === 'transfer' && tx.transferWalletId === wallet.id) {
           txCount++;
-          balance += tx.amount;
+          // Paying a credit card / paylater bill via transfer reduces its outstanding bill
+          balance = isDebtWallet ? Math.max(0, balance - tx.amount) : balance + tx.amount;
         }
       });
 
       const finalBalance = Math.max(0, balance);
       const goalsReserved = goals
-        .filter((g) => g.walletId === wallet.id && g.currentAmount > 0)
+        .filter((g) => {
+          if (g.currentAmount <= 0) return false;
+          const resolvedGoalWalletId =
+            g.walletId && walletIdSet.has(g.walletId) ? g.walletId : fallbackLiquidWalletId;
+          return resolvedGoalWalletId === wallet.id;
+        })
         .reduce((acc, g) => acc + g.currentAmount, 0);
-      const rawReserved = goalsReserved > 0 ? goalsReserved : Math.max(0, wallet.reservedAmount || 0);
-      const reserved = Math.min(finalBalance, Math.max(0, rawReserved));
-      const available = Math.max(0, finalBalance - reserved);
+      const manualReserved = Math.max(0, Number(wallet.reservedAmount) || 0);
+      const rawReserved = goalsReserved + manualReserved;
+      const reserved = isDebtWallet ? 0 : Math.min(finalBalance, Math.max(0, rawReserved));
+      const available = isDebtWallet ? 0 : Math.max(0, finalBalance - reserved);
 
       return {
         ...wallet,
@@ -1466,11 +1478,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [wallets, transactions, goals, budgetPeriod, resolvedWalletIdMap]);
 
-  // Total balance (guaranteed non-negative)
+  // Total liquid balance (guaranteed non-negative, excludes credit/paylater liabilities)
   const totalBalance = useMemo(() => {
     return Math.max(
       0,
-      walletsWithBalance.reduce((acc, w) => acc + Math.max(0, w.balance), 0)
+      walletsWithBalance
+        .filter((w) => w.type !== 'credit' && w.type !== 'paylater')
+        .reduce((acc, w) => acc + Math.max(0, w.balance), 0)
     );
   }, [walletsWithBalance]);
 
@@ -1618,7 +1632,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       .map((tx) => (tx.note || '').toLowerCase().trim());
 
     walletsWithBalance.forEach((w) => {
-      if ((w.type === 'credit' || w.type === 'paylater') && w.balance < 0) {
+      if ((w.type === 'credit' || w.type === 'paylater') && Math.abs(w.balance) > 0) {
         const dueDay = w.type === 'credit' ? 10 : 14;
         const mLabel = activeDay > dueDay ? nextMonthShort : curMonthShort;
         seenNames.add(w.name.toLowerCase().trim());
@@ -1817,14 +1831,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // CRUD: Transaction
   const addTransaction = (data: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): string => {
+    const resolvedTargetWallet =
+      walletsWithBalance.find((w) => w.id === data.walletId) ||
+      walletsWithBalance.find((w) => w.type !== 'credit' && w.type !== 'paylater') ||
+      walletsWithBalance[0];
+    const effectiveWalletId = resolvedTargetWallet?.id || data.walletId;
+
     // Prevent negative wallet balance on any expense or transfer payment
     if (data.type === 'expense' || data.type === 'transfer') {
-      const targetWallet =
-        walletsWithBalance.find((w) => w.id === data.walletId) || walletsWithBalance[0];
-      const currentWalletBalance = targetWallet ? Math.max(0, targetWallet.balance) : 0;
-      if (!targetWallet || data.amount > currentWalletBalance) {
+      const currentWalletBalance = resolvedTargetWallet ? Math.max(0, resolvedTargetWallet.balance) : 0;
+      if (!resolvedTargetWallet || data.amount > currentWalletBalance) {
         triggerInsufficientBalanceAlert(
-          targetWallet?.id || data.walletId,
+          effectiveWalletId,
           data.amount,
           data.note || (data.type === 'transfer' ? 'Transfer Saldo' : 'Transaksi Pembayaran'),
           currentWalletBalance
@@ -1838,6 +1856,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const generatedId = data.id || `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const newTx: Transaction = {
       ...data,
+      walletId: effectiveWalletId,
       id: generatedId,
       createdAt: now,
       updatedAt: now,

@@ -188,7 +188,10 @@ export function DashboardTab() {
     transactions.forEach((tx) => {
       const d = new Date(tx.date);
       if (isDateInBudgetPeriod(d, budgetPeriod)) {
-        const group = tx.budgetGroup || (tx.categoryId ? catMap.get(tx.categoryId) : undefined);
+        const group =
+          tx.expenseNature === 'savings'
+            ? 'tabungan'
+            : tx.budgetGroup || (tx.categoryId ? catMap.get(tx.categoryId) : undefined);
         if (tx.type === 'expense') {
           if (group === 'kebutuhan') nSpent += tx.amount;
           else if (group === 'keinginan') wSpent += tx.amount;

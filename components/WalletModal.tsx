@@ -26,6 +26,11 @@ function WalletModalForm() {
   const [initialBalance, setInitialBalance] = useState<string>(() =>
     editingWallet ? formatNominalInput(Math.abs(editingWallet.initialBalance)) : '0'
   );
+  const [reservedAmount, setReservedAmount] = useState<string>(() =>
+    editingWallet && editingWallet.reservedAmount
+      ? formatNominalInput(Math.max(0, editingWallet.reservedAmount))
+      : '0'
+  );
   const [color, setColor] = useState(() => editingWallet?.color || '#0F766E');
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -37,6 +42,7 @@ function WalletModalForm() {
 
     const rawNum = parseNominalInput(initialBalance);
     const balanceNum = Math.max(0, rawNum);
+    const reservedNum = isDebtType ? 0 : Math.max(0, parseNominalInput(reservedAmount));
     const selectedOption = WALLET_TYPE_OPTIONS.find((o) => o.type === type);
 
     if (editingWallet) {
@@ -44,6 +50,7 @@ function WalletModalForm() {
         name: name.trim(),
         type,
         initialBalance: balanceNum,
+        reservedAmount: reservedNum,
         color,
         icon: selectedOption?.icon || editingWallet.icon || 'Wallet',
       });
@@ -52,6 +59,7 @@ function WalletModalForm() {
         name: name.trim(),
         type,
         initialBalance: balanceNum,
+        reservedAmount: reservedNum,
         color,
         icon: selectedOption?.icon || 'Wallet',
       });
@@ -142,7 +150,7 @@ function WalletModalForm() {
 
         <div>
           <label className="text-xs font-semibold text-gray-500 block mb-1">
-            {isDebtType ? 'Tagihan Berjalan / Saldo Awal (Rp)' : 'Saldo Awal (Rp)'}
+            {isDebtType ? 'Tagihan Berjalan / Saldo Tagihan (Rp)' : 'Saldo Awal (Rp)'}
           </label>
           <input
             type="text"
@@ -154,10 +162,29 @@ function WalletModalForm() {
           />
           {isDebtType && (
             <p className="text-[11px] text-gray-400 mt-1">
-              Otomatis dicatat sebagai kewajiban / tagihan mendatang.
+              Otomatis masuk ke kolom <b>Tagihan Kredit</b> & tagihan mendatang.
             </p>
           )}
         </div>
+
+        {!isDebtType && (
+          <div>
+            <label className="text-xs font-semibold text-gray-500 block mb-1">
+              Dana Dicadangkan / Ditahan (Rp) <span className="font-normal text-gray-400">(Opsional)</span>
+            </label>
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="0"
+              value={reservedAmount}
+              onChange={(e) => setReservedAmount(formatNominalInput(e.target.value))}
+              className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-bold text-gray-800 dark:text-gray-200 focus:ring-2 focus:ring-teal-500"
+            />
+            <p className="text-[11px] text-gray-400 mt-1">
+              Dana yang disisihkan di dompet ini (otomatis masuk ke kotak <b>Dicadangkan</b> & mengurangi saldo <b>Siap Pakai</b>).
+            </p>
+          </div>
+        )}
 
         <div>
           <label className="text-xs font-semibold text-gray-500 block mb-1.5">Pilihan Warna Label</label>

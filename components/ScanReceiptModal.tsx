@@ -28,6 +28,7 @@ import { useApp } from './AppContext';
 import { formatRupiah } from '@/lib/formatters';
 import { TransactionType } from '@/lib/types';
 import { compressImageForOcr } from '@/lib/imageUtils';
+import { detectExpenseNature } from '@/lib/budgetUtils';
 
 interface ExtractedData {
   amount: number;
@@ -426,11 +427,26 @@ export function ScanReceiptModal() {
       );
       if (!ok) return;
     } else {
+      const chosenCat = categories.find((c) => c.id === selectedCategoryId);
+      const catMap = new Map(categories.map((c) => [c.id, c]));
+      const detectedNature =
+        customType === 'expense'
+          ? detectExpenseNature(selectedCategoryId, customNote, catMap)
+          : undefined;
+      const effectiveBudgetGroup =
+        customType === 'expense'
+          ? detectedNature === 'savings'
+            ? 'tabungan'
+            : chosenCat?.budgetGroup
+          : undefined;
+
       const createdId = addTransaction({
         type: customType,
         amount: finalAmount,
         walletId: selectedWalletId || walletsWithBalance[0]?.id || wallets[0]?.id || '',
         categoryId: selectedCategoryId || null,
+        budgetGroup: effectiveBudgetGroup,
+        expenseNature: detectedNature,
         transferWalletId: null,
         date: dateToUse,
         note: customNote.trim() || undefined,

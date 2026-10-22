@@ -307,134 +307,182 @@ export const TUTORIAL_ARTICLES: TutorialArticle[] = [
     title: 'Langkah Awal Pengguna Baru (Mulai dari Rp 0)',
     badge: 'START HERE',
     category: 'Memulai',
-    summary: 'Urutan 4 langkah mudah mengatur Dompet, Budget 50/30/20, hingga mencatat transaksi pertama.',
+    summary: 'Urutan 4 langkah mudah mengatur Dompet, Budget 50/30/20, tanggal gajian, hingga mencatat transaksi pertama.',
     targetTab: 'wallets',
     targetLabel: 'Buka Menu Dompet',
     steps: [
-      'Buka menu Dompet di navigasi bawah, klik salah satu dompet (misal BCA atau Tunai), lalu klik Edit untuk mengisi Saldo Awal Anda saat ini.',
-      'Buka menu Budget dari Dashboard, lalu isi Estimasi Pemasukan Bulanan Anda (misal gaji/penghasilan bulanan).',
+      'Buka menu Dompet, pilih salah satu dompet (misal BCA atau Tunai), lalu klik Edit untuk mengisi Saldo Awal Anda saat ini.',
+      'Buka menu Atur Budget, isi Estimasi Pemasukan Bulanan serta pilih Tanggal Gajian (siklus awal bulan anggaran Anda).',
       'Tambahkan subkategori pengeluaran rutin di pos Kebutuhan (50%), Keinginan (30%), dan Tabungan (20%).',
-      'Klik tombol (+) hijau di tengah bawah kapan saja untuk mulai mencatat pengeluaran, pemasukan, atau transfer antar dompet.',
+      'Klik tombol (+) di navigasi untuk mulai mencatat pengeluaran, pemasukan, atau transfer antar dompet.',
     ],
-    tips: 'Saat pertama kali login dengan akun Google atau setelah melakukan Reset Data, seluruh angka otomatis dimulai dari Rp 0 agar Anda bisa mencatat keuangan asli dari awal.',
+    tips: 'Saat pertama kali login atau setelah melakukan Reset Data, seluruh angka otomatis dimulai dari Rp 0 agar Anda bisa mencatat keuangan asli dari awal.',
     content: `Selamat datang di Dompt! Agar pencatatan keuangan Anda rapi dan akurat sejak hari pertama, ikuti urutan berikut:
 
-1. Atur Saldo Awal Dompet: Masuk ke tab Dompet (ikon dompet di bawah), pilih rekening/e-wallet yang Anda miliki atau tambah dompet baru, lalu masukkan saldo riil Anda saat ini.
-2. Tetapkan Estimasi Pemasukan: Masuk ke menu Budget, klik ikon pensil pada "Estimasi Pemasukan Bulanan", lalu masukkan target pemasukan Anda bulan ini.
+1. Atur Saldo Awal Dompet: Masuk ke tab Dompet, pilih rekening bank/e-wallet yang Anda miliki atau tambah dompet baru, lalu masukkan saldo riil Anda saat ini.
+2. Tetapkan Estimasi Pemasukan & Tanggal Gajian: Masuk ke menu Budget, klik "Atur Gaji" untuk memasukkan target pemasukan bulanan dan tanggal gajian Anda.
 3. Buat Pos Subkategori: Di halaman Budget, tambahkan rincian pos seperti Makan, Transportasi, Tagihan Listrik, hingga Tabungan.
-4. Catat Transaksi Harian: Gunakan tombol (+) di tengah navigasi bawah atau fitur Scanner Struk AI setiap kali Anda berbelanja.`,
+4. Catat Transaksi Harian: Gunakan tombol (+) atau fitur Scanner Struk AI setiap kali Anda bertransaksi.`,
   },
   {
     id: 'tut-login-sync',
     number: '02',
-    title: 'Login Google, Keamanan Data & Cloud Sync',
+    title: 'Login Google / Email, Keamanan Data & Cloud Sync',
     badge: 'ESSENTIAL',
     category: 'Akun',
-    summary: 'Cara kerja penyimpanan Cloud pribadi per akun Google dan keamanan privasi data Anda.',
+    summary: 'Cara kerja penyimpanan Cloud pribadi per akun (Google atau Email) dan keamanan privasi data Anda.',
     targetTab: 'settings',
     targetLabel: 'Buka Pengaturan Akun',
     steps: [
       'Klik tombol "Masuk" di pojok kanan atas aplikasi atau melalui menu Pengaturan.',
-      'Pilih akun Google Anda melalui jendela resmi Google Sign-In.',
-      'Data keuangan Anda langsung tersimpan secara terpisah dan terenkripsi di Cloud Firestore khusus untuk akun Anda.',
-      'Anda dapat login dari HP maupun laptop dan data akan tersinkronisasi secara real-time.',
+      'Pilih masuk dengan Akun Google atau daftar/masuk menggunakan alamat Email & Password.',
+      'Data keuangan Anda langsung tersimpan secara terpisah di Cloud Firestore khusus untuk akun Anda.',
+      'Anda dapat login dari HP maupun laptop dan seluruh dompet, budget, serta transaksi akan tersinkronisasi otomatis.',
     ],
-    tips: 'Aplikasi hanya membaca nama, email, dan foto profil publik Google Anda sebagai identitas akun. Kata sandi Google Anda 100% aman di server Google.',
-    content: `Dompt mendukung mode Multi-User dengan Google Authentication:
+    tips: 'Setiap akun memiliki ruang penyimpanan yang terisolasi sehingga data antar pengguna tidak akan pernah tercampur.',
+    content: `Dompt mendukung mode Multi-User dengan sinkronisasi Cloud:
 
 • Tanpa Login (Mode Tamu / Demo): Data disimpan di memori browser perangkat (LocalStorage) dan menampilkan contoh simulasi agar Anda bisa mencoba fitur.
-• Setelah Login Google: Anda mendapatkan ruang penyimpanan Cloud pribadi yang terisolasi. Pengguna baru otomatis dimulai dengan saldo Rp 0 (bersih tanpa data contoh).
+• Setelah Login (Google / Email): Anda mendapatkan ruang penyimpanan Cloud pribadi. Pengguna baru otomatis dimulai dengan saldo Rp 0 (bersih tanpa data contoh).
 • Privasi Terjamin: Pengguna lain tidak dapat melihat dompet, transaksi, maupun target tabungan Anda.`,
   },
   {
     id: 'tut-home',
     number: '03',
-    title: 'Membaca Dashboard & Kalender Aktivitas',
+    title: 'Membaca Dashboard, Limit Harian & Kalender Aktivitas',
     badge: 'PANDUAN',
     category: 'Home',
-    summary: 'Memahami sisa budget harian, progres 50/30/20, kalender pengeluaran, dan tagihan mendatang.',
+    summary: 'Memahami batas aman belanja harian, progres 50/30/20, kalender pengeluaran, dan tagihan mendatang.',
     targetTab: 'dashboard',
     targetLabel: 'Lihat Dashboard',
     steps: [
-      'Kartu "Sekilas Hari Ini" menampilkan sisa jatah uang harian Anda agar pengeluaran bulanan tidak bocor.',
-      'Klik ikon Gembok/Mata di kartu utama untuk menyembunyikan atau menampilkan nominal rupiah (Privasi Saldo).',
+      'Kartu utama menampilkan Total Saldo Aktif serta batas aman pengeluaran harian (Safe-to-Spend) hingga tanggal gajian berikutnya.',
+      'Klik ikon Mata di kartu utama untuk menyembunyikan atau menampilkan nominal rupiah (Mode Privasi Saldo).',
       'Lihat "Progres Pengeluaran" untuk memantau persentase pemakaian pos Kebutuhan, Keinginan, dan Tabungan.',
-      'Cek "Aktivitas Kalender" untuk melihat tanggal berapa saja Anda paling sering mengeluarkan uang.',
+      'Cek "Kalender Aktivitas" dan "Tagihan Mendatang" untuk memantau tanggal pengeluaran terbesar serta jadwal jatuh tempo.',
     ],
-    tips: 'Daftar "Tagihan Mendatang" di bagian bawah Dashboard otomatis muncul jika Anda memiliki saldo negatif di dompet Kredit/Paylater atau mengatur tanggal jatuh tempo di subkategori Budget.',
+    tips: 'Daftar "Tagihan Mendatang" otomatis muncul dari tagihan Kartu Kredit/Paylater, Langganan aktif, Cicilan Utang, maupun subkategori Budget yang memiliki tanggal jatuh tempo.',
     content: `Dashboard dirancang sebagai pusat kendali harian Anda:
 
-• Sekilas Hari Ini: Menghitung otomatis berapa rupiah yang aman dibelanjakan hari ini berdasarkan sisa budget bulanan dibagi sisa hari di bulan berjalan.
-• Dana Darurat (Runway): Menghitung berapa bulan Anda bisa bertahan hidup dari saldo kas/tabungan likuid jika tidak ada pemasukan.
-• Tagihan Mendatang: Pengingat otomatis untuk cicilan kartu kredit, paylater, maupun tagihan bulanan rutin.`,
+• Jatah Belanja Harian (Safe-to-Spend): Menghitung otomatis berapa rupiah yang aman dibelanjakan hari ini dari sisa Pos Pengeluaran Harian dibagi sisa hari menuju gajian berikutnya.
+• Ketahanan Dana Darurat (Runway): Menghitung berapa bulan Anda bisa bertahan hidup dari saldo kas likuid saat ini.
+• Tagihan Mendatang: Pengingat otomatis untuk cicilan kartu kredit, paylater, utang, maupun tagihan rutin bulanan.`,
   },
   {
     id: 'tut-dompet',
     number: '04',
-    title: 'Mengelola Dompet, E-Wallet & Kartu Kredit',
+    title: 'Mengelola Dompet, E-Wallet & Verifikasi Saldo',
     badge: 'DOMPET',
     category: 'Dompet',
-    summary: 'Cara menambah rekening bank, e-wallet, verifikasi saldo fisik, dan mencatat limit kredit/paylater.',
+    summary: 'Cara menambah rekening bank, e-wallet, tabungan, investasi (RDN), dan mencocokkan saldo fisik.',
     targetTab: 'wallets',
     targetLabel: 'Kelola Dompet',
     steps: [
-      'Buka tab Dompet di navigasi bawah, lalu klik tombol (+) di pojok kanan atas untuk membuat dompet baru.',
-      'Pilih tipe dompet: Bank, E-Wallet, Tunai, Investasi (RDN), Kartu Kredit, atau Paylater.',
-      'Klik kartu dompet untuk melihat rincian Saldo Bebas Pakai vs Dana Cadangan (yang terikat ke Goals).',
-      'Klik tombol "Verifikasi Saldo" setelah Anda mencocokkan saldo aplikasi dengan mutasi m-banking asli.',
+      'Buka menu Dompet, lalu klik tombol "+ Tambah Dompet" di pojok kanan atas untuk membuat dompet baru.',
+      'Pilih tipe dompet: Bank, E-Wallet, Tunai, Tabungan, Investasi (RDN), Kartu Kredit, atau Paylater.',
+      'Lihat ringkasan Total Saldo Aktif, Bebas Pakai, Dicadangkan, dan Tagihan Kredit pada kartu utama Dompet.',
+      'Gunakan fitur Edit pada kartu dompet jika Anda ingin menyesuaikan informasi atau mencocokkan saldo dengan mutasi bank asli.',
     ],
-    tips: 'Untuk Kartu Kredit atau Paylater yang sedang terpakai (utang berjalan), masukkan nilai negatif atau catat pengeluaran menggunakan dompet tersebut agar kewajiban dihitung akurat.',
+    tips: 'Pisahkan dompet operasional harian (misal e-wallet/bank utama) dengan dompet khusus Tabungan agar uang belanja tidak tercampur.',
     content: `Di menu Dompet & Rekening:
 
-• Saldo Bebas Pakai vs Dicadangkan: Jika Anda menautkan Goal (misal Dana Darurat) ke dompet BCA, aplikasi akan memisahkan mana uang yang benar-benar bebas dipakai dan mana yang sedang dikunci untuk tabungan.
-• Edit & Hapus Dompet: Buka detail dompet lalu klik tombol "Edit" untuk mengubah nama, tipe, warna kartu, atau memperbarui Saldo Awal.`,
+• Multi-Tipe Dompet: Mendukung rekening bank, dompet digital (Gopay, OVO, Dana, ShopeePay), uang tunai, rekening dana nasabah (RDN), hingga kartu kredit.
+• Ringkasan Transparan: Setiap kartu dompet menampilkan pemasukan dan pengeluaran bulan berjalan serta jumlah transaksi yang tercatat pada dompet tersebut.`,
+  },
+  {
+    id: 'tut-dicadangkan-kredit',
+    number: '05',
+    title: 'Cara Mengisi Dana Dicadangkan & Tagihan Kredit',
+    badge: 'FITUR BARU',
+    category: 'Dompet',
+    summary: 'Panduan lengkap mengunci saldo "Dicadangkan" agar tidak terpakai dan mencatat "Tagihan Kredit".',
+    targetTab: 'wallets',
+    targetLabel: 'Buka Menu Dompet',
+    steps: [
+      'Cara 1 Isi "Dicadangkan" (Otomatis lewat Goals): Buka menu Target Tabungan (Goals), buat Goal dan pilih dompet penyimpanannya. Saldo Goal otomatis menjadi dana Dicadangkan di dompet tersebut.',
+      'Cara 2 Isi "Dicadangkan" (Manual di Dompet): Buka menu Dompet, klik Edit pada dompet, lalu isi kolom "Nominal Dicadangkan / Dikunci (Opsional)".',
+      'Cara 1 Isi "Tagihan Kredit": Buat atau edit dompet bertipe "Kartu Kredit" atau "Paylater", lalu masukkan nominal tagihan berjalan atau catat pengeluaran memakai dompet tersebut.',
+      'Cara 2 Isi "Tagihan Kredit" (Lewat Menu Utang): Buka menu Utang & Piutang, lalu tambahkan catatan pada tab "Utang Saya".',
+    ],
+    tips: 'Dana yang masuk ke "Dicadangkan" otomatis mengurangi angka "Bebas Pakai", sehingga Anda tahu persis berapa sisa uang yang benar-benar aman untuk dibelanjakan.',
+    content: `Pada kartu utama menu Dompet terdapat dua indikator penting:
+
+1. DICADANGKAN (Dana Dikunci / Disisihkan):
+Berfungsi memisahkan uang tabungan atau dana darurat yang masih berada di dalam rekening bank yang sama agar tidak sengaja terpakai. Jumlahnya adalah gabungan dari saldo Goals di dompet tersebut ditambah nominal cadangan manual yang Anda atur di pengaturan dompet.
+
+2. TAGIHAN KREDIT (Kewajiban Berjalan):
+Menampilkan total tagihan terpakai dari dompet bertipe Kartu Kredit & Paylater, serta selaras dengan catatan kewajiban di menu Utang.`,
+  },
+  {
+    id: 'tut-anti-minus',
+    number: '06',
+    title: 'Proteksi Saldo Anti-Minus & Peringatan Saldo Kurang',
+    badge: 'FITUR BARU',
+    category: 'Dompet',
+    summary: 'Simulasi proteksi pembayaran otomatis ketika saldo dompet tidak mencukupi nominal transaksi.',
+    targetTab: 'wallets',
+    targetLabel: 'Cek Saldo Dompet',
+    steps: [
+      'Setiap kali Anda mencatat pengeluaran, transfer, bayar langganan, setor ke Goals, atau bayar cicilan utang, sistem otomatis mengecek saldo dompet yang dipilih.',
+      'Jika saldo dompet lebih kecil dari nominal pembayaran, transaksi akan ditahan agar saldo dompet tidak menjadi minus.',
+      'Layar akan menampilkan pop-up "Peringatan Saldo Tidak Cukup" berisi rincian saldo saat ini, nominal pembayaran, dan selisih kekurangannya.',
+      'Pilih tombol "Top Up / Tambah Pemasukan" untuk mengisi saldo dompet terlebih dahulu, atau "Pindah / Kelola Dompet Lain" untuk memakai dompet lain yang saldonya cukup.',
+    ],
+    tips: 'Proteksi ini memastikan catatan saldo di aplikasi selalu realistis sesuai uang riil yang Anda miliki tanpa ada saldo minus yang membingungkan.',
+    content: `Dompt dilengkapi sistem validasi saldo real-time (Anti-Minus Protection) di seluruh titik pembayaran:
+
+• Transaksi Pengeluaran & Edit Transaksi
+• Transfer Saldo Antar Dompet
+• Scan Struk Belanja AI
+• Pembayaran Tagihan Berulang / Langganan
+• Setor Saldo ke Target Tabungan (Goals)
+• Pembayaran Cicilan Utang`,
   },
   {
     id: 'tut-budget',
-    number: '05',
-    title: 'Atur Budget 50/30/20 & Subkategori',
-    badge: 'FINANSIAL',
+    number: '07',
+    title: 'Atur Budget 50/30/20, Siklus Gajian & Pos Harian/Tagihan',
+    badge: 'DIPERBARUI',
     category: 'Budget',
-    summary: 'Membagi penghasilan ke pos Kebutuhan (50%), Keinginan (30%), dan Tabungan (20%).',
+    summary: 'Mengatur siklus tanggal gajian serta memisahkan Pos Tagihan Bulanan (Fixed) dan Pos Pengeluaran Harian.',
     targetTab: 'budget',
     targetLabel: 'Atur Budget Sekarang',
     steps: [
-      'Buka menu Budget, lalu klik ikon Edit pada kartu "Estimasi Pemasukan Bulanan" untuk mengisi penghasilan Anda.',
-      'Pilih rumus alokasi otomatis (50/30/20, 60/20/20, atau 70/20/10) sesuai gaya hidup Anda.',
-      'Klik tombol "+ Subkategori" pada masing-masing grup untuk merinci anggaran (contoh: Makan Rp 1.500.000, Kost Rp 1.200.000).',
-      'Isi "Tanggal Jatuh Tempo" (opsional) jika subkategori tersebut adalah tagihan bulanan seperti WiFi atau Listrik.',
+      'Buka menu Atur Budget, klik "Atur Gaji" di kartu utama untuk mengisi Estimasi Pemasukan dan Tanggal Gajian (misal tanggal 25).',
+      'Klik baris menu ringkas "Pos Tagihan Bulanan (Fixed)" atau "Pos Pengeluaran Harian (Operasional)" di kartu utama untuk membuka rinciannya.',
+      'Pilih rumus alokasi otomatis (50/30/20, 60/20/20, atau 70/20/10) dan tambahkan subkategori di masing-masing pos.',
+      'Isi "Tanggal Jatuh Tempo" pada subkategori tagihan wajib agar otomatis dihitung dalam Pos Tagihan Bulanan (Fixed).',
     ],
-    tips: 'Anda bisa mengedit nominal subkategori kapan saja dengan menekan ikon pensil di samping nama subkategori.',
-    content: `Metode 50/30/20 membantu Anda mengatur gaji tanpa stres:
+    tips: 'Menu Pos Tagihan Bulanan dan Pos Pengeluaran Harian disembunyikan secara ringkas agar tampilan bersih—cukup klik judul posnya kapan saja untuk membuka detailnya!',
+    content: `Keunggulan sistem Budget di Dompt:
 
-• 50% Kebutuhan (Needs): Pengeluaran wajib seperti makan pokok, sewa tempat tinggal, listrik, kuota, dan transportasi kerja.
-• 30% Keinginan (Wants): Pengeluaran gaya hidup seperti kopi, nongkrong, langganan streaming, hobi, dan belanja online.
-• 20% Tabungan (Savings): Alokasi masa depan untuk dana darurat, investasi, dan pembayaran pokok utang.`,
+• Siklus Tanggal Gajian (Payday Cycle): Jika Anda gajian setiap tanggal 25, siklus anggaran otomatis dihitung dari 25 bulan ini hingga 24 bulan depan.
+• Pemisahan Tagihan Tetap vs Belanja Harian: Pembayaran tagihan besar (seperti Kost, Listrik, Cicilan) masuk ke Pos Tagihan Bulanan (Fixed) sehingga tidak merusak kuota makan/jajan harian Anda di Pos Pengeluaran Harian.`,
   },
   {
     id: 'tut-transaksi-ai',
-    number: '06',
-    title: 'Catat Transaksi, Transfer & Paste Screenshot',
-    badge: 'TRANSAKSI',
+    number: '08',
+    title: 'Catat Transaksi, Sifat Pengeluaran Otomatis & Paste Struk',
+    badge: 'DIPERBARUI',
     category: 'AI & Transaksi',
-    summary: 'Cara mencatat pengeluaran, pemasukan, pindah dana antar dompet, dan deteksi gambar dari clipboard.',
+    summary: 'Otomatisasi sifat pengeluaran (Harian, Tagihan Bulanan, Alokasi Tabungan) dan deteksi gambar clipboard.',
     targetTab: 'transactions',
     targetLabel: 'Lihat Riwayat Transaksi',
     steps: [
-      'Tekan tombol (+) besar di tengah navigasi bawah untuk membuka form transaksi cepat.',
-      'Pilih tipe transaksi: Pengeluaran, Pemasukan, atau Transfer (pindah saldo antar dompet).',
-      'Gunakan kolom pencarian dan filter (Dompet, Tipe, Subkategori) di tab Transaksi untuk melacak pengeluaran masa lalu.',
-      'Klik salah satu baris transaksi untuk melihat detail lengkap, mengubah (Ubah), atau menghapusnya (Hapus).',
+      'Tekan tombol (+) untuk membuka form transaksi, lalu pilih Pengeluaran, Pemasukan, atau Transfer.',
+      'Pilih Kategori: Sistem otomatis menyesuaikan "Sifat Pengeluaran" (misal pilih kategori Tabungan/Investasi otomatis berpindah ke "Alokasi Tabungan").',
+      'Pilih kategori Listrik/BPJS/Kuota/Tagihan untuk otomatis masuk ke "Tagihan Bulanan", atau Makan/Jajan untuk "Pengeluaran Harian".',
+      'Gunakan pencarian dan filter di tab Riwayat Transaksi untuk mengecek, mengedit, atau menghapus transaksi.',
     ],
-    tips: 'Fitur Pintar: Jika Anda menyalin (Copy) gambar bukti transfer atau struk di perangkat Anda lalu menekan Ctrl+V / Paste di dalam aplikasi, pemindai AI akan otomatis terbuka!',
-    content: `Semua transaksi yang Anda catat otomatis memperbarui:
-1. Saldo dompet terkait secara real-time.
-2. Sisa kuota budget harian dan progres 50/30/20 di bulan aktif.
-3. Grafik analitik dan laporan arus kas bulanan.`,
+    tips: 'Ketika Anda mencatat pengeluaran berkategori Tabungan atau Investasi, sistem otomatis menandainya sebagai Alokasi Tabungan sehingga jatah belanja harian Anda tidak terpotong!',
+    content: `Semua transaksi yang Anda catat bekerja secara cerdas:
+1. Memastikan saldo dompet mencukupi sebelum transaksi disimpan.
+2. Mengelompokkan transaksi ke Pos Harian, Pos Tagihan Bulanan, atau Pos Tabungan secara otomatis sesuai kategori.
+3. Mendukung fitur Paste (Ctrl+V) gambar bukti transfer/struk langsung dari clipboard perangkat Anda.`,
   },
   {
     id: 'tut-scanner',
-    number: '07',
+    number: '09',
     title: 'Scan Struk Belanja Otomatis dengan AI',
     badge: 'AI FITUR',
     category: 'AI & Transaksi',
@@ -442,17 +490,35 @@ export const TUTORIAL_ARTICLES: TutorialArticle[] = [
     targetTab: 'scanner',
     targetLabel: 'Coba Scanner Struk AI',
     steps: [
-      'Klik menu "Scanner" di halaman Dashboard atau tombol "Scan Struk dengan AI" di dalam form tambah transaksi.',
-      'Pilih foto struk belanjaan dari galeri HP/laptop atau ambil foto langsung.',
-      'Tunggu beberapa detik hingga AI membaca nama toko/merchant, tanggal, daftar barang, dan total nominal.',
-      'Periksa hasilnya, pilih dompet pembayaran, lalu klik Simpan Transaksi.',
+      'Klik tombol "Scan Struk" di Dashboard atau di dalam form tambah transaksi.',
+      'Pilih foto struk belanjaan dari galeri HP/laptop atau tempel (Paste) screenshot bukti bayar.',
+      'AI otomatis membaca nama toko/merchant, tanggal, total nominal, serta menyarankan kategori yang paling tepat.',
+      'Periksa hasilnya, pastikan dompet pembayaran memiliki saldo cukup, lalu klik Simpan Transaksi.',
     ],
-    tips: 'Setiap pemindaian struk atau konsultasi AI menggunakan 1 AI Credit. Anda dapat melakukan Top Up AI Credits secara gratis kapan saja di menu Pengaturan.',
-    content: `Tidak perlu lagi mengetik satu per satu sehabis belanja bulanan! Teknologi Vision AI di Dompt mampu mengenali struk fisik (Indomaret, Alfamart, supermarket, restoran) maupun tangkapan layar bukti pembayaran digital (QRIS, m-banking, e-wallet).`,
+    tips: 'Setiap pemindaian struk menggunakan 1 AI Credit. Anda dapat melakukan Top Up AI Credits secara gratis kapan saja di menu Pengaturan.',
+    content: `Tidak perlu lagi mengetik satu per satu sehabis belanja! Teknologi Vision AI di Dompt mampu mengenali struk fisik (minimarket, supermarket, restoran) maupun tangkapan layar bukti pembayaran digital (QRIS, m-banking, e-wallet).`,
+  },
+  {
+    id: 'tut-subscriptions',
+    number: '10',
+    title: 'Langganan & Tagihan Berulang Otomatis',
+    badge: 'TAGIHAN',
+    category: 'AI & Transaksi',
+    summary: 'Kelola tagihan bulanan (Netflix, Spotify, WiFi, Listrik, Kost) dan jadwal Gaji dengan pencatatan 1 klik.',
+    targetTab: 'subscriptions',
+    targetLabel: 'Buka Menu Langganan',
+    steps: [
+      'Buka menu "Langganan" dari navigasi atau Dashboard, lalu klik tombol (+) untuk menambah jadwal baru.',
+      'Pilih template cepat (Netflix, Spotify, WiFi, Listrik PLN, Kost, Gaji) atau ketik manual beserta tanggal jatuh temponya (1–31).',
+      'Pantau total beban langganan per bulan dan estimasi biaya per tahun agar tidak ada biaya tersembunyi.',
+      'Klik tombol "Bayar & Catat" (atau "Terima & Catat" untuk gaji) agar transaksi langsung tercatat ke dompet dan budget Anda.',
+    ],
+    tips: 'Saat menekan "Bayar & Catat", sistem juga otomatis mengecek kecukupan saldo dompet yang terhubung.',
+    content: `Fitur Langganan & Transaksi Berulang terhubung langsung dengan subkategori Budget dan daftar Tagihan Mendatang di Dashboard, sehingga Anda tidak pernah terlewat membayar tagihan rutin.`,
   },
   {
     id: 'tut-goals',
-    number: '08',
+    number: '11',
     title: 'Target Tabungan (Goals) & Kunci Dana Darurat',
     badge: 'GOALS',
     category: 'Kekayaan',
@@ -460,120 +526,123 @@ export const TUTORIAL_ARTICLES: TutorialArticle[] = [
     targetTab: 'goals',
     targetLabel: 'Buka Menu Goals',
     steps: [
-      'Buka menu Goals dari Dashboard, lalu klik tombol (+) di pojok kanan atas.',
-      'Masukkan nama target (misal: Dana Darurat, Liburan, Beli Laptop), pilih emoji, target nominal, dan dompet tempat menyimpan uangnya.',
-      'Klik kartu Goal untuk membuka rincian, lalu gunakan kolom "Update Saldo Tabungan" untuk menambah (+ Tambah Saldo) atau menarik (- Tarik Saldo).',
+      'Buka menu Target Tabungan (Goals), lalu klik tombol (+) untuk membuat target baru.',
+      'Masukkan nama target (misal: Dana Darurat, Liburan, Beli Laptop), target nominal, tanggal tercapai, dan dompet tempat menyimpan uangnya.',
+      'Klik kartu Goal untuk menambah saldo (+ Tambah Saldo) atau menarik saldo (- Tarik Saldo).',
       'Aktifkan tombol "Lock" pada Dana Darurat agar saldo tabungan terkunci dan tidak bisa ditarik sembarangan.',
     ],
-    tips: 'Centang opsi "Dana Darurat" saat membuat Goal agar sistem menandainya dengan perisai khusus.',
-    content: `Fitur Goals membantu Anda memisahkan uang tabungan dari uang jajan meskipun berada di rekening bank yang sama. Sistem juga otomatis menghitung berapa rupiah yang perlu Anda sisihkan setiap bulan hingga tanggal target tercapai.`,
+    tips: 'Saat Anda menambah saldo ke Goal, sistem otomatis memastikan saldo bebas pakai di dompet yang terhubung mencukupi.',
+    content: `Fitur Goals membantu Anda memisahkan uang tabungan dari uang belanja harian meskipun disimpan di rekening bank yang sama. Saldo yang terkumpul di Goal otomatis tercatat sebagai dana "Dicadangkan" pada dompet tersebut.`,
+  },
+  {
+    id: 'tut-debt-installment',
+    number: '12',
+    title: 'Utang, Skema Cicilan Otomatis & Piutang',
+    badge: 'DIPERBARUI',
+    category: 'Kekayaan',
+    summary: 'Kelola Utang Saya (termasuk cicilan bulanan yang terhubung ke Budget) serta tagih Piutang teman.',
+    targetTab: 'debt',
+    targetLabel: 'Buka Menu Utang',
+    steps: [
+      'Buka menu Utang & Piutang, pilih tab "Utang Saya" (kewajiban kita) atau "Piutang" (uang kita yang dipinjam orang).',
+      'Saat menambah Utang, aktifkan opsi "Skema Cicilan Bulanan" jika pembayaran dicicil per bulan (isi tenor, cicilan/bulan, dan tanggal jatuh tempo).',
+      'Cicilan bulanan aktif akan otomatis dibuatkan pos di Budget Kebutuhan (Tagihan Bulanan) dan muncul di pengingat Tagihan Mendatang.',
+      'Klik tombol "Bayar Cicilan" dan pilih dompet pembayaran untuk langsung memotong sisa utang sekaligus mencatat pengeluaran di dompet.',
+    ],
+    tips: 'Jika Anda menghapus transaksi pembayaran cicilan di Riwayat Transaksi, sisa pokok utang akan otomatis dikembalikan secara akurat.',
+    content: `Manajemen Utang & Piutang di Dompt terintegrasi penuh dengan Arus Kas:
+• Pembayaran Utang Saya otomatis memotong saldo dompet dan tercatat sebagai pengeluaran Tagihan Bulanan.
+• Penerimaan pelunasan Piutang otomatis menambah saldo dompet yang Anda pilih.`,
   },
   {
     id: 'tut-assets-wealth',
-    number: '09',
-    title: 'Aset, Utang & Portofolio Investasi',
+    number: '13',
+    title: 'Aset Likuid, Aset Tetap & Portofolio Investasi',
     badge: 'KEKAYAAN',
     category: 'Kekayaan',
-    summary: 'Pantau Total Kekayaan Bersih (Net Worth), catat pelunasan utang, dan kelola hasil investasi.',
+    summary: 'Pantau Total Kekayaan Bersih (Net Worth), piramida level kekayaan, dan kelola hasil investasi.',
     targetTab: 'assets',
     targetLabel: 'Buka Menu Aset',
     steps: [
-      'Di menu Aset: Catat Aset Likuid (deposito, tabungan emas cair) dan Aset Tetap (kendaraan, properti, gadget) untuk melihat Total Kekayaan Bersih & Level Finansial Anda.',
-      'Di menu Utang: Catat pinjaman atau cicilan berjalan beserta tanggal jatuh temponya, lalu klik "Tandai Lunas" saat sudah dibayar.',
+      'Di menu Aset: Catat Aset Likuid tambahan (deposito, emas cair) dan Aset Tetap (kendaraan, properti, gadget) untuk menghitung Total Kekayaan Bersih (Net Worth).',
+      'Pantau perkembangan Level Finansial Anda berdasarkan akumulasi aset bersih setelah dikurangi total utang.',
       'Di menu Investasi: Tambahkan portofolio Saham, Reksadana, Emas, atau Crypto beserta persentase imbal hasilnya (return).',
     ],
-    tips: 'Level Kekayaan Anda di menu Aset akan naik secara otomatis dari "Mulai Mencatat" hingga "Merdeka Finansial" seiring bertambahnya saldo dompet dan nilai aset Anda.',
-    content: `Keuangan yang sehat bukan hanya soal mencatat pengeluaran harian, tetapi juga memastikan nilai Aset dan Investasi Anda bertumbuh lebih besar daripada total kewajiban Utang.`,
+    tips: 'Aset Likuid yang Anda catat di menu Aset juga ikut memperkuat perhitungan Ketahanan Dana Darurat (Runway) Anda.',
+    content: `Keuangan yang sehat bukan hanya soal mencatat pengeluaran harian, tetapi juga memastikan nilai Aset Bersih (Net Worth) dan Investasi Anda terus bertumbuh dari waktu ke waktu.`,
+  },
+  {
+    id: 'tut-analytics-score',
+    number: '14',
+    title: 'Membaca Menu Analisis & Skor Keuangan (0–100)',
+    badge: 'DIPERBARUI',
+    category: 'AI & Transaksi',
+    summary: 'Cara mudah memahami Skor Kesehatan Finansial, perbandingan Rupiah 4 Pilar, dan langkah menaikkan skor.',
+    targetTab: 'analytics',
+    targetLabel: 'Buka Analisis & Skor',
+    steps: [
+      'Buka menu "Analisis & Skor": Kartu utama menampilkan Skor Kesehatan Finansial (0–100), Panduan Arti Skor, serta 4 Angka Kunci (Kas Likuid, Pemasukan, Pengeluaran, dan Ditabung).',
+      'Periksa "Rincian 4 Pilar Penentu Skor": Bandingkan langsung angka Kondisi Saat Ini (dalam Rupiah & %) dengan Target Idealnya.',
+      'Lihat kartu "Cara Menaikkan Skor Anda": Sistem mengurutkan langkah perbaikan dari potensi tambahan poin terbesar (misal +28 Poin).',
+      'Pantau "Porsi Pengeluaran per Kategori" dan "Pola Pengeluaran Harian" untuk melihat kategori paling boros serta jumlah hari hemat (No-Spend Day).',
+    ],
+    tips: 'Gunakan tab filter di bagian atas ("Semua Ringkasan", "Skor & 4 Pilar", atau "Pengeluaran & Tren") untuk fokus pada tampilan yang ingin Anda evaluasi.',
+    content: `Skor Kesehatan Keuangan (0–100 Poin) dihitung secara transparan dari 4 Pilar:
+1. Rasio Menabung (Maks 30 Poin) — Ideal minimal 20% dari pemasukan.
+2. Ketahanan Dana Darurat (Maks 25 Poin) — Ideal kas likuid cukup untuk 3–6 bulan biaya hidup.
+3. Kedisiplinan Budget Bulanan (Maks 25 Poin) — Ideal pengeluaran terjaga ≤ 85% kuota budget.
+4. Kesehatan Beban Utang (Maks 20 Poin) — Ideal total utang/kredit di bawah 20% aset likuid.`,
   },
   {
     id: 'tut-ai-reports',
-    number: '10',
-    title: 'AI Financial Advisor & Ekspor Laporan CSV',
+    number: '15',
+    title: 'Konsultasi AI Financial Advisor & Ekspor CSV',
     badge: 'ANALITIK',
     category: 'AI & Transaksi',
-    summary: 'Konsultasi keuangan interaktif dengan AI dan unduh laporan keuangan bulanan ke Excel/CSV.',
+    summary: 'Diskusi strategi keuangan personal dengan AI Advisor dan unduh laporan transaksi ke Excel/CSV.',
     targetTab: 'ai-advisor',
     targetLabel: 'Tanya AI Advisor',
     steps: [
-      'Buka menu "AI Advisor" dari Dashboard untuk berdiskusi langsung mengenai kondisi keuangan Anda.',
-      'Gunakan tombol pertanyaan cepat atau ketik pertanyaan spesifik (misal: "Bagaimana cara melunasi utang saya lebih cepat?" atau "Evaluasi budget saya bulan ini").',
-      'Buka menu "Laporan" untuk melihat rasio Tabungan (Savings Rate), distribusi pengeluaran per kategori, dan klik "Unduh CSV" untuk membuka data di Excel/Google Sheets.',
+      'Buka menu "AI Advisor" untuk berdiskusi langsung mengenai strategi tabungan, budget, atau pelunasan utang Anda.',
+      'Gunakan tombol pertanyaan cepat atau ketik pertanyaan spesifik sesuai kondisi keuangan Anda bulan ini.',
+      'Klik tombol "Unduh CSV" di menu Analisis & Skor atau Pengaturan untuk mengekspor seluruh transaksi ke Excel / Google Sheets.',
     ],
-    tips: 'AI Advisor menganalisis konteks saldo dompet, pemasukan, pengeluaran, dan budget Anda secara langsung sehingga sarannya dipersonalisasi khusus untuk Anda.',
-    content: `Gunakan kombinasi AI Advisor dan menu Laporan setiap akhir bulan untuk melakukan evaluasi keuangan (Monthly Financial Review) agar tabungan bulan berikutnya semakin optimal.`,
+    tips: 'AI Advisor memahami konteks saldo dompet, estimasi pemasukan, pengeluaran, dan skor kesehatan keuangan Anda sehingga sarannya relevan dan langsung bisa dipraktikkan.',
+    content: `Kombinasikan evaluasi di menu Analisis & Skor dengan konsultasi bersama Dompt AI Advisor setiap akhir periode gajian agar rencana keuangan bulan berikutnya semakin matang.`,
   },
   {
     id: 'tut-security-reset',
-    number: '11',
-    title: 'Kunci PIN, Tema Tampilan & Reset Data ke 0',
-    badge: 'PENGATURAN',
+    number: '16',
+    title: 'Kunci PIN, 3 Warna Tema Dinamis & Reset Data ke 0',
+    badge: 'DIPERBARUI',
     category: 'Akun',
-    summary: 'Cara mengunci aplikasi dengan PIN 4 digit, mengganti mode gelap/terang, dan mereset seluruh data.',
+    summary: 'Mengunci aplikasi dengan PIN, mengganti warna aksen (Lime, Pink, Orange) beserta logo dinamis, dan reset data.',
     targetTab: 'settings',
     targetLabel: 'Buka Pengaturan',
     steps: [
-      'Buka tab Pengaturan (ikon profil di pojok kanan bawah).',
-      'Pilih Mode Terang / Mode Gelap dan Warna Aksen (Lime Green atau Soft Coral Pink) sesuai selera Anda.',
-      'Pada kartu "Keamanan & PIN", klik "Aktifkan Kunci PIN" dan masukkan 4 digit angka untuk melindungi privasi aplikasi.',
-      'Pada kartu "Data & Ekspor", klik "Reset Semua Data Aplikasi" jika Anda ingin menghapus seluruh catatan dan memulai ulang semua saldo dari Rp 0.',
+      'Buka menu Pengaturan untuk menyesuaikan tampilan Mode Terang / Mode Gelap / Mengikuti Sistem.',
+      'Pilih Warna Aksen favorit Anda: Lime Green, Soft Coral Pink, atau Vibrant Sunset Orange (warna aksen dan logo D dompet akan otomatis menyesuaikan tema).',
+      'Pada bagian "Keamanan & PIN", aktifkan Kunci PIN untuk melindungi privasi aplikasi saat dibuka.',
+      'Pada bagian "Data & Ekspor", klik "Reset Semua Data Aplikasi" jika ingin menghapus seluruh catatan dan memulai ulang dari Rp 0.',
     ],
-    tips: 'Jika Anda sedang login dengan akun Google, fitur Reset Data akan membersihkan data di Cloud Firestore Anda sekaligus mengembalikan semua saldo dompet ke Rp 0.',
-    content: `Menu Pengaturan memberikan kendali penuh atas profil, mata uang, keamanan PIN aplikasi, kuota AI Credits, pencadangan CSV, hingga penghapusan/reset seluruh data akun.`,
+    tips: 'Ikon tab browser (favicon) dan logo aplikasi di pojok kiri atas otomatis berubah mengikuti warna aksen tema yang Anda pilih!',
+    content: `Menu Pengaturan memberikan kendali penuh atas profil akun, tema visual, keamanan PIN aplikasi, kuota AI Credits, pencadangan CSV, hingga reset seluruh data.`,
   },
   {
     id: 'tut-install',
-    number: '12',
+    number: '17',
     title: 'Cara Install Aplikasi ke Layar Utama HP (PWA)',
     badge: 'TIPS HP',
     category: 'Memulai',
     summary: 'Pasang ikon Dompt di layar utama Android atau iPhone tanpa perlu download lewat toko aplikasi.',
     steps: [
       'Buka aplikasi Dompt menggunakan Google Chrome (di Android) atau Safari (di iPhone/iPad).',
-      'Di Android: Ketuk ikon titik tiga di pojok kanan atas Chrome, lalu pilih "Tambahkan ke Layar Utama" (Add to Home Screen) atau "Install Aplikasi".',
-      'Di iPhone: Ketuk tombol Share (ikon kotak dengan panah ke atas) di bagian bawah Safari, lalu pilih "Add to Home Screen".',
-      'Sekarang aplikasi dapat dibuka layar penuh (full-screen) layaknya aplikasi native!',
+      'Di Android: Ketuk ikon titik tiga di pojok kanan atas Chrome, lalu pilih "Tambahkan ke Layar Utama" atau "Install Aplikasi".',
+      'Di iPhone: Ketuk tombol Share di bagian bawah Safari, lalu pilih "Add to Home Screen".',
+      'Sekarang aplikasi dapat dibuka layar penuh (full-screen) dengan cepat layaknya aplikasi native!',
     ],
-    tips: 'Dengan menginstall ke layar utama, akses mencatat transaksi harian menjadi jauh lebih cepat hanya dalam 1 ketukan.',
-    content: `Dompt dirancang dengan standar Progressive Web App (PWA) modern sehingga sangat ringan, hemat memori penyimpanan HP, dan memiliki tampilan responsif baik di layar potret maupun lanskap.`,
-  },
-  {
-    id: 'tut-subscriptions',
-    number: '13',
-    title: 'Langganan & Transaksi Berulang Otomatis',
-    badge: 'BARU',
-    category: 'AI & Transaksi',
-    summary: 'Kelola tagihan bulanan (Netflix, Spotify, WiFi, Listrik, Kost) dan jadwal Gaji dengan pencatatan 1 klik.',
-    targetTab: 'subscriptions',
-    targetLabel: 'Buka Menu Langganan',
-    steps: [
-      'Buka menu "Langganan" dari Menu Utama di Dashboard, lalu klik tombol (+) di pojok kanan atas.',
-      'Pilih template cepat (Netflix, Spotify, WiFi, Listrik PLN, Kost, Gaji) atau ketik manual beserta tanggal jatuh temponya (1-31).',
-      'Pantau total beban langganan per bulan dan estimasi biaya per tahun agar tidak ada biaya tersembunyi.',
-      'Klik tombol "Bayar & Catat" (atau "Terima & Catat" untuk gaji) agar transaksi langsung tercatat ke dompet Anda bulan ini.',
-    ],
-    tips: 'Anda dapat menjeda (Jeda) langganan yang sedang tidak aktif tanpa harus menghapusnya dari daftar.',
-    content: `Fitur Langganan & Transaksi Berulang mencegah Anda lupa membayar tagihan penting sekaligus memperlihatkan berapa total uang yang habis untuk layanan berlangganan setiap tahunnya.`,
-  },
-  {
-    id: 'tut-health-score',
-    number: '14',
-    title: 'Skor Kesehatan Keuangan (0–100)',
-    badge: 'BARU',
-    category: 'Kekayaan',
-    summary: 'Evaluasi menyeluruh kesehatan finansial Anda dari 4 pilar: Rasio Tabungan, Dana Darurat, Disiplin Budget, dan Rasio Utang.',
-    targetTab: 'health-score',
-    targetLabel: 'Lihat Skor Sehat Saya',
-    steps: [
-      'Buka menu "Skor Sehat" dari Menu Utama di Dashboard.',
-      'Lihat skor total Anda (0–100) beserta status kesehatan keuangan Anda saat ini.',
-      'Periksa nilai pada masing-masing dari 4 Pilar Finansial untuk mengetahui area mana yang sudah kuat dan mana yang perlu ditingkatkan.',
-      'Klik tombol tindakan di setiap pilar untuk langsung memperbaiki alokasi budget, menambah dana darurat, atau berkonsultasi dengan AI Advisor.',
-    ],
-    tips: 'Targetkan Skor Kesehatan Keuangan minimal 70/100 (Sehat & Stabil) dengan menyisihkan minimal 20% pemasukan dan menjaga dana darurat 3-6 bulan.',
-    content: `Skor Kesehatan Keuangan dihitung secara objektif dari data riil Anda:
-• Rasio Menabung (Maks 30 Poin)
-• Ketahanan Dana Darurat (Maks 25 Poin)
-• Kedisiplinan Budget Bulanan (Maks 25 Poin)
-• Kesehatan Beban Utang & Kredit (Maks 20 Poin)`,
+    tips: 'Dengan menginstall ke layar utama, akses mencatat transaksi harian dan scan struk belanja menjadi jauh lebih praktis hanya dalam 1 ketukan.',
+    content: `Dompt dirancang dengan standar Progressive Web App (PWA) modern sehingga sangat ringan, hemat memori penyimpanan HP, dan responsif di layar HP, tablet, maupun desktop.`,
   },
 ];
+

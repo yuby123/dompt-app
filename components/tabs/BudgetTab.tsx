@@ -88,6 +88,8 @@ export function BudgetTab() {
     tabungan: false,
   });
   const [showArchived, setShowArchived] = useState(false);
+  const [showFixedPos, setShowFixedPos] = useState(false);
+  const [showVariablePos, setShowVariablePos] = useState(false);
 
   const toggleGroupCollapse = (group: BudgetGroup) => {
     setCollapsedGroups((prev) => ({ ...prev, [group]: !prev[group] }));
@@ -927,98 +929,180 @@ export function BudgetTab() {
           </div>
         </div>
 
-        {/* Pos Anggaran: Tagihan Bulanan (Fixed) vs Pengeluaran Harian (Variable) */}
+        {/* Pos Anggaran: Tagihan Bulanan (Fixed) vs Pengeluaran Harian (Variable) — Collapsed by default, expand on click */}
         {budgetConfig.estimatedIncome > 0 && (
-          <div className="pt-4 border-t border-white/10 grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
-            <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex flex-col justify-between gap-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">📅</span>
-                  <span className="text-[10px] font-black text-sky-400 uppercase tracking-wider">
+          <div
+            className={`pt-3.5 border-t border-white/10 grid grid-cols-1 lg:grid-cols-2 gap-2.5 text-xs ${
+              showFixedPos === showVariablePos ? 'items-stretch' : 'items-start'
+            }`}
+          >
+            {/* 1. Menu Pos Tagihan Bulanan (Fixed) */}
+            <div className="h-full flex flex-col bg-white/[0.04] hover:bg-white/[0.07] rounded-2xl border border-white/10 transition-colors overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowFixedPos((prev) => !prev)}
+                className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 cursor-pointer text-left"
+                title={showFixedPos ? 'Sembunyikan rincian Pos Tagihan Bulanan' : 'Klik untuk melihat rincian Pos Tagihan Bulanan'}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-base shrink-0">📅</span>
+                  <span className="text-[10px] font-black text-sky-400 uppercase tracking-wider truncate">
                     POS TAGIHAN BULANAN (FIXED)
                   </span>
                 </div>
-                <div className="text-sm text-gray-100 font-black tabular-nums">
-                  {formatRupiah(dashboardSummary.monthlyFixedBudget, hide)}
-                </div>
-              </div>
-              <div className="text-[11px] text-gray-400 font-medium pl-7 flex flex-wrap items-center justify-between gap-1.5">
-                <span>
-                  Terbayar periode ini:{' '}
-                  <strong className="text-white">
-                    {formatRupiah(dashboardSummary.monthlyFixedExpense, hide)}
-                  </strong>
-                </span>
-                <span className="text-sky-400 text-[10px] font-bold">
-                  {dashboardSummary.monthlyFixedExpense >= dashboardSummary.monthlyFixedBudget && dashboardSummary.monthlyFixedBudget > 0
-                    ? 'LUNAS SEMUA'
-                    : `SISA ${formatRupiah(Math.max(0, dashboardSummary.monthlyFixedBudget - dashboardSummary.monthlyFixedExpense), hide)}`}
-                </span>
-              </div>
-              <div className="text-[10px] text-gray-400 font-medium pl-7 truncate">
-                {fixedSubcategories.length > 0 ? (
-                  <span>
-                    Alokasi: {fixedSubcategories.map((s) => `${s.name} (${formatRupiah(s.allocatedAmount, hide)})`).join(' + ')}
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs sm:text-sm text-gray-100 font-black tabular-nums">
+                    Pagu: {formatRupiah(dashboardSummary.monthlyFixedBudget, hide)}
                   </span>
-                ) : (
-                  <span>Belum ada alokasi tagihan berjadwal</span>
+                  <span className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-gray-300">
+                    {showFixedPos ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </span>
+                </div>
+              </button>
+
+              <AnimatePresence initial={false}>
+                {showFixedPos && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.18 }}
+                    className="overflow-hidden flex-1 flex flex-col"
+                  >
+                    <div className="px-3.5 pb-3.5 pt-2 border-t border-white/10 space-y-2 flex-1 flex flex-col justify-between">
+                      {/* Baris 1: Jumlah pos terjadwal (sejajar dengan Kuota dasar harian) */}
+                      <div className="text-[10px] text-gray-400 font-medium flex items-center justify-between">
+                        <span>Pos tagihan terjadwal:</span>
+                        <span className="text-gray-200 font-bold tabular-nums">
+                          {fixedSubcategories.length} pos aktif
+                        </span>
+                      </div>
+
+                      {/* Baris 2: Terbayar & Sisa Tagihan (sejajar dengan Terpakai & Sisa Kuota) */}
+                      <div className="text-[11px] flex flex-wrap items-center justify-between gap-1.5">
+                        <span className="text-gray-400">
+                          Terbayar periode ini:{' '}
+                          <strong className="text-white">
+                            {formatRupiah(dashboardSummary.monthlyFixedExpense, hide)}
+                          </strong>
+                        </span>
+                        <span className="text-[11px] font-extrabold">
+                          {dashboardSummary.monthlyFixedExpense >= dashboardSummary.monthlyFixedBudget &&
+                          dashboardSummary.monthlyFixedBudget > 0 ? (
+                            <span className="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/30">
+                              Lunas Semua
+                            </span>
+                          ) : (
+                            <span className="text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-md border border-sky-500/25">
+                              Sisa: {formatRupiah(
+                                Math.max(0, dashboardSummary.monthlyFixedBudget - dashboardSummary.monthlyFixedExpense),
+                                hide
+                              )}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+
+                      {/* Baris 3: Alokasi (sejajar dengan Agar cukup s/d ...) */}
+                      <div className="text-[11px] text-gray-400 font-medium flex items-center justify-between gap-2 min-h-[24px]">
+                        <span className="shrink-0">Alokasi:</span>
+                        {fixedSubcategories.length > 0 ? (
+                          <span className="text-sky-300 font-bold truncate bg-sky-500/10 px-2 py-0.5 rounded-lg border border-sky-500/20 max-w-full">
+                            {fixedSubcategories
+                              .map((s) => `${s.name} (${formatRupiah(s.allocatedAmount, hide)})`)
+                              .join(' + ')}
+                          </span>
+                        ) : (
+                          <span className="text-gray-500 italic">Belum ada alokasi tagihan berjadwal</span>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
                 )}
-              </div>
+              </AnimatePresence>
             </div>
 
-            <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex flex-col justify-between gap-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-xl">🥪</span>
-                  <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider">
+            {/* 2. Menu Pos Pengeluaran Harian (Operasional) */}
+            <div className="h-full flex flex-col bg-white/[0.04] hover:bg-white/[0.07] rounded-2xl border border-white/10 transition-colors overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowVariablePos((prev) => !prev)}
+                className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 cursor-pointer text-left"
+                title={showVariablePos ? 'Sembunyikan rincian Pos Pengeluaran Harian' : 'Klik untuk melihat rincian Pos Pengeluaran Harian'}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-base shrink-0">🥪</span>
+                  <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider truncate">
                     POS PENGELUARAN HARIAN (OPERASIONAL)
                   </span>
                 </div>
-                <div className="text-right">
-                  <div className="text-sm text-gray-100 font-black tabular-nums">
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs sm:text-sm text-gray-100 font-black tabular-nums">
                     Pagu: {formatRupiah(dashboardSummary.monthlyVariableBudget, hide)}
-                  </div>
-                  <div className="text-[10px] text-gray-400 font-medium">
-                    Kuota dasar ~{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
-                  </div>
+                  </span>
+                  <span className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-gray-300">
+                    {showVariablePos ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </span>
                 </div>
-              </div>
+              </button>
 
-              {/* Status Sisa Kuota Operasional Riil */}
-              <div className="text-[11px] pl-7 flex flex-wrap items-center justify-between gap-1.5 border-t border-white/5 pt-1.5">
-                <span className="text-gray-400">
-                  Terpakai:{' '}
-                  <strong className="text-white">
-                    {formatRupiah(dashboardSummary.monthlyVariableExpense, hide)}
-                  </strong>
-                </span>
-                <span className="text-[11px] font-extrabold">
-                  {dashboardSummary.remainingVariableBudget <= 0 ? (
-                    <span className="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/30">
-                      Sisa Kuota: Rp0 (Habis)
-                    </span>
-                  ) : (
-                    <span className="text-[#D4F826] bg-[#D4F826]/10 px-2 py-0.5 rounded-md border border-[#D4F826]/20">
-                      Sisa Kuota: {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
-                    </span>
-                  )}
-                </span>
-              </div>
+              <AnimatePresence initial={false}>
+                {showVariablePos && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.18 }}
+                    className="overflow-hidden flex-1 flex flex-col"
+                  >
+                    <div className="px-3.5 pb-3.5 pt-2 border-t border-white/10 space-y-2 flex-1 flex flex-col justify-between">
+                      <div className="text-[10px] text-gray-400 font-medium flex items-center justify-between">
+                        <span>Kuota dasar harian:</span>
+                        <span className="text-gray-200 font-bold tabular-nums">
+                          ~{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
+                        </span>
+                      </div>
 
-              <div className="text-[11px] text-gray-400 font-medium pl-7 flex flex-wrap items-center justify-between gap-2">
-                <span>
-                  Agar cukup s/d <strong className="text-white">{budgetPeriod.endShortLabel}</strong> ({budgetPeriod.daysRemainingUntilPayday} hari lagi):
-                </span>
-                {dashboardSummary.remainingVariableBudget <= 0 ? (
-                  <span className="text-rose-300 font-extrabold tabular-nums bg-rose-500/15 px-2 py-0.5 rounded-lg border border-rose-500/30">
-                    Maks Rp0/hari (Rem Belanja)
-                  </span>
-                ) : (
-                  <span className="text-[#D4F826] font-extrabold tabular-nums bg-[#D4F826]/10 px-2 py-0.5 rounded-lg border border-[#D4F826]/25">
-                    Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
-                  </span>
+                      {/* Status Sisa Kuota Operasional Riil */}
+                      <div className="text-[11px] flex flex-wrap items-center justify-between gap-1.5">
+                        <span className="text-gray-400">
+                          Terpakai:{' '}
+                          <strong className="text-white">
+                            {formatRupiah(dashboardSummary.monthlyVariableExpense, hide)}
+                          </strong>
+                        </span>
+                        <span className="text-[11px] font-extrabold">
+                          {dashboardSummary.remainingVariableBudget <= 0 ? (
+                            <span className="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/30">
+                              Sisa Kuota: Rp0 (Habis)
+                            </span>
+                          ) : (
+                            <span className="text-[#D4F826] bg-[#D4F826]/10 px-2 py-0.5 rounded-md border border-[#D4F826]/20">
+                              Sisa Kuota: {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+
+                      <div className="text-[11px] text-gray-400 font-medium flex flex-wrap items-center justify-between gap-2 min-h-[24px]">
+                        <span>
+                          Agar cukup s/d <strong className="text-white">{budgetPeriod.endShortLabel}</strong> (
+                          {budgetPeriod.daysRemainingUntilPayday} hari lagi):
+                        </span>
+                        {dashboardSummary.remainingVariableBudget <= 0 ? (
+                          <span className="text-rose-300 font-extrabold tabular-nums bg-rose-500/15 px-2 py-0.5 rounded-lg border border-rose-500/30">
+                            Maks Rp0/hari (Rem Belanja)
+                          </span>
+                        ) : (
+                          <span className="text-[#D4F826] font-extrabold tabular-nums bg-[#D4F826]/10 px-2 py-0.5 rounded-lg border border-[#D4F826]/25">
+                            Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
                 )}
-              </div>
+              </AnimatePresence>
             </div>
           </div>
         )}

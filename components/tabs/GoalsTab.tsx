@@ -278,7 +278,14 @@ export function GoalsTab() {
         </div>
         <button
           type="button"
-          onClick={() => setIsAddModalOpen(true)}
+          onClick={() => {
+            const defaultLiquid =
+              walletsWithBalance.find((w) => w.type !== 'credit' && w.type !== 'paylater')?.id ||
+              wallets[0]?.id ||
+              '';
+            if (defaultLiquid) setWalletId(defaultLiquid);
+            setIsAddModalOpen(true);
+          }}
           className={`h-10 px-4 rounded-xl ${brandAccentBtn} flex items-center justify-center gap-1.5 font-black text-xs sm:text-sm shadow-xs cursor-pointer transition-transform active:scale-95 shrink-0`}
           title="Tambah Goal Baru"
         >

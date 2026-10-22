@@ -3,12 +3,12 @@
 import React, { useState } from 'react';
 import {
   Search,
-  BookOpen,
   X,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   CheckCircle2,
   Circle,
-  Sparkles,
   Lightbulb,
   ArrowUpRight,
   Compass,
@@ -62,8 +62,8 @@ export function TutorialTab() {
     {
       id: 'qs-budget',
       step: '2',
-      title: 'Atur Estimasi Pemasukan & Budget',
-      desc: 'Tetapkan penghasilan bulanan dan alokasi 50/30/20.',
+      title: 'Atur Estimasi Pemasukan & Siklus Gajian',
+      desc: 'Tetapkan penghasilan bulanan, tanggal gajian, dan alokasi 50/30/20.',
       done: hasBudgetIncome,
       actionLabel: 'Atur Budget',
       onClick: () => setActiveTab('budget'),
@@ -81,7 +81,7 @@ export function TutorialTab() {
       id: 'qs-goal',
       step: '4',
       title: 'Buat Target Tabungan (Goals)',
-      desc: 'Sisihkan Dana Darurat atau target impian agar tidak terpakai.',
+      desc: 'Sisihkan Dana Darurat atau target impian agar tercatat di Dicadangkan.',
       done: hasGoal,
       actionLabel: 'Buat Goal',
       onClick: () => setActiveTab('goals'),
@@ -89,6 +89,7 @@ export function TutorialTab() {
   ];
 
   const completedStepsCount = quickStartSteps.filter((s) => s.done).length;
+  const [isChecklistExpanded, setIsChecklistExpanded] = useState(completedStepsCount < 4);
 
   const filtered = TUTORIAL_ARTICLES.filter((item) => {
     if (selectedCategory !== 'Semua' && item.category !== selectedCategory) return false;
@@ -97,7 +98,8 @@ export function TutorialTab() {
       return (
         item.title.toLowerCase().includes(q) ||
         item.summary.toLowerCase().includes(q) ||
-        item.content.toLowerCase().includes(q)
+        item.content.toLowerCase().includes(q) ||
+        (item.steps && item.steps.some((s) => s.toLowerCase().includes(q)))
       );
     }
     return true;
@@ -122,13 +124,13 @@ export function TutorialTab() {
             Panduan & Tutorial
           </h1>
           <p className="text-xs lg:text-sm font-semibold text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
-            Pelajari cara kerja seluruh fitur dari pengaturan awal hingga analisis AI.
+            Pelajari cara kerja seluruh fitur terbaru dari pengaturan awal, proteksi dompet, hingga analisis skor AI.
           </p>
         </div>
       </div>
 
       {/* Interactive Quick Start Checklist (Full-Width Dark Hero Card) */}
-      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 shadow-xl border border-white/10 space-y-4">
+      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white rounded-[28px] lg:rounded-[32px] p-5 lg:px-8 lg:py-6 shadow-xl border border-white/10 space-y-4">
         <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
         <div
           className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
@@ -139,63 +141,85 @@ export function TutorialTab() {
               : 'bg-[#D4F826]/15'
           }`}
         />
-        <div className="relative z-10 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setIsChecklistExpanded((prev) => !prev)}
+          className="relative z-10 w-full flex items-center justify-between gap-2 text-left cursor-pointer"
+        >
           <div className="flex items-center gap-2">
-            <Compass size={16} className="text-[#D4F826]" />
-            <span className="text-[11px] font-black uppercase tracking-wider text-[#D4F826]">
+            <Compass size={16} className="text-[#D4F826] shrink-0" />
+            <span className="text-xs font-black uppercase tracking-wider text-[#D4F826]">
               CHECKLIST PEMULA ({completedStepsCount}/4 SELESAI)
             </span>
           </div>
-          <span className="text-xs font-extrabold text-[#D4F826]">
-            {Math.round((completedStepsCount / 4) * 100)}%
-          </span>
-        </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-extrabold text-[#D4F826] tabular-nums">
+              {Math.round((completedStepsCount / 4) * 100)}%
+            </span>
+            <span className="text-[11px] font-bold text-gray-300 bg-white/10 px-2.5 py-1 rounded-lg flex items-center gap-1">
+              <span>{isChecklistExpanded ? 'Sembunyikan' : 'Lihat Langkah'}</span>
+              {isChecklistExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </span>
+          </div>
+        </button>
 
-        <div className="w-full h-2 rounded-full bg-white/10 overflow-hidden">
+        <div className="relative z-10 w-full h-2 rounded-full bg-white/10 overflow-hidden">
           <div
             className="h-full rounded-full bg-[#D4F826] transition-all duration-300"
             style={{ width: `${(completedStepsCount / 4) * 100}%` }}
           />
         </div>
 
-        <div className="space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3 pt-1">
-          {quickStartSteps.map((qs) => (
-            <div
-              key={qs.id}
-              className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 transition-colors ${
-                qs.done
-                  ? 'bg-white/[0.04] border-emerald-500/30'
-                  : 'bg-white/[0.04] border-white/10 hover:border-[#D4F826]/50'
-              }`}
+        <AnimatePresence initial={false}>
+          {isChecklistExpanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.2 }}
+              className="overflow-hidden"
             >
-              <div className="flex items-start gap-2.5 min-w-0">
-                {qs.done ? (
-                  <CheckCircle2 size={16} className="text-[#D4F826] shrink-0 mt-0.5" />
-                ) : (
-                  <Circle size={16} className="text-gray-500 shrink-0 mt-0.5" />
-                )}
-                <div className="min-w-0">
-                  <p
-                    className={`text-xs font-extrabold ${
-                      qs.done ? 'text-gray-300 line-through' : 'text-white'
+              <div className="relative z-10 space-y-2.5 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-3 pt-1">
+                {quickStartSteps.map((qs) => (
+                  <div
+                    key={qs.id}
+                    className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 transition-colors ${
+                      qs.done
+                        ? 'bg-white/[0.04] border-emerald-500/30'
+                        : 'bg-white/[0.04] border-white/10 hover:border-[#D4F826]/50'
                     }`}
                   >
-                    {qs.step}. {qs.title}
-                  </p>
-                  <p className="text-[11px] text-gray-400 leading-snug mt-0.5">{qs.desc}</p>
-                </div>
-              </div>
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      {qs.done ? (
+                        <CheckCircle2 size={16} className="text-[#D4F826] shrink-0 mt-0.5" />
+                      ) : (
+                        <Circle size={16} className="text-gray-500 shrink-0 mt-0.5" />
+                      )}
+                      <div className="min-w-0">
+                        <p
+                          className={`text-xs font-extrabold ${
+                            qs.done ? 'text-gray-300 line-through' : 'text-white'
+                          }`}
+                        >
+                          {qs.step}. {qs.title}
+                        </p>
+                        <p className="text-[11px] text-gray-400 leading-snug mt-0.5">{qs.desc}</p>
+                      </div>
+                    </div>
 
-              <button
-                type="button"
-                onClick={qs.onClick}
-                className="px-3 py-1.5 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-[10px] font-black shrink-0 cursor-pointer transition-transform active:scale-95"
-              >
-                {qs.actionLabel}
-              </button>
-            </div>
-          ))}
-        </div>
+                    <button
+                      type="button"
+                      onClick={qs.onClick}
+                      className="px-3 py-1.5 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-[10px] font-black shrink-0 cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
+                    >
+                      {qs.actionLabel}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Search + Filter Bar */}
@@ -206,7 +230,7 @@ export function TutorialTab() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Cari panduan fitur (misal: Budget, Struk, Dompet, Reset)..."
+            placeholder="Cari panduan fitur (misal: Dicadangkan, Anti-Minus, Skor, Cicilan, Budget)..."
             className="w-full pl-10 pr-9 py-3 bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl text-xs font-bold text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#D4F826] shadow-xs"
           />
           {search && (
@@ -227,7 +251,7 @@ export function TutorialTab() {
               key={cat}
               type="button"
               onClick={() => setSelectedCategory(cat)}
-              className={`px-3.5 py-2 rounded-xl transition-colors cursor-pointer shrink-0 ${
+              className={`px-3.5 py-2 rounded-xl transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
                 selectedCategory === cat
                   ? 'bg-[#D4F826] text-black font-black shadow-xs'
                   : 'bg-white dark:bg-[#16181D] text-gray-500 hover:text-black dark:hover:text-white border border-gray-100 dark:border-gray-800'
@@ -252,41 +276,47 @@ export function TutorialTab() {
           <div
             key={art.id}
             onClick={() => setActiveArticle(art)}
-            className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-2.5 hover:border-[#D4F826] transition-all cursor-pointer group"
+            className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-2.5 hover:border-[#D4F826] transition-all cursor-pointer group flex flex-col justify-between"
           >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] font-black text-gray-400">{art.number}</span>
-                <span className="text-[10px] font-bold text-gray-400">• {art.category}</span>
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-black text-gray-400 tabular-nums">
+                    {art.number}
+                  </span>
+                  <span className="text-[10px] font-bold text-gray-400">· {art.category}</span>
+                </div>
+                {art.badge && (
+                  <span
+                    className={`text-[9px] font-black px-2.5 py-0.5 rounded-lg tracking-wider uppercase ${
+                      art.badge.includes('START') || art.badge.includes('BARU')
+                        ? 'bg-[#D4F826] text-black'
+                        : art.badge.includes('DIPERBARUI')
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                        : art.badge.includes('ESSENTIAL') || art.badge.includes('AI')
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                        : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300'
+                    }`}
+                  >
+                    {art.badge}
+                  </span>
+                )}
               </div>
-              {art.badge && (
-                <span
-                  className={`text-[9px] font-black px-2.5 py-0.5 rounded-full tracking-wider uppercase ${
-                    art.badge.includes('START')
-                      ? 'bg-[#D4F826] text-black'
-                      : art.badge.includes('ESSENTIAL') || art.badge.includes('AI')
-                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300'
-                  }`}
-                >
-                  {art.badge}
-                </span>
-              )}
-            </div>
 
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-black text-gray-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-[#D4F826] transition-colors">
-                {art.title}
-              </h3>
-              <ChevronRight
-                size={16}
-                className="text-gray-400 group-hover:translate-x-0.5 transition-transform shrink-0"
-              />
-            </div>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-black text-gray-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-[#D4F826] transition-colors">
+                  {art.title}
+                </h3>
+                <ChevronRight
+                  size={16}
+                  className="text-gray-400 group-hover:translate-x-0.5 transition-transform shrink-0"
+                />
+              </div>
 
-            <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-              {art.summary}
-            </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+                {art.summary}
+              </p>
+            </div>
           </div>
         ))}
       </div>
@@ -299,11 +329,11 @@ export function TutorialTab() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white dark:bg-[#16181D] rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800 max-h-[88vh] overflow-y-auto"
+              className="bg-white dark:bg-[#16181D] rounded-3xl p-6 max-w-lg w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800 max-h-[88vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black bg-[#D4F826] text-black px-2.5 py-0.5 rounded-full uppercase">
+                  <span className="text-[10px] font-black bg-[#D4F826] text-black px-2.5 py-0.5 rounded-lg uppercase">
                     {activeArticle.badge || 'PANDUAN'}
                   </span>
                   <span className="text-[11px] font-bold text-gray-400">
@@ -334,10 +364,10 @@ export function TutorialTab() {
                   <span className="text-[10px] font-black uppercase tracking-wider text-gray-400 block">
                     LANGKAH PENGGUNAAN:
                   </span>
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     {activeArticle.steps.map((stepText, idx) => (
                       <div key={idx} className="flex items-start gap-2.5 text-xs">
-                        <span className="w-5 h-5 rounded-full bg-[#D4F826] text-black font-black text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                        <span className="w-5 h-5 rounded-full bg-[#D4F826] text-black font-black text-[10px] flex items-center justify-center shrink-0 mt-0.5 tabular-nums">
                           {idx + 1}
                         </span>
                         <span className="text-gray-700 dark:text-gray-200 leading-relaxed font-medium">
@@ -389,4 +419,3 @@ export function TutorialTab() {
     </div>
   );
 }
-

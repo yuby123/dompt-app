@@ -4,10 +4,10 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Delete, Check, Sparkles, AlertTriangle } from 'lucide-react';
 import { useApp } from './AppContext';
-import { TransactionType } from '@/lib/types';
+import { ExpenseNature, TransactionType } from '@/lib/types';
 import { CategoryIcon } from './CategoryIcon';
 import { formatNumberOnly, formatRupiah } from '@/lib/formatters';
-import { detectExpenseNature, isDateInBudgetPeriod } from '@/lib/budgetUtils';
+import { detectExpenseNature, isDateInBudgetPeriod, isGrocerySubcategory } from '@/lib/budgetUtils';
 
 function AddTransactionForm() {
   const {
@@ -26,6 +26,7 @@ function AddTransactionForm() {
     addToast,
     budgetConfig,
     budgetPeriod,
+    dashboardSummary,
     transactions,
     getWalletBalance,
     triggerInsufficientBalanceAlert,
@@ -70,7 +71,7 @@ function AddTransactionForm() {
   const [note, setNote] = useState<string>(() => editingTransaction?.transaction.note || '');
   const [activeGroup, setActiveGroup] = useState<string>('Semua');
 
-  const [expenseNature, setExpenseNature] = useState<'variable' | 'fixed' | 'savings'>(() => {
+  const [expenseNature, setExpenseNature] = useState<ExpenseNature>(() => {
     if (editingTransaction?.transaction.expenseNature) {
       return editingTransaction.transaction.expenseNature;
     }
@@ -141,7 +142,10 @@ function AddTransactionForm() {
     if (isTabunganCat) {
       setExpenseNature('savings');
       setIsManualExpenseNature(false);
-    } else if (!isManualExpenseNature || expenseNature === 'savings') {
+    } else if (chosenCat?.expenseNature === 'grocery' || catId === 'cat-belanja-bulanan') {
+      setExpenseNature('grocery');
+      setIsManualExpenseNature(false);
+    } else if (!isManualExpenseNature || expenseNature === 'savings' || expenseNature === 'grocery') {
       const catMap = new Map(categories.map((c) => [c.id, c]));
       setExpenseNature(detectExpenseNature(catId, note, catMap));
       setIsManualExpenseNature(false);
@@ -204,6 +208,12 @@ function AddTransactionForm() {
     });
 
     if (directMatch) return directMatch;
+
+    // Fallback for Grocery / Belanja Bulanan
+    if (expenseNature === 'grocery') {
+      const grocerySub = subs.find((s) => isGrocerySubcategory(s));
+      if (grocerySub) return grocerySub;
+    }
 
     // Fallback for Tabungan category (e.g. 'cat-tabungan' matching 'Nabung Dana Darurat' / 'sub-darurat')
     if (isTabungan) {
@@ -320,7 +330,11 @@ function AddTransactionForm() {
       }
     } else {
       const effectiveBudgetGroup =
-        type === 'expense' && expenseNature === 'savings' ? 'tabungan' : chosenCat?.budgetGroup;
+        type === 'expense' && expenseNature === 'savings'
+          ? 'tabungan'
+          : type === 'expense' && expenseNature === 'grocery'
+          ? 'kebutuhan'
+          : chosenCat?.budgetGroup;
 
       if (editingTransaction) {
         const ok = updateTransaction(editingTransaction.transaction.id, {
@@ -722,7 +736,7 @@ function AddTransactionForm() {
           </div>
         )}
 
-        {/* Pos Beban Anggaran (Pengeluaran Harian vs Tagihan Bulanan vs Alokasi Tabungan) */}
+        {/* Pos Beban Anggaran (Pengeluaran Harian vs Belanja Bulanan/Masak vs Tagihan Bulanan vs Alokasi Tabungan) */}
         {type === 'expense' && (
           <div className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200/80 dark:border-gray-700/60 space-y-2.5">
             <div className="flex items-center justify-between">
@@ -735,6 +749,8 @@ function AddTransactionForm() {
                     ? 'bg-emerald-100/80 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
                     : expenseNature === 'fixed'
                     ? 'bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                    : expenseNature === 'grocery'
+                    ? 'bg-amber-100/80 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
                     : 'bg-teal-100/80 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300'
                 }`}
               >
@@ -742,11 +758,13 @@ function AddTransactionForm() {
                   ? '🏦 Pos Alokasi Tabungan'
                   : expenseNature === 'fixed'
                   ? '📅 Pos Tagihan Tetap'
+                  : expenseNature === 'grocery'
+                  ? '🛒 Pos Belanja Bulanan / Masak'
                   : '🥪 Pos Operasional Harian'}
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -761,9 +779,39 @@ function AddTransactionForm() {
               >
                 <span className="text-base shrink-0">🥪</span>
                 <div className="min-w-0">
-                  <div className="text-xs font-bold leading-tight">Pengeluaran Harian</div>
+                  <div className="text-xs font-bold leading-tight">Makan Luar / Harian</div>
                   <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
-                    Makan, jajan, transpor (potong budget harian)
+                    Beli makan luar, jajan, bensin (potong jatah harian)
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setExpenseNature('grocery');
+                  setIsManualExpenseNature(true);
+                  const groceryCat = availableCategories.find((c) => c.id === 'cat-belanja-bulanan');
+                  const currentCat = availableCategories.find((c) => c.id === selectedCategoryId);
+                  if (
+                    groceryCat &&
+                    currentCat?.id !== 'cat-makan' &&
+                    currentCat?.id !== 'cat-belanja-bulanan'
+                  ) {
+                    setSelectedCategoryId(groceryCat.id);
+                  }
+                }}
+                className={`flex items-start gap-2 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  expenseNature === 'grocery'
+                    ? 'bg-white dark:bg-gray-800 border-amber-500 ring-2 ring-amber-500/20 text-gray-900 dark:text-white shadow-xs'
+                    : 'bg-transparent border-gray-200 dark:border-gray-700/60 text-gray-500 dark:text-gray-400 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
+                }`}
+              >
+                <span className="text-base shrink-0">🛒</span>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold leading-tight">Belanja Bulanan / Masak</div>
+                  <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+                    Kuota harian otomatis menyesuaikan sisa uang setelah belanja ini
                   </div>
                 </div>
               </button>
@@ -819,6 +867,45 @@ function AddTransactionForm() {
                 </div>
               </button>
             </div>
+
+            {/* Info banner when Belanja Bulanan / Masak is selected */}
+            {expenseNature === 'grocery' && (() => {
+              const previousGroceryAdjust =
+                editingTransaction && editingTransaction.transaction.expenseNature === 'grocery'
+                  ? editingTransaction.transaction.amount
+                  : 0;
+              const nextVariablePool = Math.max(
+                0,
+                dashboardSummary.monthlyVariableBudget + previousGroceryAdjust - currentAmount
+              );
+              const nextRemainingPool = Math.max(
+                0,
+                dashboardSummary.remainingVariableBudget + previousGroceryAdjust - currentAmount
+              );
+              const totalDays = Math.max(1, dashboardSummary.periodTotalDays || 30);
+              const nextDailyQuota = Math.round(nextVariablePool / totalDays);
+
+              return (
+                <div className="pt-2 border-t border-gray-200/70 dark:border-gray-700/50 space-y-1 text-[11px]">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                    <span className="text-amber-700 dark:text-amber-400 font-bold">
+                      🛒 Sisa uang setelah belanja ini:
+                    </span>
+                    <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
+                      {formatRupiah(nextRemainingPool, settings.hideBalance)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                    <span className="text-gray-500 dark:text-gray-400">
+                      Kuota harian baru (mengikuti sisa uang):
+                    </span>
+                    <span className="font-black text-teal-700 dark:text-[#D4F826] tabular-nums">
+                      ~{formatRupiah(nextDailyQuota, settings.hideBalance)} / hari
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Sub-pos Tabungan selector when Alokasi Tabungan is selected */}
             {expenseNature === 'savings' && (budgetConfig?.subcategories || []).some((s) => s.group === 'tabungan') && (

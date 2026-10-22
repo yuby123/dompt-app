@@ -25,12 +25,13 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { EmojiPickerModal } from '../EmojiPickerModal';
 import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
-import { BudgetGroup, BudgetSubcategory } from '@/lib/types';
+import { BudgetGroup, BudgetSubcategory, FoodLifestyleMode } from '@/lib/types';
 import {
   FIXED_CATEGORY_IDS,
   FIXED_EXPENSE_KEYWORDS_REGEX,
   getBudgetPeriodInfo,
   isDateInBudgetPeriod,
+  isGrocerySubcategory,
 } from '@/lib/budgetUtils';
 
 export function BudgetTab() {
@@ -55,6 +56,7 @@ export function BudgetTab() {
     goToPrevPeriod,
     goToNextPeriod,
     goToCurrentPeriod,
+    openAddTransaction,
   } = useApp();
 
   const hide = settings.hideBalance;
@@ -79,7 +81,19 @@ export function BudgetTab() {
   const [newSubAmount, setNewSubAmount] = useState('');
   const [newSubEmoji, setNewSubEmoji] = useState('📦');
   const [newSubDueDay, setNewSubDueDay] = useState('');
+  const [newSubIsGrocery, setNewSubIsGrocery] = useState(false);
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+
+  // Pola Makan & Belanja Modal state
+  const [isFoodModalOpen, setIsFoodModalOpen] = useState(false);
+  const [tempFoodMode, setTempFoodMode] = useState<FoodLifestyleMode>(
+    budgetConfig.foodLifestyleMode || 'eat_out'
+  );
+  const [tempMealsOutPerDay, setTempMealsOutPerDay] = useState<number>(
+    budgetConfig.mealsOutPerDay ?? 3
+  );
+  const [tempGroceryBudgetInput, setTempGroceryBudgetInput] = useState('0');
+  const [tempEatOutBudgetInput, setTempEatOutBudgetInput] = useState('0');
 
   const [activeMenuSubId, setActiveMenuSubId] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<BudgetGroup, boolean>>({
@@ -89,6 +103,7 @@ export function BudgetTab() {
   });
   const [showArchived, setShowArchived] = useState(false);
   const [showFixedPos, setShowFixedPos] = useState(false);
+  const [showGroceryPos, setShowGroceryPos] = useState(false);
   const [showVariablePos, setShowVariablePos] = useState(false);
 
   const toggleGroupCollapse = (group: BudgetGroup) => {
@@ -277,6 +292,14 @@ export function BudgetTab() {
               return true;
             }
 
+            // F. Synonym match for Belanja Bulanan & Bahan Masak ('grocery')
+            if (
+              (tx.expenseNature === 'grocery' || tx.categoryId === 'cat-belanja-bulanan') &&
+              isGrocerySubcategory(s)
+            ) {
+              return true;
+            }
+
             return false;
           });
 
@@ -401,6 +424,24 @@ export function BudgetTab() {
     return list;
   }, [effectiveSubcategories, subscriptions, subSpentMap]);
 
+  // Subcategories recognized as grocery/cooking stock (Belanja Bulanan, Bahan Masak, Sembako, dll.)
+  const grocerySubcategories = useMemo(() => {
+    const list: { id: string; name: string; allocatedAmount: number }[] = [];
+    effectiveSubcategories.forEach((sub) => {
+      if (sub.group === 'tabungan') return;
+      if (sub.isSubscriptionActive === false) return;
+      if (isGrocerySubcategory(sub)) {
+        const spent = subSpentMap[sub.id] || 0;
+        list.push({
+          id: sub.id,
+          name: sub.name,
+          allocatedAmount: Math.max(sub.allocatedAmount, spent),
+        });
+      }
+    });
+    return list;
+  }, [effectiveSubcategories, subSpentMap]);
+
   const calculateGroupSpent = (group: BudgetGroup) => {
     const subTotal = effectiveSubcategories
       .filter((s) => s.group === group)
@@ -481,6 +522,122 @@ export function BudgetTab() {
     }
   };
 
+  // Open Simulasi & Konsep Belanja Bulanan Fleksibel modal
+  const openFoodLifestyleModal = () => {
+    setTempGroceryBudgetInput(formatNominalInput(1000000));
+    setTempEatOutBudgetInput(formatNominalInput(2000000));
+    setIsFoodModalOpen(true);
+  };
+
+  const handleSelectFoodModePreset = (mode: FoodLifestyleMode, mealsOut = 1) => {
+    setTempFoodMode(mode);
+    const curGrocery = parseNominalInput(tempGroceryBudgetInput);
+    const curEatOut = parseNominalInput(tempEatOutBudgetInput);
+    const pool = curGrocery + curEatOut > 0 ? curGrocery + curEatOut : Math.max(600000, Math.round(needsLimit * 0.45));
+
+    if (mode === 'eat_out') {
+      setTempMealsOutPerDay(3);
+      setTempGroceryBudgetInput('0');
+      setTempEatOutBudgetInput(formatNominalInput(pool));
+    } else if (mode === 'hybrid') {
+      setTempMealsOutPerDay(mealsOut);
+      // 1x makan di luar (misal malam beli di luar, pagi/siang masak) -> ~55% stok belanja masak, 45% makan luar
+      // 2x makan di luar (misal pagi masak, siang & malam beli) -> ~40% stok belanja masak, 60% makan luar
+      const groceryRatio = mealsOut === 1 ? 0.55 : 0.4;
+      const gAmount = Math.round((pool * groceryRatio) / 10000) * 10000;
+      const eAmount = Math.max(0, pool - gAmount);
+      setTempGroceryBudgetInput(formatNominalInput(gAmount));
+      setTempEatOutBudgetInput(formatNominalInput(eAmount));
+    } else if (mode === 'cook_home') {
+      setTempMealsOutPerDay(0);
+      // Full masak sendiri dengan belanja bulanan -> ~85% stok belanja bulanan/pasar, ~15% camilan/darurat luar
+      const gAmount = Math.round((pool * 0.85) / 10000) * 10000;
+      const eAmount = Math.max(0, pool - gAmount);
+      setTempGroceryBudgetInput(formatNominalInput(gAmount));
+      setTempEatOutBudgetInput(formatNominalInput(eAmount));
+    }
+  };
+
+  const handleSaveFoodLifestyle = (e: React.FormEvent) => {
+    e.preventDefault();
+    const groceryVal = Math.max(0, parseNominalInput(tempGroceryBudgetInput));
+    const eatOutVal = Math.max(0, parseNominalInput(tempEatOutBudgetInput));
+
+    const nextSubs = [...(budgetConfig.subcategories || [])];
+
+    // 1. Update or add Makan di Luar subcategory ('sub-makan')
+    const eatOutIdx = nextSubs.findIndex(
+      (s) =>
+        s.id === 'sub-makan' ||
+        (!isGrocerySubcategory(s) && /makan\s*&\s*minum|makan\s*di\s*luar/i.test(s.name))
+    );
+    const eatOutLabel =
+      tempFoodMode === 'hybrid'
+        ? 'Makan di Luar (Malam/Jajan)'
+        : tempFoodMode === 'cook_home'
+        ? 'Jajan & Camilan Harian'
+        : 'Makan & Minum';
+
+    if (eatOutIdx >= 0) {
+      nextSubs[eatOutIdx] = {
+        ...nextSubs[eatOutIdx],
+        name: eatOutLabel,
+        allocatedAmount: eatOutVal,
+        isGroceryStock: false,
+      };
+    } else if (eatOutVal > 0) {
+      nextSubs.unshift({
+        id: 'sub-makan',
+        name: eatOutLabel,
+        group: 'kebutuhan',
+        allocatedAmount: eatOutVal,
+        emoji: '🍔',
+        isGroceryStock: false,
+      });
+    }
+
+    // 2. Update, add, or remove Belanja Bulanan & Bahan Masak subcategory ('sub-belanja-bulanan')
+    const groceryIdx = nextSubs.findIndex(
+      (s) => s.id === 'sub-belanja-bulanan' || isGrocerySubcategory(s)
+    );
+
+    if (groceryVal > 0 || tempFoodMode !== 'eat_out') {
+      if (groceryIdx >= 0) {
+        nextSubs[groceryIdx] = {
+          ...nextSubs[groceryIdx],
+          name: nextSubs[groceryIdx].name || 'Belanja Bulanan & Masak',
+          allocatedAmount: groceryVal,
+          emoji: nextSubs[groceryIdx].emoji || '🛒',
+          isGroceryStock: true,
+        };
+      } else {
+        // Insert right after eatOutSub or at start of kebutuhan
+        nextSubs.splice(Math.max(0, eatOutIdx + 1), 0, {
+          id: 'sub-belanja-bulanan',
+          name: 'Belanja Bulanan & Masak',
+          group: 'kebutuhan',
+          allocatedAmount: groceryVal,
+          emoji: '🛒',
+          isGroceryStock: true,
+        });
+      }
+    } else if (groceryIdx >= 0 && groceryVal === 0 && tempFoodMode === 'eat_out') {
+      // Remove or zero out grocery sub when switching back to full eat_out with Rp 0
+      nextSubs.splice(groceryIdx, 1);
+    }
+
+    updateBudgetConfig({
+      foodLifestyleMode: tempFoodMode,
+      mealsOutPerDay: tempFoodMode === 'eat_out' ? 3 : tempFoodMode === 'hybrid' ? tempMealsOutPerDay : 0,
+      subcategories: nextSubs,
+    });
+
+    if (groceryVal > 0 || tempFoodMode !== 'eat_out') {
+      setShowGroceryPos(true);
+    }
+    setIsFoodModalOpen(false);
+  };
+
   const handleCreateSubcategory = (e: React.FormEvent) => {
     e.preventDefault();
     const amountVal = parseNominalInput(newSubAmount);
@@ -492,6 +649,7 @@ export function BudgetTab() {
         allocatedAmount: amountVal || 0,
         emoji: newSubEmoji || '📦',
         dueDateDay: newSubDueDay ? Number(newSubDueDay) : undefined,
+        isGroceryStock: targetGroup === 'kebutuhan' ? newSubIsGrocery : false,
       });
     } else {
       addBudgetSubcategory({
@@ -500,6 +658,7 @@ export function BudgetTab() {
         allocatedAmount: amountVal || 100000,
         emoji: newSubEmoji || '📦',
         dueDateDay: newSubDueDay ? Number(newSubDueDay) : undefined,
+        isGroceryStock: targetGroup === 'kebutuhan' ? newSubIsGrocery : false,
       });
     }
 
@@ -509,6 +668,7 @@ export function BudgetTab() {
     setNewSubAmount('');
     setNewSubEmoji('📦');
     setNewSubDueDay('');
+    setNewSubIsGrocery(false);
   };
 
   const openAddForGroup = (group: BudgetGroup) => {
@@ -518,16 +678,18 @@ export function BudgetTab() {
     setNewSubAmount('');
     setNewSubEmoji(group === 'kebutuhan' ? '⚡' : group === 'keinginan' ? '🎬' : '💰');
     setNewSubDueDay('');
+    setNewSubIsGrocery(false);
     setIsAddSubOpen(true);
   };
 
-  const openEditSub = (sub: { id: string; name: string; group: BudgetGroup; allocatedAmount: number; emoji: string; dueDateDay?: number }) => {
+  const openEditSub = (sub: BudgetSubcategory) => {
     setEditingSubId(sub.id);
     setTargetGroup(sub.group);
     setNewSubName(sub.name);
     setNewSubAmount(formatNominalInput(sub.allocatedAmount));
     setNewSubEmoji(sub.emoji || '📦');
     setNewSubDueDay(sub.dueDateDay ? String(sub.dueDateDay) : '');
+    setNewSubIsGrocery(Boolean(sub.isGroceryStock || isGrocerySubcategory(sub)));
     setActiveMenuSubId(null);
     setIsAddSubOpen(true);
   };
@@ -699,6 +861,16 @@ export function BudgetTab() {
                                 : sub.dueDateDay
                                 ? `· Tgl ${sub.dueDateDay}`
                                 : '· Rutin'}
+                            </button>
+                          )}
+                          {isGrocerySubcategory(sub) && !sub.dueDateDay && !sub.subscriptionId && (
+                            <button
+                              type="button"
+                              onClick={openFoodLifestyleModal}
+                              className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-1.5 py-0.5 rounded-md border border-amber-500/25 shrink-0 cursor-pointer transition-colors"
+                              title="Pos Stok Belanja Bulanan & Masak (Tidak dibagi harian, aman dipakai belanja stok sekaligus)"
+                            >
+                              🛒 Stok Masak
                             </button>
                           )}
                         </div>
@@ -897,6 +1069,19 @@ export function BudgetTab() {
                 </span>
                 <Pencil size={10} />
               </button>
+              <button
+                type="button"
+                onClick={openFoodLifestyleModal}
+                className="bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/40 px-3 py-1 rounded-xl text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Lihat simulasi & konsep kuota harian fleksibel yang otomatis mengikuti sisa uang setelah belanja bulanan"
+              >
+                <span>
+                  {dashboardSummary.monthlyGroceryExpense > 0
+                    ? `🛒 BELANJA BULANAN: -${formatRupiah(dashboardSummary.monthlyGroceryExpense, hide)}`
+                    : '🛒 KUOTA HARIAN IKUT SISA BELANJA'}
+                </span>
+                <HelpCircle size={11} />
+              </button>
             </div>
           </div>
 
@@ -929,13 +1114,9 @@ export function BudgetTab() {
           </div>
         </div>
 
-        {/* Pos Anggaran: Tagihan Bulanan (Fixed) vs Pengeluaran Harian (Variable) — Collapsed by default, expand on click */}
+        {/* Pos Anggaran: Tagihan Bulanan (Fixed) vs Harian & Belanja Bulanan (Fleksibel) — Collapsed by default, expand on click */}
         {budgetConfig.estimatedIncome > 0 && (
-          <div
-            className={`pt-3.5 border-t border-white/10 grid grid-cols-1 lg:grid-cols-2 gap-2.5 text-xs ${
-              showFixedPos === showVariablePos ? 'items-stretch' : 'items-start'
-            }`}
-          >
+          <div className="pt-3.5 border-t border-white/10 grid grid-cols-1 lg:grid-cols-2 gap-2.5 text-xs items-start">
             {/* 1. Menu Pos Tagihan Bulanan (Fixed) */}
             <div className="h-full flex flex-col bg-white/[0.04] hover:bg-white/[0.07] rounded-2xl border border-white/10 transition-colors overflow-hidden">
               <button
@@ -970,7 +1151,7 @@ export function BudgetTab() {
                     className="overflow-hidden flex-1 flex flex-col"
                   >
                     <div className="px-3.5 pb-3.5 pt-2 border-t border-white/10 space-y-2 flex-1 flex flex-col justify-between">
-                      {/* Baris 1: Jumlah pos terjadwal (sejajar dengan Kuota dasar harian) */}
+                      {/* Baris 1: Jumlah pos terjadwal */}
                       <div className="text-[10px] text-gray-400 font-medium flex items-center justify-between">
                         <span>Pos tagihan terjadwal:</span>
                         <span className="text-gray-200 font-bold tabular-nums">
@@ -978,7 +1159,7 @@ export function BudgetTab() {
                         </span>
                       </div>
 
-                      {/* Baris 2: Terbayar & Sisa Tagihan (sejajar dengan Terpakai & Sisa Kuota) */}
+                      {/* Baris 2: Terbayar & Sisa Tagihan */}
                       <div className="text-[11px] flex flex-wrap items-center justify-between gap-1.5">
                         <span className="text-gray-400">
                           Terbayar periode ini:{' '}
@@ -1003,7 +1184,7 @@ export function BudgetTab() {
                         </span>
                       </div>
 
-                      {/* Baris 3: Alokasi (sejajar dengan Agar cukup s/d ...) */}
+                      {/* Baris 3: Alokasi */}
                       <div className="text-[11px] text-gray-400 font-medium flex items-center justify-between gap-2 min-h-[24px]">
                         <span className="shrink-0">Alokasi:</span>
                         {fixedSubcategories.length > 0 ? (
@@ -1022,23 +1203,23 @@ export function BudgetTab() {
               </AnimatePresence>
             </div>
 
-            {/* 2. Menu Pos Pengeluaran Harian (Operasional) */}
+            {/* 2. Menu Pos Pengeluaran Harian & Belanja Bulanan (Fleksibel Mengikuti Sisa Uang) */}
             <div className="h-full flex flex-col bg-white/[0.04] hover:bg-white/[0.07] rounded-2xl border border-white/10 transition-colors overflow-hidden">
               <button
                 type="button"
                 onClick={() => setShowVariablePos((prev) => !prev)}
                 className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 cursor-pointer text-left"
-                title={showVariablePos ? 'Sembunyikan rincian Pos Pengeluaran Harian' : 'Klik untuk melihat rincian Pos Pengeluaran Harian'}
+                title={showVariablePos ? 'Sembunyikan rincian Pos Harian & Belanja Bulanan' : 'Klik untuk melihat rincian Pos Harian & Belanja Bulanan'}
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-base shrink-0">🥪</span>
                   <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider truncate">
-                    POS PENGELUARAN HARIAN (OPERASIONAL)
+                    POS HARIAN & BELANJA BULANAN (FLEKSIBEL)
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-xs sm:text-sm text-gray-100 font-black tabular-nums">
-                    Pagu: {formatRupiah(dashboardSummary.monthlyVariableBudget, hide)}
+                    Sisa Uang: {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
                   </span>
                   <span className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-gray-300">
                     {showVariablePos ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -1056,38 +1237,55 @@ export function BudgetTab() {
                     className="overflow-hidden flex-1 flex flex-col"
                   >
                     <div className="px-3.5 pb-3.5 pt-2 border-t border-white/10 space-y-2 flex-1 flex flex-col justify-between">
-                      <div className="text-[10px] text-gray-400 font-medium flex items-center justify-between">
-                        <span>Kuota dasar harian:</span>
-                        <span className="text-gray-200 font-bold tabular-nums">
-                          ~{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
+                      {/* Baris 1: Pagu Awal vs Potongan Belanja Bulanan */}
+                      <div className="text-[10px] text-gray-300 font-medium flex flex-wrap items-center justify-between gap-2">
+                        <span>
+                          Pagu awal non-tagihan:{' '}
+                          <strong className="text-white tabular-nums">
+                            {formatRupiah(dashboardSummary.monthlyGroceryBudget, hide)}
+                          </strong>
                         </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-amber-300 font-bold tabular-nums bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-400/30">
+                            🛒 Belanja Bulanan: -{formatRupiah(dashboardSummary.monthlyGroceryExpense, hide)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={openFoodLifestyleModal}
+                            className="text-[10px] font-black text-amber-200 hover:text-white bg-white/10 px-1.5 py-0.5 rounded-md cursor-pointer"
+                            title="Lihat simulasi kuota harian mengikuti sisa belanja bulanan"
+                          >
+                            Simulasi
+                          </button>
+                        </div>
                       </div>
 
-                      {/* Status Sisa Kuota Operasional Riil */}
+                      {/* Baris 2: Terpakai Harian & Sisa Uang Riil */}
                       <div className="text-[11px] flex flex-wrap items-center justify-between gap-1.5">
                         <span className="text-gray-400">
-                          Terpakai:{' '}
-                          <strong className="text-white">
+                          Terpakai harian (makan luar/bensin):{' '}
+                          <strong className="text-white tabular-nums">
                             {formatRupiah(dashboardSummary.monthlyVariableExpense, hide)}
                           </strong>
                         </span>
                         <span className="text-[11px] font-extrabold">
                           {dashboardSummary.remainingVariableBudget <= 0 ? (
                             <span className="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/30">
-                              Sisa Kuota: Rp0 (Habis)
+                              Sisa Uang: Rp0 (Habis)
                             </span>
                           ) : (
-                            <span className="text-[#D4F826] bg-[#D4F826]/10 px-2 py-0.5 rounded-md border border-[#D4F826]/20">
-                              Sisa Kuota: {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
+                            <span className="text-[#D4F826] bg-[#D4F826]/10 px-2 py-0.5 rounded-md border border-[#D4F826]/20 tabular-nums">
+                              Sisa Uang: {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
                             </span>
                           )}
                         </span>
                       </div>
 
+                      {/* Baris 3: Kuota Harian Mengikuti Sisa Uang */}
                       <div className="text-[11px] text-gray-400 font-medium flex flex-wrap items-center justify-between gap-2 min-h-[24px]">
                         <span>
-                          Agar cukup s/d <strong className="text-white">{budgetPeriod.endShortLabel}</strong> (
-                          {budgetPeriod.daysRemainingUntilPayday} hari lagi):
+                          Kuota harian mengikuti sisa s/d <strong className="text-white">{budgetPeriod.endShortLabel}</strong> (
+                          {budgetPeriod.daysRemainingUntilPayday} hari):
                         </span>
                         {dashboardSummary.remainingVariableBudget <= 0 ? (
                           <span className="text-rose-300 font-extrabold tabular-nums bg-rose-500/15 px-2 py-0.5 rounded-lg border border-rose-500/30">
@@ -1095,7 +1293,7 @@ export function BudgetTab() {
                           </span>
                         ) : (
                           <span className="text-[#D4F826] font-extrabold tabular-nums bg-[#D4F826]/10 px-2 py-0.5 rounded-lg border border-[#D4F826]/25">
-                            Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
+                            ~{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
                           </span>
                         )}
                       </div>
@@ -1832,6 +2030,36 @@ export function BudgetTab() {
                   />
                 </div>
 
+                {targetGroup === 'kebutuhan' && !newSubDueDay && (
+                  <button
+                    type="button"
+                    onClick={() => setNewSubIsGrocery((v) => !v)}
+                    className={`w-full p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between gap-2 ${
+                      newSubIsGrocery
+                        ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-400 text-amber-950 dark:text-amber-100'
+                        : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
+                    }`}
+                  >
+                    <div>
+                      <span className="text-xs font-extrabold block">
+                        🛒 Pos Stok Belanja Bulanan / Masak
+                      </span>
+                      <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                        Anggaran tidak dibagi harian agar aman dipakai belanja stok sekaligus
+                      </span>
+                    </div>
+                    <div
+                      className={`w-5 h-5 rounded-md flex items-center justify-center border shrink-0 ${
+                        newSubIsGrocery
+                          ? 'bg-amber-400 border-amber-500 text-black'
+                          : 'border-gray-300 dark:border-gray-600'
+                      }`}
+                    >
+                      {newSubIsGrocery && <Check size={13} strokeWidth={3} />}
+                    </div>
+                  </button>
+                )}
+
                 <div className="flex gap-2 pt-2">
                   <button
                     type="button"
@@ -1848,6 +2076,201 @@ export function BudgetTab() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal: Simulasi & Konsep Kuota Harian Mengikuti Sisa Belanja Bulanan */}
+      <AnimatePresence>
+        {isFoodModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white dark:bg-[#16181D] rounded-3xl p-5 sm:p-6 max-w-lg w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800 max-h-[92vh] overflow-y-auto"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400 bg-amber-500/15 px-2.5 py-0.5 rounded-full">
+                    KONSEP FLEKSIBEL: MENGIKUTI SISA UANG
+                  </span>
+                  <h3 className="text-base sm:text-lg font-extrabold text-gray-900 dark:text-white mt-1">
+                    Kuota Harian Mengikuti Sisa Belanja Bulanan
+                  </h3>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
+                    Tidak perlu mengunci jatah masak yang kaku di awal bulan. Mau hari ini masak, besok pagi masak malam beli luar, atau seharian tidak masak sama sekali — <strong>kuota harian otomatis menyesuaikan sisa uang Anda!</strong>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsFoodModalOpen(false)}
+                  className="p-1 text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {(() => {
+                const basePool = Math.max(
+                  0,
+                  dashboardSummary.remainingVariableBudget + dashboardSummary.todayVariableExpense
+                );
+                const daysLeft = Math.max(1, budgetPeriod.daysRemainingUntilPayday);
+                const nextWeekDaysLeft = Math.max(1, daysLeft - 7);
+
+                const shopToday = Math.max(0, parseNominalInput(tempGroceryBudgetInput));
+                const shopNextWeek = Math.max(0, parseNominalInput(tempEatOutBudgetInput));
+
+                const currentDailyQuota = dashboardSummary.dailyBudgetQuota;
+                const poolAfterTodayShop = Math.max(0, basePool - shopToday);
+                const dailyQuotaAfterTodayShop = Math.round(poolAfterTodayShop / daysLeft);
+
+                const poolAfterNextWeekShop = Math.max(0, poolAfterTodayShop - shopNextWeek);
+                const dailyQuotaAfterNextWeekShop = Math.round(poolAfterNextWeekShop / nextWeekDaysLeft);
+
+                return (
+                  <div className="space-y-4">
+                    {/* Status Riil Saat Ini */}
+                    <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-500 dark:text-gray-400 font-bold">
+                          Pagu Operasional (Di Luar Tagihan Rutin):
+                        </span>
+                        <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
+                          {formatRupiah(dashboardSummary.monthlyGroceryBudget, hide)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-500 dark:text-gray-400 font-bold">
+                          Sudah Dipakai Belanja Bulanan (🛒):
+                        </span>
+                        <span className="font-extrabold text-amber-600 dark:text-amber-400 tabular-nums">
+                          -{formatRupiah(dashboardSummary.monthlyGroceryExpense, hide)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-500 dark:text-gray-400 font-bold">
+                          Sudah Dipakai Harian (🥪 Makan Luar/Bensin):
+                        </span>
+                        <span className="font-extrabold text-gray-800 dark:text-gray-200 tabular-nums">
+                          -{formatRupiah(dashboardSummary.monthlyVariableExpense, hide)}
+                        </span>
+                      </div>
+                      <div className="pt-2 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs">
+                        <span className="font-black text-gray-900 dark:text-white">
+                          Sisa Uang Saat Ini ({daysLeft} hari s/d gajian):
+                        </span>
+                        <span className="font-black text-emerald-600 dark:text-[#D4F826] text-sm tabular-nums">
+                          {formatRupiah(dashboardSummary.remainingVariableBudget, hide)} (~{formatRupiah(currentDailyQuota, hide)}/hari)
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Simulator Interaktif */}
+                    <div className="space-y-3">
+                      <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
+                        Simulasi Jika Anda Belanja Bulanan Bertahap:
+                      </label>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Tahap 1: Hari Ini */}
+                        <div className="p-3 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-800/50 space-y-1.5">
+                          <label className="text-[11px] font-black text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                            <span>🛒</span>
+                            <span>Misal Hari Ini Belanja:</span>
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={tempGroceryBudgetInput}
+                            onChange={(e) => setTempGroceryBudgetInput(formatNominalInput(e.target.value))}
+                            placeholder="1.000.000"
+                            className="w-full p-2.5 bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 rounded-xl text-sm font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-400 tabular-nums"
+                          />
+                          <div className="text-[10px] text-amber-800 dark:text-amber-300 font-semibold space-y-0.5 pt-0.5">
+                            <div className="flex justify-between">
+                              <span>Sisa uang:</span>
+                              <strong className="tabular-nums">{formatRupiah(poolAfterTodayShop, hide)}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Kuota harian baru:</span>
+                              <strong className="tabular-nums">~{formatRupiah(dailyQuotaAfterTodayShop, hide)}/hr</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Tahap 2: Minggu Depan */}
+                        <div className="p-3 rounded-2xl bg-sky-50/60 dark:bg-sky-950/20 border border-sky-200/80 dark:border-sky-800/50 space-y-1.5">
+                          <label className="text-[11px] font-black text-sky-800 dark:text-sky-300 flex items-center gap-1.5">
+                            <span>🛒</span>
+                            <span>Minggu Depan Belanja Lagi:</span>
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={tempEatOutBudgetInput}
+                            onChange={(e) => setTempEatOutBudgetInput(formatNominalInput(e.target.value))}
+                            placeholder="2.000.000"
+                            className="w-full p-2.5 bg-white dark:bg-gray-900 border border-sky-300 dark:border-sky-700 rounded-xl text-sm font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400 tabular-nums"
+                          />
+                          <div className="text-[10px] text-sky-800 dark:text-sky-300 font-semibold space-y-0.5 pt-0.5">
+                            <div className="flex justify-between">
+                              <span>Sisa uang lagi:</span>
+                              <strong className="tabular-nums">{formatRupiah(poolAfterNextWeekShop, hide)}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Kuota harian ikut turun:</span>
+                              <strong className="tabular-nums">~{formatRupiah(dailyQuotaAfterNextWeekShop, hide)}/hr</strong>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Cara Kerja di Aplikasi */}
+                    <div className="p-3.5 rounded-2xl bg-[#121316] text-white space-y-2 border border-white/10 text-[11px] leading-relaxed">
+                      <div className="font-black text-[#D4F826] flex items-center gap-1.5">
+                        <span>💡</span>
+                        <span>Bagaimana Cara Mencatatnya?</span>
+                      </div>
+                      <ul className="space-y-1.5 text-gray-300 list-disc pl-4">
+                        <li>
+                          Saat habis belanja bulanan/mingguan (misal Rp 1 juta hari ini atau Rp 2 juta minggu depan), klik <strong>+ Catat</strong> lalu pilih sifat <strong>🛒 Belanja Bulanan / Masak</strong>.
+                        </li>
+                        <li>
+                          Belanja tersebut <strong>tidak bikin kuota hari ini merah/jebol</strong>, melainkan langsung mengurangi <strong>Sisa Uang</strong> periode ini sehingga <strong>Kuota Harian besok & seterusnya otomatis menyesuaikan sisa uang</strong>.
+                        </li>
+                        <li>
+                          Jika suatu hari Anda <strong>tidak masak sama sekali</strong> dan beli makan di luar seharian, cukup catat sebagai <strong>🥪 Harian / Makan Luar</strong> — otomatis memotong kuota harian yang sedang berjalan.
+                        </li>
+                      </ul>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsFoodModalOpen(false)}
+                        className="flex-1 py-3 rounded-2xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer"
+                      >
+                        Tutup
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsFoodModalOpen(false);
+                          openAddTransaction('expense');
+                        }}
+                        className="flex-1 py-3 px-4 rounded-2xl bg-[#D4F826] text-black text-xs font-black shadow-xs cursor-pointer hover:bg-[#c6ec15] flex items-center justify-center gap-1.5"
+                      >
+                        <span>🛒</span>
+                        <span>+ Catat Belanja Bulanan Sekarang</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </motion.div>
           </div>
         )}

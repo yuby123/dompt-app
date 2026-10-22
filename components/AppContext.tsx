@@ -254,8 +254,8 @@ interface AppContextType {
   settleDebt: (debtId: string, options?: { walletId?: string; date?: string; note?: string }) => boolean;
 
   updateBudgetConfig: (config: Partial<BudgetConfig>) => void;
-  addBudgetSubcategory: (item: { name: string; group: BudgetGroup; allocatedAmount: number; emoji: string; dueDateDay?: number }) => void;
-  updateBudgetSubcategory: (id: string, data: { name?: string; group?: BudgetGroup; allocatedAmount?: number; emoji?: string; dueDateDay?: number }) => void;
+  addBudgetSubcategory: (item: { name: string; group: BudgetGroup; allocatedAmount: number; emoji: string; dueDateDay?: number; isGroceryStock?: boolean }) => void;
+  updateBudgetSubcategory: (id: string, data: { name?: string; group?: BudgetGroup; allocatedAmount?: number; emoji?: string; dueDateDay?: number; isGroceryStock?: boolean }) => void;
   deleteBudgetSubcategory: (id: string) => void;
 
   addSubscription: (item: Omit<RecurringItem, 'id'>) => void;
@@ -1790,13 +1790,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       todayExpense,
       emergencyFundRunwayMonths: runwayMonths,
       liquidAssetsTotal: liquidTotal,
-      // Pos Anggaran Terpisah: Tagihan Bulanan (Fixed) vs Pengeluaran Harian (Variable)
+      // Pos Anggaran Terpisah: Tagihan Bulanan (Fixed) vs Belanja Bulanan/Masak (Grocery) vs Pengeluaran Harian (Variable)
+      foodLifestyleMode: breakdown.foodLifestyleMode,
+      mealsOutPerDay: breakdown.mealsOutPerDay,
       monthlyFixedBudget: breakdown.monthlyFixedBudget,
+      monthlyGroceryBudget: breakdown.monthlyGroceryBudget,
       monthlyVariableBudget: breakdown.monthlyVariableBudget,
       monthlyFixedExpense: breakdown.monthlyFixedExpense,
+      monthlyGroceryExpense: breakdown.monthlyGroceryExpense,
       monthlyVariableExpense: breakdown.monthlyVariableExpense,
       todayVariableExpense: breakdown.todayVariableExpense,
+      todayGroceryExpense: breakdown.todayGroceryExpense,
       todayFixedExpense: breakdown.todayFixedExpense,
+      remainingGroceryBudget: breakdown.remainingGroceryBudget,
       dailyOverbudget: breakdown.dailyOverbudget,
       dailyOverbudgetAmount: breakdown.dailyOverbudgetAmount,
       paydayDay: breakdown.paydayDay,
@@ -2706,7 +2712,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const addBudgetSubcategory = (item: { name: string; group: BudgetGroup; allocatedAmount: number; emoji: string; dueDateDay?: number }) => {
+  const addBudgetSubcategory = (item: { name: string; group: BudgetGroup; allocatedAmount: number; emoji: string; dueDateDay?: number; isGroceryStock?: boolean }) => {
     markLocalMutation();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const newSub = {
@@ -2728,7 +2734,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateBudgetSubcategory = (
     id: string,
-    data: { name?: string; group?: BudgetGroup; allocatedAmount?: number; emoji?: string; dueDateDay?: number }
+    data: { name?: string; group?: BudgetGroup; allocatedAmount?: number; emoji?: string; dueDateDay?: number; isGroceryStock?: boolean }
   ) => {
     markLocalMutation();
     const now = new Date().toISOString();

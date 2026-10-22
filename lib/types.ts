@@ -9,6 +9,10 @@ export type BudgetStatus = 'safe' | 'warning' | 'exceeded';
 
 export type BudgetGroup = 'kebutuhan' | 'keinginan' | 'tabungan';
 
+export type FoodLifestyleMode = 'eat_out' | 'hybrid' | 'cook_home';
+
+export type ExpenseNature = 'variable' | 'grocery' | 'fixed' | 'savings';
+
 export interface Wallet {
   id: string;
   name: string;
@@ -30,7 +34,7 @@ export interface Category {
   type: 'expense' | 'income';
   groupName: string;
   budgetGroup?: BudgetGroup;
-  expenseNature?: 'variable' | 'fixed' | 'savings'; // 'variable' (Pengeluaran Harian) | 'fixed' (Tagihan Bulanan) | 'savings' (Alokasi Tabungan)
+  expenseNature?: ExpenseNature; // 'variable' (Pengeluaran Harian) | 'grocery' (Belanja Bulanan/Bahan Masak) | 'fixed' (Tagihan Bulanan) | 'savings' (Alokasi Tabungan)
   iconKey: string;
   emoji?: string;
   colorValue: string;
@@ -50,6 +54,7 @@ export interface BudgetSubcategory {
   categoryId?: string;
   frequency?: 'monthly' | 'yearly' | 'weekly';
   lastRecordedPeriod?: string;
+  isGroceryStock?: boolean; // Menandakan pos belanja bulanan / bahan masak (tidak dibagi harian)
 }
 
 export interface RecurringItem {
@@ -92,6 +97,8 @@ export interface BudgetConfig {
   wantsPercent: number; // 30%
   savingsPercent: number; // 20%
   paydayDay?: number; // Tanggal gajian / mulai siklus budget (1-31, default 1)
+  foodLifestyleMode?: FoodLifestyleMode; // 'eat_out' (Makan Luar) | 'hybrid' (Masak + Beli Luar) | 'cook_home' (Full Masak/Belanja Bulanan)
+  mealsOutPerDay?: number; // Jumlah makan beli di luar per hari (misal 3, 1, atau 0)
   subcategories: BudgetSubcategory[];
   subscriptions?: RecurringItem[];
   liquidAssets?: AssetItem[];
@@ -176,7 +183,7 @@ export interface Transaction {
   amount: number;
   categoryId?: string | null;
   budgetGroup?: BudgetGroup;
-  expenseNature?: 'variable' | 'fixed' | 'savings'; // 'variable' (Pengeluaran Harian) | 'fixed' (Tagihan Bulanan) | 'savings' (Alokasi Tabungan)
+  expenseNature?: ExpenseNature; // 'variable' (Pengeluaran Harian) | 'grocery' (Belanja Bulanan/Masak) | 'fixed' (Tagihan Bulanan) | 'savings' (Alokasi Tabungan)
   walletId: string;
   transferWalletId?: string | null;
   date: string; // ISO date string
@@ -247,13 +254,19 @@ export interface DashboardSummary {
   todayExpense: number;
   emergencyFundRunwayMonths: number;
   liquidAssetsTotal: number;
-  // Pos Anggaran Terpisah: Tagihan Bulanan (Fixed) vs Pengeluaran Harian (Variable)
+  // Pos Anggaran Terpisah: Tagihan Bulanan (Fixed) vs Belanja Bulanan/Masak (Grocery) vs Pengeluaran Harian (Variable)
+  foodLifestyleMode: FoodLifestyleMode;
+  mealsOutPerDay: number;
   monthlyFixedBudget: number;
+  monthlyGroceryBudget: number;
   monthlyVariableBudget: number;
   monthlyFixedExpense: number;
+  monthlyGroceryExpense: number;
   monthlyVariableExpense: number;
   todayVariableExpense: number;
+  todayGroceryExpense: number;
   todayFixedExpense: number;
+  remainingGroceryBudget: number;
   dailyOverbudget: boolean;
   dailyOverbudgetAmount: number;
   // Siklus Periode Gajian (Payday Cycle)

@@ -1,4 +1,4 @@
-import { BudgetConfig, Category, Debt, RecurringItem, Transaction } from './types';
+import { BudgetConfig, Category, Debt, ExpenseNature, FoodLifestyleMode, RecurringItem, Transaction } from './types';
 
 // Category IDs that represent fixed monthly obligations
 export const FIXED_CATEGORY_IDS = new Set([
@@ -15,9 +15,18 @@ export const SAVINGS_CATEGORY_IDS = new Set([
   'cat-investasi',
 ]);
 
+// Category IDs that represent bulk grocery / home-cooking stock
+export const GROCERY_CATEGORY_IDS = new Set([
+  'cat-belanja-bulanan',
+]);
+
 // Keywords in transaction note or category name indicating a fixed monthly bill
 export const FIXED_EXPENSE_KEYWORDS_REGEX =
   /(wifi|wi-fi|indihome|biznet|first media|myrepublic|my republic|iconnet|cbn|pln|token|token listrik|listrik|air pam|pdam|bpjs|asuransi|sewa|kost|kosan|kontrakan|kontrak rumah|netflix|spotify|youtube premium|disney|disney\+|hbo|apple tv|prime video|icloud|google one|canva|zoom|cicilan|angsuran|kpr|utang|tagihan|iuran|langganan|subscription|kartu kredit|credit card|paylater|bayar cicilan|pembayaran cicilan|otomatis rutin)/i;
+
+// Keywords indicating bulk grocery shopping / cooking ingredients (Belanja Bulanan / Bahan Masak)
+export const GROCERY_EXPENSE_KEYWORDS_REGEX =
+  /(belanja bulanan|bahan masak|bahan makanan|sembako|stok dapur|belanja dapur|belanja pasar|sayur & lauk|bumbu dapur|beras & minyak|stok masak|belanja mingguan|supermarket bulanan)/i;
 
 /**
  * Normalizes a recurring subscription amount into its monthly equivalent.
@@ -40,18 +49,63 @@ export function isSavingsExpense(
     categoryId?: string | null;
     note?: string;
     budgetGroup?: string;
-    expenseNature?: 'variable' | 'fixed' | 'savings';
+    expenseNature?: ExpenseNature;
   },
   category?: Category | null
 ): boolean {
   if (tx.expenseNature === 'savings') return true;
-  if (tx.expenseNature === 'variable' || tx.expenseNature === 'fixed') return false;
+  if (tx.expenseNature === 'variable' || tx.expenseNature === 'grocery' || tx.expenseNature === 'fixed') return false;
   if (tx.budgetGroup === 'tabungan') return true;
   if (tx.categoryId && SAVINGS_CATEGORY_IDS.has(tx.categoryId)) return true;
   if (category?.budgetGroup === 'tabungan' || category?.groupName === 'Tabungan' || category?.expenseNature === 'savings') {
     return true;
   }
   return false;
+}
+
+/**
+ * Determines whether a transaction is a Bulk Grocery / Home-Cooking Stock Expense
+ * (Belanja Bulanan / Bahan Masak di Rumah — tidak dibagi/memotong kuota jajan harian).
+ */
+export function isGroceryExpense(
+  tx: {
+    categoryId?: string | null;
+    note?: string;
+    budgetGroup?: string;
+    expenseNature?: ExpenseNature;
+  },
+  category?: Category | null
+): boolean {
+  if (tx.expenseNature === 'grocery') return true;
+  if (tx.expenseNature === 'variable' || tx.expenseNature === 'fixed' || tx.expenseNature === 'savings') {
+    return false;
+  }
+  if (isSavingsExpense(tx, category)) return false;
+  if (tx.categoryId && GROCERY_CATEGORY_IDS.has(tx.categoryId)) return true;
+  if (category?.expenseNature === 'grocery') return true;
+  if (category?.name && GROCERY_EXPENSE_KEYWORDS_REGEX.test(category.name)) return true;
+  if (tx.note && GROCERY_EXPENSE_KEYWORDS_REGEX.test(tx.note)) return true;
+  return false;
+}
+
+/**
+ * Determines whether a budget subcategory represents bulk grocery / cooking stock.
+ */
+export function isGrocerySubcategory(sub: {
+  id: string;
+  name: string;
+  group?: string;
+  isGroceryStock?: boolean;
+  dueDateDay?: number;
+  subscriptionId?: string;
+}): boolean {
+  if (sub.group === 'tabungan') return false;
+  if (sub.isGroceryStock === true) return true;
+  if (sub.dueDateDay || sub.subscriptionId || sub.id.startsWith('sub-debt-')) return false;
+  if (sub.id === 'sub-belanja-bulanan' || sub.id === 'sub-bahan-masak' || sub.id === 'sub-masak') {
+    return true;
+  }
+  return GROCERY_EXPENSE_KEYWORDS_REGEX.test(sub.name);
 }
 
 /**
@@ -63,16 +117,17 @@ export function isFixedExpense(
     categoryId?: string | null;
     note?: string;
     budgetGroup?: string;
-    expenseNature?: 'variable' | 'fixed' | 'savings';
+    expenseNature?: ExpenseNature;
   },
   category?: Category | null
 ): boolean {
   // 1. Explicit user designation on transaction has highest priority
   if (tx.expenseNature === 'fixed') return true;
-  if (tx.expenseNature === 'variable' || tx.expenseNature === 'savings') return false;
+  if (tx.expenseNature === 'variable' || tx.expenseNature === 'grocery' || tx.expenseNature === 'savings') return false;
 
-  // Savings allocations belong to the 20% Tabungan bucket, not fixed bills
+  // Savings allocations & Grocery stock belong to their own buckets, not fixed bills
   if (isSavingsExpense(tx, category)) return false;
+  if (isGroceryExpense(tx, category)) return false;
 
   // 2. Debt / installment or automated recurring subscription payments are always fixed obligations
   if (tx.note && /bayar cicilan|cicilan utang|pelunasan utang|angsuran|\(otomatis rutin\)|\(langganan\)/i.test(tx.note)) {
@@ -107,15 +162,16 @@ export function isFixedExpense(
 }
 
 /**
- * Auto-detect whether an input should default to 'savings', 'fixed', or 'variable'
+ * Auto-detect whether an input should default to 'savings', 'fixed', 'grocery', or 'variable'
  */
 export function detectExpenseNature(
   categoryId: string | null | undefined,
   note: string | undefined,
   categoryMap?: Map<string, Category>
-): 'variable' | 'fixed' | 'savings' {
+): ExpenseNature {
   const cat = categoryId && categoryMap ? categoryMap.get(categoryId) : undefined;
   if (isSavingsExpense({ categoryId, note }, cat)) return 'savings';
+  if (isGroceryExpense({ categoryId, note }, cat)) return 'grocery';
   return isFixedExpense({ categoryId, note }, cat) ? 'fixed' : 'variable';
 }
 
@@ -369,16 +425,22 @@ export function getAdjacentPeriodDateStr(
 export interface BudgetBreakdownResult {
   daysInMonth: number;
   monthlySpendingLimit: number;
+  foodLifestyleMode: FoodLifestyleMode;
+  mealsOutPerDay: number;
   monthlyFixedBudget: number;
+  monthlyGroceryBudget: number;
   monthlyVariableBudget: number;
   dailyBudgetQuota: number;
   todayVariableExpense: number;
+  todayGroceryExpense: number;
   todayFixedExpense: number;
   todayTotalExpense: number;
   dailyBudgetRemaining: number;
+  remainingGroceryBudget: number;
   dailyOverbudget: boolean;
   dailyOverbudgetAmount: number;
   monthlyFixedExpense: number;
+  monthlyGroceryExpense: number;
   monthlyVariableExpense: number;
   monthlyTotalExpense: number;
   // Siklus Periode Gajian (Payday Cycle)
@@ -395,7 +457,11 @@ export interface BudgetBreakdownResult {
 
 /**
  * Calculates structured period budget allocation and daily budget remaining.
- * Supports custom payday cycles (e.g. Tanggal 25 -> Tanggal 25 bulan selanjutnya).
+ * Supports custom payday cycles (e.g. Tanggal 25 -> Tanggal 25 bulan selanjutnya)
+ * and 3 Food/Grocery Lifestyle Modes:
+ * - 'eat_out': Tiap hari makan di luar (semua anggaran makan dibagi harian)
+ * - 'hybrid': Pagi/siang masak, malam beli makan di luar (sebagian di Pos Belanja Bulanan/Masak, sebagian dibagi harian)
+ * - 'cook_home': Tiap hari masak sendiri dengan belanja bulanan/mingguan (anggaran makan masuk ke Pos Belanja Bulanan/Masak)
  */
 export function calculateBudgetBreakdown({
   budgetConfig,
@@ -429,8 +495,10 @@ export function calculateBudgetBreakdown({
   // Build lookup of expense subscriptions
   const expenseSubscriptions = subscriptions.filter((s) => s.type === 'expense');
 
-  // 2. Identify active fixed subcategories from Needs & Wants in budgetConfig (exclude 'tabungan' which has its own 20% bucket)
+  // 2. Identify active fixed subcategories and grocery/cooking stock subcategories from Needs & Wants
   const activeFixedSubs: { id: string; name: string; allocatedAmount: number }[] = [];
+  const activeGrocerySubs: { id: string; name: string; allocatedAmount: number }[] = [];
+
   if (budgetConfig?.subcategories && budgetConfig.subcategories.length > 0) {
     budgetConfig.subcategories.forEach((sub) => {
       if (sub.group === 'tabungan') return;
@@ -456,8 +524,15 @@ export function calculateBudgetBreakdown({
         sub.id.startsWith('sub-debt-') ||
         FIXED_CATEGORY_IDS.has(sub.id.replace('sub-', 'cat-')) ||
         FIXED_EXPENSE_KEYWORDS_REGEX.test(sub.name);
+
       if (isSubFixed) {
         activeFixedSubs.push({
+          id: sub.id,
+          name: sub.name,
+          allocatedAmount: Number(sub.allocatedAmount) || 0,
+        });
+      } else if (isGrocerySubcategory(sub)) {
+        activeGrocerySubs.push({
           id: sub.id,
           name: sub.name,
           allocatedAmount: Number(sub.allocatedAmount) || 0,
@@ -465,6 +540,15 @@ export function calculateBudgetBreakdown({
       }
     });
   }
+
+  // Determine Food Lifestyle Mode (default dynamic flexible pool)
+  const foodLifestyleMode: FoodLifestyleMode =
+    budgetConfig?.foodLifestyleMode || 'hybrid';
+
+  const mealsOutPerDay =
+    typeof budgetConfig?.mealsOutPerDay === 'number'
+      ? budgetConfig.mealsOutPerDay
+      : 1;
 
   // 2b. Auto-include active payable debts (cicilan utang) into fixed obligations
   (debts || []).forEach((debt) => {
@@ -492,14 +576,19 @@ export function calculateBudgetBreakdown({
   const fixedSubSpentMap: Record<string, number> = {};
   let unallocatedFixedExp = 0;
 
-  const matchFixedSubcategory = (noteStr: string, catNameStr: string, categoryId?: string | null) => {
+  const matchSubcategoryList = (
+    list: { id: string; name: string; allocatedAmount: number }[],
+    noteStr: string,
+    catNameStr: string,
+    categoryId?: string | null
+  ) => {
     const cleanNote = noteStr
       .toLowerCase()
       .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)|bayar cicilan utang:|cicilan utang:/gi, '')
       .trim();
     const rawNote = noteStr.toLowerCase().trim();
 
-    return activeFixedSubs.find((s) => {
+    return list.find((s) => {
       const subNameLower = s.name.toLowerCase().trim();
       const cleanSubName = subNameLower.replace(/^cicilan\s+/i, '').trim();
       if (categoryId && s.id.replace('sub-', '') === categoryId.replace('cat-', '')) {
@@ -539,10 +628,12 @@ export function calculateBudgetBreakdown({
     });
   };
 
-  // 3. Partition transactions in the active budget period into Variable vs Fixed
+  // 3. Partition transactions in the active budget period into Variable (Harian) vs Grocery (Belanja Bulanan) vs Fixed (Tagihan)
   let monthlyVarExp = 0;
+  let monthlyGrocExp = 0;
   let monthlyFixExp = 0;
   let todayVarExp = 0;
+  let todayGrocExp = 0;
   let todayFixExp = 0;
   const recordedTxIds = new Set<string>();
 
@@ -554,16 +645,25 @@ export function calculateBudgetBreakdown({
       const cat = tx.categoryId ? categoryMap.get(tx.categoryId) || null : null;
       // Savings allocations belong to the 20% Tabungan bucket, not Needs/Wants daily or fixed obligations
       if (isSavingsExpense(tx, cat)) return;
-      const fixed = isFixedExpense(tx, cat);
+
+      const grocery = isGroceryExpense(tx, cat);
+      const fixed = !grocery && isFixedExpense(tx, cat);
 
       if (fixed) {
         monthlyFixExp += tx.amount;
-        const matchedSub = matchFixedSubcategory(tx.note || '', (cat?.name || '').toLowerCase(), tx.categoryId);
+        const matchedSub = matchSubcategoryList(
+          activeFixedSubs,
+          tx.note || '',
+          (cat?.name || '').toLowerCase(),
+          tx.categoryId
+        );
         if (matchedSub) {
           fixedSubSpentMap[matchedSub.id] = (fixedSubSpentMap[matchedSub.id] || 0) + tx.amount;
         } else {
           unallocatedFixedExp += tx.amount;
         }
+      } else if (grocery) {
+        monthlyGrocExp += tx.amount;
       } else {
         monthlyVarExp += tx.amount;
       }
@@ -575,6 +675,8 @@ export function calculateBudgetBreakdown({
       ) {
         if (fixed) {
           todayFixExp += tx.amount;
+        } else if (grocery) {
+          todayGrocExp += tx.amount;
         } else {
           todayVarExp += tx.amount;
         }
@@ -597,7 +699,11 @@ export function calculateBudgetBreakdown({
         ) {
           todayFixExp += p.amount;
         }
-        const matchedSub = matchFixedSubcategory(`${debt.name} ${p.note || ''}`, 'tagihan');
+        const matchedSub = matchSubcategoryList(
+          activeFixedSubs,
+          `${debt.name} ${p.note || ''}`,
+          'tagihan'
+        );
         if (matchedSub) {
           fixedSubSpentMap[matchedSub.id] = (fixedSubSpentMap[matchedSub.id] || 0) + p.amount;
         } else {
@@ -607,7 +713,7 @@ export function calculateBudgetBreakdown({
     });
   });
 
-  // 4. Monthly Fixed Budget:
+  // 4. Monthly Fixed Budget (Tagihan Bulanan Rutin):
   const effectiveSubsFixedTotal = activeFixedSubs.reduce((sum, sub) => {
     const spentOnSub = fixedSubSpentMap[sub.id] || 0;
     return sum + Math.max(sub.allocatedAmount, spentOnSub);
@@ -615,21 +721,36 @@ export function calculateBudgetBreakdown({
 
   const monthlyFixedBudget = effectiveSubsFixedTotal + unallocatedFixedExp;
 
-  // 5. Monthly Variable Budget (untuk operasional harian selama periode gajian)
-  const monthlyVariableBudget = Math.max(0, monthlySpendingLimit - monthlyFixedBudget);
+  // 5. Dynamic Operational & Grocery Pool (Konsep Fleksibel: Kuota Harian Mengikuti Sisa Uang Setelah Belanja Bulanan):
+  // - initialOperationalPool = Total Pagu Operasional & Makan/Belanja (di luar Tagihan Bulanan & Tabungan).
+  // - Setiap kali user mencatat Belanja Bulanan (misal hari ini Rp 1 juta, minggu depan Rp 2 juta),
+  //   uang Belanja Bulanan (monthlyGrocExp) langsung memotong Pagu Operasional tanpa membuat hari ini Overbudget Harian,
+  //   dan Kuota Harian otomatis dihitung ulang mengikuti sisa uangnya!
+  const initialOperationalPool = Math.max(0, monthlySpendingLimit - monthlyFixedBudget);
+  const monthlyGroceryBudget = initialOperationalPool;
+  const monthlyVariableBudget = Math.max(0, initialOperationalPool - monthlyGrocExp);
 
-  // 6. Daily Budget Quota (kuota dasar per hari selama siklus periode gajian, misal 25 ke 25 bulan depan)
-  const dailyBudgetQuota =
-    estIncome > 0 && daysInMonth > 0 ? Math.round(monthlyVariableBudget / daysInMonth) : 0;
-
-  // 7. Sisa Budget Harian & Rekomendasi Batas Harian Agar Cukup Sampai Tanggal Gajian Berikutnya
+  // 6. Sisa Uang Operasional & Kuota Harian Dinamis (mengikuti sisa uang setelah Belanja Bulanan)
   const priorDaysVarExp = Math.max(0, monthlyVarExp - todayVarExp);
   const remainingMonthlyVarBeforeToday = Math.max(0, monthlyVariableBudget - priorDaysVarExp);
   const remainingVariableBudget = Math.max(0, monthlyVariableBudget - monthlyVarExp);
+  const remainingGroceryBudget = remainingVariableBudget;
 
-  // Safe daily budget so that actual remaining variable budget lasts until the next payday:
-  // If user has already spent today (todayVarExp > 0) and there are remaining days after today,
-  // divide remainingVariableBudget by the remaining future days (or daysRemainingUntilPayday if todayVarExp == 0).
+  const baseDailyAfterGrocery =
+    estIncome > 0 && daysInMonth > 0 ? Math.round(monthlyVariableBudget / daysInMonth) : 0;
+
+  const rollingDailyBeforeToday =
+    estIncome > 0 && periodInfo.daysRemainingUntilPayday > 0
+      ? Math.round(remainingMonthlyVarBeforeToday / periodInfo.daysRemainingUntilPayday)
+      : 0;
+
+  // Kuota Harian mengikuti sisa pagu setelah dipotong Belanja Bulanan (dan menyesuaikan jika sisa uang riil lebih kecil)
+  const dailyBudgetQuota =
+    priorDaysVarExp > 0
+      ? Math.min(baseDailyAfterGrocery, rollingDailyBeforeToday)
+      : baseDailyAfterGrocery;
+
+  // Safe daily budget so that actual remaining money lasts until the next payday:
   const remainingDaysForSafeQuota =
     todayVarExp > 0 && periodInfo.daysRemainingUntilPayday > 1
       ? periodInfo.daysRemainingUntilPayday - 1
@@ -652,18 +773,24 @@ export function calculateBudgetBreakdown({
   return {
     daysInMonth,
     monthlySpendingLimit,
+    foodLifestyleMode,
+    mealsOutPerDay,
     monthlyFixedBudget,
+    monthlyGroceryBudget,
     monthlyVariableBudget,
     dailyBudgetQuota,
     todayVariableExpense: todayVarExp,
+    todayGroceryExpense: todayGrocExp,
     todayFixedExpense: todayFixExp,
-    todayTotalExpense: todayVarExp + todayFixExp,
+    todayTotalExpense: todayVarExp + todayGrocExp + todayFixExp,
     dailyBudgetRemaining,
+    remainingGroceryBudget,
     dailyOverbudget,
     dailyOverbudgetAmount,
     monthlyFixedExpense: monthlyFixExp,
+    monthlyGroceryExpense: monthlyGrocExp,
     monthlyVariableExpense: monthlyVarExp,
-    monthlyTotalExpense: monthlyVarExp + monthlyFixExp,
+    monthlyTotalExpense: monthlyVarExp + monthlyGrocExp + monthlyFixExp,
     paydayDay: periodInfo.paydayDay,
     periodTotalDays: periodInfo.totalDays,
     currentPeriodDay: periodInfo.currentDayOfPeriod,

@@ -397,7 +397,11 @@ export function DashboardTab() {
               <span className="text-slate-400 shrink-0">•</span>
               <span className="font-medium text-slate-300 truncate">
                 <span className="sm:hidden">Kuota Harian</span>
-                <span className="hidden sm:inline">Kuota Operasional Harian</span>
+                <span className="hidden sm:inline">
+                  {dashboardSummary.monthlyGroceryExpense > 0
+                    ? 'Kuota Harian (Mengikuti Sisa Uang)'
+                    : 'Kuota Operasional Harian'}
+                </span>
               </span>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 shrink-0">
@@ -425,7 +429,9 @@ export function DashboardTab() {
                 {dashboardSummary.dailyOverbudget
                   ? `Melebihi kuota harian (${formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari`
                   : dashboardSummary.dailyBudgetQuota > 0 && dashboardSummary.remainingVariableBudget <= 0
-                  ? `Kuota operasional periode ini (${formatRupiah(dashboardSummary.monthlyVariableBudget, hide)}) telah habis terpakai di hari sebelumnya`
+                  ? `Sisa uang operasional periode ini telah habis terpakai`
+                  : dashboardSummary.monthlyGroceryExpense > 0
+                  ? `Tersedia dari kuota ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari (mengikuti sisa uang setelah Belanja Bulanan)`
                   : `Tersedia dari kuota harian ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari di luar tagihan tetap`}
               </p>
               {dashboardSummary.hasMonthlyBudget && (
@@ -440,6 +446,44 @@ export function DashboardTab() {
                     </span>
                   )}
                 </p>
+              )}
+
+              {/* Status Dinamis Sisa Uang Setelah Belanja Bulanan */}
+              {dashboardSummary.hasMonthlyBudget && (
+                <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                  {dashboardSummary.monthlyGroceryExpense > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => openAddTransaction('expense')}
+                      className="inline-flex flex-wrap items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/35 text-[11px] font-bold text-amber-200 transition-colors cursor-pointer text-left"
+                      title="Kuota harian otomatis berkurang mengikuti sisa uang setiap kali Anda mencatat Belanja Bulanan"
+                    >
+                      <span>
+                        🛒 Belanja Bulanan:{' '}
+                        <strong className="text-amber-300 font-mono">
+                          -{formatRupiah(dashboardSummary.monthlyGroceryExpense, hide)}
+                        </strong>
+                      </span>
+                      <span className="text-amber-400/60">•</span>
+                      <span>
+                        Sisa Uang:{' '}
+                        <strong className="text-white font-mono">
+                          {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
+                        </strong>
+                      </span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openAddTransaction('expense')}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-[11px] font-semibold text-slate-300 hover:text-white transition-colors cursor-pointer"
+                      title="Catat belanja bulanan/mingguan agar kuota harian otomatis mengikuti sisa uang"
+                    >
+                      <span>🛒 Habis belanja bulanan/masak?</span>
+                      <span className="text-amber-300 font-bold">Catat di sini agar kuota harian mengikuti sisa uang →</span>
+                    </button>
+                  )}
+                </div>
               )}
             </div>
 

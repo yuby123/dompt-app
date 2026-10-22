@@ -246,6 +246,7 @@ export const DEFAULT_UPCOMING_BILLS: UpcomingBill[] = [
 
 export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'cat-makan', name: 'Makan', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'variable', iconKey: 'Utensils', emoji: '🍽️', colorValue: '#DC2626', isDefault: true },
+  { id: 'cat-belanja-bulanan', name: 'Belanja Bulanan & Masak', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'grocery', iconKey: 'ShoppingCart', emoji: '🛒', colorValue: '#D97706', isDefault: true },
   { id: 'cat-jajan', name: 'Jajan', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', expenseNature: 'variable', iconKey: 'Coffee', emoji: '☕', colorValue: '#EC4899', isDefault: true },
   { id: 'cat-belanja', name: 'Belanja Online', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', expenseNature: 'variable', iconKey: 'ShoppingCart', emoji: '🛍️', colorValue: '#8B5CF6', isDefault: true },
   { id: 'cat-listrik', name: 'Listrik', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'fixed', iconKey: 'Zap', emoji: '⚡', colorValue: '#F97316', isDefault: true },

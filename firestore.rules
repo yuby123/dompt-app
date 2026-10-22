@@ -66,7 +66,7 @@ service cloud.firestore {
         && data.amount is number
         && data.categoryId is string && data.categoryId.size() <= 100
         && (!('budgetGroup' in data) || (data.budgetGroup is string && data.budgetGroup.size() <= 50))
-        && (!('expenseNature' in data) || data.expenseNature in ['variable', 'fixed', 'savings'])
+        && (!('expenseNature' in data) || data.expenseNature in ['variable', 'fixed', 'savings', 'grocery'])
         && data.date is string && data.date.size() <= 30
         && (!('note' in data) || (data.note is string && data.note.size() <= 500))
         && (!('transferWalletId' in data) || (data.transferWalletId is string && data.transferWalletId.size() <= 128))

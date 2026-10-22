@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useApp } from './AppContext';
 
 interface BrandLogoProps {
@@ -8,9 +8,19 @@ interface BrandLogoProps {
   className?: string;
 }
 
+export const DOMPT_LOGO_PATH =
+  'M74.17 28.67L75.82 28.68L77.33 30.17L89.33 52.17L89.82 54.84L87.83 57.31L86.88 57.12L84.88 54.63L81.23 51.38L83.32 47.66L78.49 38.51L77.55 38.06L75.50 38.50L72.17 37.83L69.33 35.69L68.66 35.68L54.00 45.50L52.49 45.99L48.29 45.82L48.67 45.17L71.17 30.17Z M38.67 40.67L49.99 40.51L50.76 40.88L46.95 43.45L39.68 43.68L38.68 44.68L38.51 45.99L38.88 47.12L40.05 47.95L64.49 48.01L68.95 48.55L74.33 50.17L80.88 54.13L84.12 57.38L87.44 63.05L87.27 63.77L86.49 63.99L74.55 63.95L69.83 60.17L65.95 58.55L62.99 58.01L48.18 58.18L47.51 59.51L47.51 87.99L48.18 89.32L50.50 89.50L60.49 89.49L65.33 88.83L68.33 87.83L70.83 86.33L75.55 81.55L86.99 81.51L87.94 82.06L87.83 83.33L84.83 88.83L80.12 93.62L74.33 96.83L69.83 98.33L65.50 99.00L37.00 99.00L35.39 98.61L35.00 97.00L35.01 45.51L35.68 43.18L36.72 41.72Z M71.18 45.18L72.99 45.01L74.11 45.39L74.94 47.05L74.77 47.76L74.16 47.82L70.40 46.62L70.23 46.13Z M90.78 62.69L91.33 62.69L92.62 63.88L93.49 66.01L93.49 75.99L92.28 78.28L90.00 79.00L74.51 78.99L72.67 78.33L70.67 76.33L69.55 73.45L70.17 70.67L71.39 68.39L75.55 66.55L89.45 66.45L90.82 65.32Z M76.00 70.11L73.72 71.22L73.02 73.00L73.89 75.11L75.62 75.77L77.61 75.11L78.48 73.00L77.61 70.89Z';
+
 export function BrandLogo({ size = 'md', className = '' }: BrandLogoProps) {
   const { settings } = useApp();
   const accent = settings?.accentColor || 'lime';
+
+  const bgHex =
+    accent === 'orange'
+      ? '#FF6B00'
+      : accent === 'pink'
+      ? '#FFA4A4'
+      : '#D4F826';
 
   const bgClass =
     accent === 'orange'
@@ -18,6 +28,27 @@ export function BrandLogo({ size = 'md', className = '' }: BrandLogoProps) {
       : accent === 'pink'
       ? 'bg-[#FFA4A4]'
       : 'bg-[#D4F826]';
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><rect width="128" height="128" rx="32" fill="${bgHex}"/><path d="${DOMPT_LOGO_PATH}" fill="#000000" fill-rule="evenodd"/></svg>`;
+    const dataUrl = `data:image/svg+xml,${encodeURIComponent(svgString)}`;
+
+    const links = document.querySelectorAll<HTMLLinkElement>(
+      "link[rel='icon'], link[rel='shortcut icon'], link[rel='apple-touch-icon']"
+    );
+    if (links.length > 0) {
+      links.forEach((link) => {
+        link.href = dataUrl;
+      });
+    } else {
+      const link = document.createElement('link');
+      link.rel = 'icon';
+      link.type = 'image/svg+xml';
+      link.href = dataUrl;
+      document.head.appendChild(link);
+    }
+  }, [bgHex]);
 
   const sizeClasses = {
     sm: 'w-8 h-8 rounded-xl',
@@ -30,11 +61,15 @@ export function BrandLogo({ size = 'md', className = '' }: BrandLogoProps) {
     <div
       className={`relative overflow-hidden flex items-center justify-center shrink-0 transition-colors duration-300 ${bgClass} ${sizeClasses} ${className}`}
     >
-      <img
-        src="/assets/aistudio/Gemini_Generated_Image_20y12o20y12o20y1_052c8469.jpeg"
-        alt="Dompt. Logo"
-        className="w-full h-full object-cover scale-[1.38] mix-blend-multiply grayscale contrast-[8] brightness-115 select-none pointer-events-none"
-      />
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 128 128"
+        className="w-[86%] h-[86%] select-none pointer-events-none"
+        aria-label="Dompt. Logo"
+      >
+        <path d={DOMPT_LOGO_PATH} fill="#000000" fillRule="evenodd" />
+      </svg>
     </div>
   );
 }
+

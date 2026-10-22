@@ -24,11 +24,11 @@ export const metadata: Metadata = {
   manifest: '/manifest.json',
   icons: {
     icon: [
-      { url: '/favicon.svg', type: 'image/svg+xml' },
-      { url: '/icons/dompt-logo.svg', type: 'image/svg+xml' },
+      { url: '/favicon.svg?v=3', type: 'image/svg+xml' },
+      { url: '/icons/dompt-logo.svg?v=3', type: 'image/svg+xml' },
     ],
-    shortcut: '/favicon.svg',
-    apple: '/icons/dompt-logo.svg',
+    shortcut: '/favicon.svg?v=3',
+    apple: '/icons/dompt-logo.svg?v=3',
   },
   openGraph: {
     title: 'Dompt. — Dompet & Keuangan Pribadi',

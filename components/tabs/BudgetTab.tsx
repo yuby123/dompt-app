@@ -113,11 +113,12 @@ export function BudgetTab() {
   const daysInCurMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
   const curMonthShort = curMonthDate.toLocaleString('id-ID', { month: 'short' });
 
-  // Merge subcategories with any payable debt payments made in the active period not yet in budgetConfig.subcategories
+  // Merge subcategories with all payable debts (including active installments with Rp0 paid)
   const effectiveSubcategories = useMemo<BudgetSubcategory[]>(() => {
     const base = [...(budgetConfig.subcategories || [])];
     (debts || []).forEach((debt) => {
       if (debt.type !== 'payable') return;
+      const isPaid = debt.status === 'paid' && (debt.remainingAmount ?? 0) <= 0;
       const paidThisMonth = (debt.payments || []).reduce((sum, p) => {
         const pd = new Date(p.date);
         if (isDateInBudgetPeriod(pd, budgetPeriod)) {
@@ -125,22 +126,61 @@ export function BudgetTab() {
         }
         return sum;
       }, 0);
-      if (paidThisMonth <= 0) return;
+
+      // If debt is paid off and had 0 payments this month, don't inject
+      if (isPaid && paidThisMonth <= 0) return;
 
       const debtSubId = `sub-debt-${debt.id}`;
       const cleanDebtName = debt.name.toLowerCase().trim();
-      const subDisplayName = `Cicilan ${debt.name}`;
-      const exists = base.some((s) => {
+      const subDisplayName = debt.name.toLowerCase().startsWith('cicilan')
+        ? debt.name
+        : `Cicilan ${debt.name}`;
+
+      let dueDay: number | undefined = debt.dueDayOfMonth;
+      if (dueDay === undefined && debt.dueDate) {
+        const pd = new Date(debt.dueDate);
+        if (!isNaN(pd.getTime())) dueDay = pd.getDate();
+      }
+
+      const debtEmoji = /kpr|rumah|kost|kontrak/i.test(debt.name)
+        ? '🏠'
+        : /motor/i.test(debt.name)
+        ? '🛵'
+        : /mobil/i.test(debt.name)
+        ? '🚗'
+        : '💳';
+
+      const monthlyTarget = (debt.monthlyInstallment && debt.monthlyInstallment > 0)
+        ? Math.min(debt.monthlyInstallment, Number(debt.remainingAmount ?? debt.totalAmount) || 0)
+        : Number(debt.remainingAmount ?? debt.totalAmount) || 0;
+      const allocated = Math.max(monthlyTarget, paidThisMonth);
+
+      const existsIdx = base.findIndex((s) => {
         const sLower = s.name.toLowerCase().trim();
-        return s.id === debtSubId || sLower === subDisplayName.toLowerCase() || sLower === cleanDebtName;
+        return (
+          s.id === debtSubId ||
+          sLower === subDisplayName.toLowerCase() ||
+          sLower === cleanDebtName
+        );
       });
-      if (!exists) {
+
+      if (existsIdx >= 0) {
+        base[existsIdx] = {
+          ...base[existsIdx],
+          dueDateDay: dueDay !== undefined ? dueDay : base[existsIdx].dueDateDay,
+          allocatedAmount: Math.max(base[existsIdx].allocatedAmount, allocated),
+          isSubscriptionActive: !isPaid,
+        };
+      } else {
         base.push({
           id: debtSubId,
           name: subDisplayName,
           group: 'kebutuhan',
-          allocatedAmount: paidThisMonth,
-          emoji: '💳',
+          allocatedAmount: allocated,
+          emoji: debtEmoji,
+          dueDateDay: dueDay,
+          subscriptionId: debt.id,
+          isSubscriptionActive: !isPaid,
         });
       }
     });
@@ -361,6 +401,29 @@ export function BudgetTab() {
   const wantsSpent = calculateGroupSpent('keinginan');
   const savingsSpent = calculateGroupSpent('tabungan');
 
+  // Subcategories that have exceeded their allocated budget limit
+  const overbudgetCategories = useMemo(() => {
+    return effectiveSubcategories
+      .filter((s) => {
+        const spent = subSpentMap[s.id] || 0;
+        return s.allocatedAmount > 0 && spent > s.allocatedAmount;
+      })
+      .map((s) => {
+        const spent = subSpentMap[s.id] || 0;
+        return {
+          ...s,
+          spent,
+          overAmount: spent - s.allocatedAmount,
+          overPct: Math.round((spent / s.allocatedAmount) * 100),
+        };
+      })
+      .sort((a, b) => b.overAmount - a.overAmount);
+  }, [effectiveSubcategories, subSpentMap]);
+
+  const totalOverbudgetAmount = useMemo(() => {
+    return overbudgetCategories.reduce((sum, item) => sum + item.overAmount, 0);
+  }, [overbudgetCategories]);
+
   const totalPercentage = needsPercent + wantsPercent + savingsPercent;
 
   const handleSaveIncome = (e: React.FormEvent) => {
@@ -486,6 +549,8 @@ export function BudgetTab() {
     const isCollapsed = collapsedGroups[group];
     const groupSpentPct = groupLimit > 0 ? Math.min(100, Math.round((groupSpent / groupLimit) * 100)) : 0;
     const isNearOrOverLimit = groupSpentPct >= 85;
+    const isGroupOver = groupLimit > 0 && groupSpent > groupLimit;
+    const groupOverAmount = groupSpent - groupLimit;
 
     const groupAllocated = subs.reduce((sum, s) => sum + (Number(s.allocatedAmount) || 0), 0);
     const allocPct = groupLimit > 0 ? Math.round((groupAllocated / groupLimit) * 100) : 0;
@@ -495,11 +560,17 @@ export function BudgetTab() {
       <div className="space-y-3.5 pt-2">
         {/* Section Header */}
         <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <span className={`w-2 h-2 rounded-full ${dotColor}`} />
             <h3 className="text-xs font-extrabold tracking-[0.22em] text-gray-900 dark:text-white uppercase">
               {title}
             </h3>
+            {isGroupOver && (
+              <span className="px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 text-[10px] font-black text-rose-600 dark:text-rose-400 flex items-center gap-1 shadow-2xs">
+                <AlertTriangle size={10} className="shrink-0 text-rose-500" />
+                <span>Over +{formatRupiah(groupOverAmount, hide)}</span>
+              </span>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -536,16 +607,19 @@ export function BudgetTab() {
           <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-500 ${
-                isNearOrOverLimit ? 'bg-[#EF4444]' : sectionBarColor
+                isGroupOver ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]' : isNearOrOverLimit ? 'bg-[#EF4444]' : sectionBarColor
               }`}
               style={{ width: `${groupSpentPct}%` }}
             />
           </div>
-          <div className="flex items-center justify-between text-[10px] font-extrabold tracking-wider text-gray-400 uppercase tabular-nums">
-            <span>
-              {spentLabel}: {formatRupiah(groupSpent, hide)}
+          <div className="flex items-center justify-between text-[10px] font-extrabold tracking-wider uppercase tabular-nums">
+            <span className={isGroupOver ? 'text-rose-600 dark:text-rose-400 flex items-center gap-1 font-black' : 'text-gray-400'}>
+              {isGroupOver && <AlertTriangle size={11} className="shrink-0 text-rose-500" />}
+              <span>
+                {spentLabel}: {formatRupiah(groupSpent, hide)} {isGroupOver ? `(+${formatRupiah(groupOverAmount, hide)})` : ''}
+              </span>
             </span>
-            <span>BATAS: {formatRupiah(groupLimit, hide)}</span>
+            <span className="text-gray-400">BATAS: {formatRupiah(groupLimit, hide)}</span>
           </div>
         </div>
 
@@ -558,28 +632,50 @@ export function BudgetTab() {
                 const rawPct = sub.allocatedAmount > 0 ? Math.round((spent / sub.allocatedAmount) * 100) : 0;
                 const pct = Math.min(100, rawPct);
                 const isMenuOpen = activeMenuSubId === sub.id;
+                const isOver = sub.allocatedAmount > 0 && spent > sub.allocatedAmount;
+                const overAmount = spent - sub.allocatedAmount;
 
                 return (
                   <div
                     key={sub.id}
-                    className={`bg-white dark:bg-[#16181D] rounded-[22px] px-5 py-4 border transition-all flex items-center gap-4 relative group ${
+                    className={`rounded-[22px] px-5 py-4 border transition-all flex items-center gap-4 relative group ${
                       isMenuOpen
-                        ? 'border-[#D4F826] shadow-[0_4px_20px_rgba(212,248,38,0.15)]'
-                        : 'border-gray-100 dark:border-gray-800/80 hover:border-[#D4F826] dark:hover:border-[#D4F826]/70 shadow-[0_2px_10px_rgba(0,0,0,0.02)]'
+                        ? 'border-[#D4F826] shadow-[0_4px_20px_rgba(212,248,38,0.15)] bg-white dark:bg-[#16181D]'
+                        : isOver
+                        ? 'border-rose-400 dark:border-rose-600/70 bg-gradient-to-br from-white via-rose-50/25 to-rose-50/50 dark:from-[#16181D] dark:via-rose-950/20 dark:to-rose-950/30 shadow-[0_4px_18px_rgba(244,63,94,0.12)] ring-1 ring-rose-400/40 dark:ring-rose-500/30'
+                        : 'border-gray-100 dark:border-gray-800/80 hover:border-[#D4F826] dark:hover:border-[#D4F826]/70 shadow-[0_2px_10px_rgba(0,0,0,0.02)] bg-white dark:bg-[#16181D]'
                     }`}
                   >
-                    {/* Left Emoji Icon */}
-                    <div className="text-[28px] leading-none w-9 text-center shrink-0 select-none">
-                      {sub.emoji}
+                    {/* Left Emoji Icon with badge if over budget */}
+                    <div className="relative shrink-0">
+                      <div className="text-[28px] leading-none w-9 text-center select-none">
+                        {sub.emoji}
+                      </div>
+                      {isOver && (
+                        <div
+                          className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white flex items-center justify-center text-[9px] font-black shadow-xs ring-1 ring-white dark:ring-black animate-pulse"
+                          title={`Over Budget +${formatRupiah(overAmount, hide)}`}
+                        >
+                          !
+                        </div>
+                      )}
                     </div>
 
                     {/* Center Info + Bar */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-[13px] font-extrabold text-gray-900 dark:text-white truncate">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                          <span className={`text-[13px] font-extrabold truncate ${
+                            isOver ? 'text-rose-950 dark:text-rose-100' : 'text-gray-900 dark:text-white'
+                          }`}>
                             {sub.name}
                           </span>
+                          {isOver && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-black text-rose-600 dark:text-rose-400 bg-rose-100/90 dark:bg-rose-950/80 px-2 py-0.5 rounded-md border border-rose-200 dark:border-rose-900/60 shrink-0">
+                              <AlertTriangle size={10} className="shrink-0 text-rose-500 dark:text-rose-400" />
+                              <span>Over Budget</span>
+                            </span>
+                          )}
                           {(sub.subscriptionId || sub.dueDateDay) && (
                             <button
                               type="button"
@@ -596,7 +692,9 @@ export function BudgetTab() {
                           )}
                         </div>
 
-                        <span className="text-[13px] font-black text-gray-900 dark:text-white tabular-nums shrink-0">
+                        <span className={`text-[13px] font-black tabular-nums shrink-0 ${
+                          isOver ? 'text-rose-600 dark:text-rose-400' : 'text-gray-900 dark:text-white'
+                        }`}>
                           {formatRupiah(spent, hide)}
                         </span>
                       </div>
@@ -605,15 +703,30 @@ export function BudgetTab() {
                       <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-300 ${
-                            rawPct > 100 ? 'bg-red-500' : itemBarColor
+                            isOver ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]' : itemBarColor
                           }`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
 
-                      {/* Bottom Right "dari Rp ..." */}
-                      <div className="flex items-center justify-end mt-1.5">
-                        <span className="text-[11px] font-semibold text-gray-400 tabular-nums">
+                      {/* Bottom Details Row */}
+                      <div className="flex items-center justify-between mt-1.5 gap-2">
+                        {isOver ? (
+                          <span className="text-[10px] font-black text-rose-600 dark:text-rose-400 flex items-center gap-1 tabular-nums">
+                            <AlertTriangle size={11} className="shrink-0 text-rose-500" />
+                            <span>Melebihi +{formatRupiah(overAmount, hide)} ({rawPct}%)</span>
+                          </span>
+                        ) : rawPct >= 85 ? (
+                          <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1 tabular-nums">
+                            <span>Sisa {formatRupiah(Math.max(0, sub.allocatedAmount - spent), hide)} ({rawPct}%)</span>
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 tabular-nums">
+                            Sisa {formatRupiah(Math.max(0, sub.allocatedAmount - spent), hide)}
+                          </span>
+                        )}
+
+                        <span className="text-[11px] font-semibold text-gray-400 tabular-nums shrink-0">
                           dari {formatRupiah(sub.allocatedAmount, hide)}
                         </span>
                       </div>
@@ -808,7 +921,7 @@ export function BudgetTab() {
         {/* Pos Anggaran: Tagihan Bulanan (Fixed) vs Pengeluaran Harian (Variable) */}
         {budgetConfig.estimatedIncome > 0 && (
           <div className="pt-4 border-t border-white/10 grid grid-cols-1 lg:grid-cols-2 gap-3 text-xs">
-            <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex flex-col justify-between gap-1.5">
+            <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10 flex flex-col justify-between gap-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-xl">📅</span>
@@ -820,10 +933,23 @@ export function BudgetTab() {
                   {formatRupiah(dashboardSummary.monthlyFixedBudget, hide)}
                 </div>
               </div>
-              <div className="text-[11px] text-gray-400 font-medium pl-7">
+              <div className="text-[11px] text-gray-400 font-medium pl-7 flex flex-wrap items-center justify-between gap-1.5">
+                <span>
+                  Terbayar periode ini:{' '}
+                  <strong className="text-white">
+                    {formatRupiah(dashboardSummary.monthlyFixedExpense, hide)}
+                  </strong>
+                </span>
+                <span className="text-sky-400 text-[10px] font-bold">
+                  {dashboardSummary.monthlyFixedExpense >= dashboardSummary.monthlyFixedBudget && dashboardSummary.monthlyFixedBudget > 0
+                    ? 'LUNAS SEMUA'
+                    : `SISA ${formatRupiah(Math.max(0, dashboardSummary.monthlyFixedBudget - dashboardSummary.monthlyFixedExpense), hide)}`}
+                </span>
+              </div>
+              <div className="text-[10px] text-gray-400 font-medium pl-7 truncate">
                 {fixedSubcategories.length > 0 ? (
                   <span>
-                    Dari alokasi: {fixedSubcategories.map((s) => `${s.name} (${formatRupiah(s.allocatedAmount, hide)})`).join(' + ')}
+                    Alokasi: {fixedSubcategories.map((s) => `${s.name} (${formatRupiah(s.allocatedAmount, hide)})`).join(' + ')}
                   </span>
                 ) : (
                   <span>Belum ada alokasi tagihan berjadwal</span>
@@ -839,20 +965,50 @@ export function BudgetTab() {
                     POS PENGELUARAN HARIAN (OPERASIONAL)
                   </span>
                 </div>
-                <div className="text-sm text-gray-100 font-black tabular-nums">
-                  {formatRupiah(dashboardSummary.monthlyVariableBudget, hide)}
-                  <span className="text-[10px] text-gray-400 font-normal ml-1">
-                    (~{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari)
-                  </span>
+                <div className="text-right">
+                  <div className="text-sm text-gray-100 font-black tabular-nums">
+                    Pagu: {formatRupiah(dashboardSummary.monthlyVariableBudget, hide)}
+                  </div>
+                  <div className="text-[10px] text-gray-400 font-medium">
+                    Kuota dasar ~{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
+                  </div>
                 </div>
               </div>
+
+              {/* Status Sisa Kuota Operasional Riil */}
+              <div className="text-[11px] pl-7 flex flex-wrap items-center justify-between gap-1.5 border-t border-white/5 pt-1.5">
+                <span className="text-gray-400">
+                  Terpakai:{' '}
+                  <strong className="text-white">
+                    {formatRupiah(dashboardSummary.monthlyVariableExpense, hide)}
+                  </strong>
+                </span>
+                <span className="text-[11px] font-extrabold">
+                  {dashboardSummary.remainingVariableBudget <= 0 ? (
+                    <span className="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/30">
+                      Sisa Kuota: Rp0 (Habis)
+                    </span>
+                  ) : (
+                    <span className="text-[#D4F826] bg-[#D4F826]/10 px-2 py-0.5 rounded-md border border-[#D4F826]/20">
+                      Sisa Kuota: {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
+                    </span>
+                  )}
+                </span>
+              </div>
+
               <div className="text-[11px] text-gray-400 font-medium pl-7 flex flex-wrap items-center justify-between gap-2">
                 <span>
                   Agar cukup s/d <strong className="text-white">{budgetPeriod.endShortLabel}</strong> ({budgetPeriod.daysRemainingUntilPayday} hari lagi):
                 </span>
-                <span className="text-[#D4F826] font-extrabold tabular-nums bg-[#D4F826]/10 px-2 py-0.5 rounded-lg border border-[#D4F826]/25">
-                  Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
-                </span>
+                {dashboardSummary.remainingVariableBudget <= 0 ? (
+                  <span className="text-rose-300 font-extrabold tabular-nums bg-rose-500/15 px-2 py-0.5 rounded-lg border border-rose-500/30">
+                    Maks Rp0/hari (Rem Belanja)
+                  </span>
+                ) : (
+                  <span className="text-[#D4F826] font-extrabold tabular-nums bg-[#D4F826]/10 px-2 py-0.5 rounded-lg border border-[#D4F826]/25">
+                    Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -925,6 +1081,65 @@ export function BudgetTab() {
           </div>
         </div>
       </div>
+
+      {/* Contextual Overbudget Alert Notification Banner */}
+      {overbudgetCategories.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-gradient-to-r from-rose-500/15 via-rose-500/10 to-amber-500/10 dark:from-rose-950/60 dark:via-rose-900/40 dark:to-amber-950/20 border-2 border-rose-500/40 dark:border-rose-600/60 rounded-[26px] p-4 sm:p-5 shadow-lg relative overflow-hidden space-y-3.5"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500 text-white flex items-center justify-center shrink-0 shadow-md">
+                <AlertTriangle size={20} strokeWidth={2.5} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-400 bg-rose-500/10 dark:bg-rose-500/20 px-2 py-0.5 rounded-md border border-rose-500/20">
+                    PERINGATAN BUDGET
+                  </span>
+                  <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
+                    {budgetPeriod.periodShortLabel}
+                  </span>
+                </div>
+                <h3 className="text-sm sm:text-base font-black text-gray-900 dark:text-white mt-0.5">
+                  {overbudgetCategories.length} Kategori Melebihi Anggaran!
+                </h3>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto bg-white/90 dark:bg-black/40 backdrop-blur-xs px-3.5 py-2 rounded-2xl border border-rose-200 dark:border-rose-800 shadow-2xs">
+              <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400">Total Kelebihan:</span>
+              <span className="text-sm font-black text-rose-600 dark:text-rose-400 tabular-nums">
+                +{formatRupiah(totalOverbudgetAmount, hide)}
+              </span>
+            </div>
+          </div>
+
+          {/* Overbudget Categories Pills List */}
+          <div className="pt-2 border-t border-rose-200/60 dark:border-rose-800/40 flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+              Kategori Terlampaui:
+            </span>
+            {overbudgetCategories.map((item) => (
+              <span
+                key={item.id}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white dark:bg-gray-900/90 border border-rose-200 dark:border-rose-800 text-xs font-extrabold text-gray-800 dark:text-gray-200 shadow-2xs"
+              >
+                <span>{item.emoji}</span>
+                <span>{item.name}</span>
+                <span className="text-rose-600 dark:text-rose-400 font-black tabular-nums">
+                  +{formatRupiah(item.overAmount, hide)}
+                </span>
+                <span className="text-[10px] font-semibold text-rose-500 dark:text-rose-400">
+                  ({item.overPct}%)
+                </span>
+              </span>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       {/* Top Right "Tampilkan Arsip" Pill Control (matching reference screenshot) */}
       <div className="flex justify-end px-1 -mb-2">

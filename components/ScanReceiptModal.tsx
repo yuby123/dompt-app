@@ -203,7 +203,12 @@ export function ScanReceiptModal() {
     try {
       const res = await fetch('/api/scan-receipt', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
+        cache: 'no-store',
         body: JSON.stringify({
           imageBase64: base64,
           mimeType: type,

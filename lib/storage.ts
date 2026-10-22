@@ -37,6 +37,33 @@ const STORAGE_KEYS = {
   SETTINGS: 'budggt_settings',
 };
 
+// Immediate purge of any stale database cache from localStorage (enforcing 100% database source of truth)
+if (typeof window !== 'undefined') {
+  try {
+    const keysToPurge = [
+      'budggt_wallets',
+      'budggt_transactions',
+      'budggt_budgets',
+      'budggt_budget_config',
+      'budggt_goals',
+      'budggt_debts',
+      'budggt_subscriptions',
+      'budggt_assets_liquid',
+      'budggt_assets_fixed',
+      'budggt_investments',
+      'budggt_deleted_ids',
+    ];
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && keysToPurge.some((prefix) => k.startsWith(prefix))) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export function getInitialSampleTransactions(): Transaction[] {
   const now = new Date();
   const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -615,307 +642,99 @@ export function loadSavedLocalAccounts(): LocalAccountProfile[] {
   }
 }
 
-export function loadStoredWallets(scopeUid?: string): Wallet[] {
-  if (typeof window === 'undefined') return scopeUid ? getCleanDefaultWallets() : DEFAULT_WALLETS;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.WALLETS, scopeUid);
-    const raw = localStorage.getItem(key);
-    if (!raw) {
-      const initial = scopeUid ? getCleanDefaultWallets() : DEFAULT_WALLETS;
-      saveStoredWallets(initial, scopeUid);
-      return initial;
-    }
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Failed to load wallets from localStorage:', err);
-    return scopeUid ? getCleanDefaultWallets() : DEFAULT_WALLETS;
-  }
+// Database collections are 100% cloud-authoritative.
+// No localStorage.setItem or persistent cache is stored on disk to prevent cross-device stale overwrites.
+
+export function loadStoredWallets(_scopeUid?: string): Wallet[] {
+  return [];
 }
 
-export function saveStoredWallets(wallets: Wallet[], scopeUid?: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.WALLETS, scopeUid);
-    localStorage.setItem(key, JSON.stringify(wallets));
-  } catch (err) {
-    console.error('Failed to save wallets to localStorage:', err);
-  }
+export function saveStoredWallets(_wallets: Wallet[], _scopeUid?: string): void {
+  // Pure database mode: no local storage caching
 }
 
 export function loadStoredCategories(): Category[] {
-  if (typeof window === 'undefined') return DEFAULT_CATEGORIES;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEYS.CATEGORIES);
-    if (!raw) {
-      saveStoredCategories(DEFAULT_CATEGORIES);
-      return DEFAULT_CATEGORIES;
-    }
-    const parsed: Category[] = JSON.parse(raw);
-    const existingIds = new Set(parsed.map((c) => c.id));
-    const missing = DEFAULT_CATEGORIES.filter((c) => !existingIds.has(c.id));
-    if (missing.length > 0) {
-      const merged = [...parsed, ...missing];
-      saveStoredCategories(merged);
-      return merged;
-    }
-    return parsed;
-  } catch (err) {
-    console.error('Failed to load categories:', err);
-    return DEFAULT_CATEGORIES;
-  }
+  return DEFAULT_CATEGORIES;
 }
 
-export function saveStoredCategories(categories: Category[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(STORAGE_KEYS.CATEGORIES, JSON.stringify(categories));
-  } catch (err) {
-    console.error('Failed to save categories:', err);
-  }
+export function saveStoredCategories(_categories: Category[]): void {
+  // Pure database mode: no local storage caching
 }
 
-export function loadStoredTransactions(scopeUid?: string): Transaction[] {
-  if (typeof window === 'undefined') return scopeUid ? [] : getInitialSampleTransactions();
-  try {
-    const key = getScopedKey(STORAGE_KEYS.TRANSACTIONS, scopeUid);
-    const raw = localStorage.getItem(key);
-    if (!raw) {
-      const initial = scopeUid ? [] : getInitialSampleTransactions();
-      saveStoredTransactions(initial, scopeUid);
-      return initial;
-    }
-    const parsed: Transaction[] = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      const initial = scopeUid ? [] : getInitialSampleTransactions();
-      saveStoredTransactions(initial, scopeUid);
-      return initial;
-    }
-    return parsed;
-  } catch (err) {
-    console.error('Failed to load transactions:', err);
-    return scopeUid ? [] : getInitialSampleTransactions();
-  }
+export function loadStoredTransactions(_scopeUid?: string): Transaction[] {
+  return [];
 }
 
-export function saveStoredTransactions(transactions: Transaction[], scopeUid?: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.TRANSACTIONS, scopeUid);
-    localStorage.setItem(key, JSON.stringify(transactions));
-  } catch (err) {
-    console.error('Failed to save transactions:', err);
-  }
+export function saveStoredTransactions(_transactions: Transaction[], _scopeUid?: string): void {
+  // Pure database mode: no local storage caching
 }
 
-export function loadStoredBudgets(scopeUid?: string): Budget[] {
-  if (typeof window === 'undefined') return scopeUid ? [] : getInitialBudgets();
-  try {
-    const key = getScopedKey(STORAGE_KEYS.BUDGETS, scopeUid);
-    const raw = localStorage.getItem(key);
-    if (!raw) {
-      const initial = scopeUid ? [] : getInitialBudgets();
-      saveStoredBudgets(initial, scopeUid);
-      return initial;
-    }
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Failed to load budgets:', err);
-    return scopeUid ? [] : getInitialBudgets();
-  }
+export function loadStoredBudgets(_scopeUid?: string): Budget[] {
+  return [];
 }
 
-export function saveStoredBudgets(budgets: Budget[], scopeUid?: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.BUDGETS, scopeUid);
-    localStorage.setItem(key, JSON.stringify(budgets));
-  } catch (err) {
-    console.error('Failed to save budgets:', err);
-  }
+export function saveStoredBudgets(_budgets: Budget[], _scopeUid?: string): void {
+  // Pure database mode: no local storage caching
 }
 
-export function loadStoredBudgetConfig(scopeUid?: string): BudgetConfig {
-  if (typeof window === 'undefined') return scopeUid ? EMPTY_BUDGET_CONFIG : DEFAULT_BUDGET_CONFIG;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.BUDGET_CONFIG, scopeUid);
-    const raw = localStorage.getItem(key);
-    if (!raw) {
-      const initial = scopeUid ? EMPTY_BUDGET_CONFIG : DEFAULT_BUDGET_CONFIG;
-      saveStoredBudgetConfig(initial, scopeUid);
-      return initial;
-    }
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Failed to load budget config:', err);
-    return scopeUid ? EMPTY_BUDGET_CONFIG : DEFAULT_BUDGET_CONFIG;
-  }
+export function loadStoredBudgetConfig(_scopeUid?: string): BudgetConfig {
+  return EMPTY_BUDGET_CONFIG;
 }
 
-export function saveStoredBudgetConfig(config: BudgetConfig, scopeUid?: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.BUDGET_CONFIG, scopeUid);
-    localStorage.setItem(key, JSON.stringify(config));
-  } catch (err) {
-    console.error('Failed to save budget config:', err);
-  }
+export function saveStoredBudgetConfig(_config: BudgetConfig, _scopeUid?: string): void {
+  // Pure database mode: no local storage caching
 }
 
-export function loadStoredGoals(scopeUid?: string): Goal[] {
-  if (typeof window === 'undefined') return scopeUid ? [] : DEFAULT_GOALS;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.GOALS, scopeUid);
-    const raw = localStorage.getItem(key);
-    if (!raw) {
-      const initial = scopeUid ? [] : DEFAULT_GOALS;
-      saveStoredGoals(initial, scopeUid);
-      return initial;
-    }
-    return JSON.parse(raw);
-  } catch (err) {
-    console.error('Failed to load goals:', err);
-    return scopeUid ? [] : DEFAULT_GOALS;
-  }
+export function loadStoredGoals(_scopeUid?: string): Goal[] {
+  return [];
 }
 
-export function saveStoredGoals(goals: Goal[], scopeUid?: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.GOALS, scopeUid);
-    localStorage.setItem(key, JSON.stringify(goals));
-  } catch (err) {
-    console.error('Failed to save goals:', err);
-  }
+export function saveStoredGoals(_goals: Goal[], _scopeUid?: string): void {
+  // Pure database mode: no local storage caching
 }
 
-export function loadStoredDebts(scopeUid?: string): Debt[] {
-  if (typeof window === 'undefined') return scopeUid ? [] : DEFAULT_DEBTS;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.DEBTS, scopeUid);
-    const raw = localStorage.getItem(key);
-    if (!raw) {
-      const initial = scopeUid ? [] : DEFAULT_DEBTS;
-      saveStoredDebts(initial, scopeUid);
-      return initial;
-    }
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : (scopeUid ? [] : DEFAULT_DEBTS);
-  } catch (err) {
-    console.error('Failed to load debts:', err);
-    return scopeUid ? [] : DEFAULT_DEBTS;
-  }
+export function loadStoredDebts(_scopeUid?: string): Debt[] {
+  return [];
 }
 
-export function saveStoredDebts(debts: Debt[], scopeUid?: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.DEBTS, scopeUid);
-    localStorage.setItem(key, JSON.stringify(debts));
-  } catch (err) {
-    console.error('Failed to save debts:', err);
-  }
+export function saveStoredDebts(_debts: Debt[], _scopeUid?: string): void {
+  // Pure database mode: no local storage caching
 }
 
-export function loadStoredSubscriptions(scopeUid?: string): RecurringItem[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const key = getScopedKey(STORAGE_KEYS.SUBSCRIPTIONS, scopeUid);
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    console.error('Failed to load subscriptions:', err);
-    return [];
-  }
+export function loadStoredSubscriptions(_scopeUid?: string): RecurringItem[] {
+  return [];
 }
 
-export function saveStoredSubscriptions(items: RecurringItem[], scopeUid?: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.SUBSCRIPTIONS, scopeUid);
-    localStorage.setItem(key, JSON.stringify(items));
-  } catch (err) {
-    console.error('Failed to save subscriptions:', err);
-  }
+export function saveStoredSubscriptions(_items: RecurringItem[], _scopeUid?: string): void {
+  // Pure database mode: no local storage caching
 }
 
-export function loadStoredAssets(type: 'liquid' | 'fixed', scopeUid?: string): AssetItem[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const base = type === 'liquid' ? STORAGE_KEYS.ASSETS_LIQUID : STORAGE_KEYS.ASSETS_FIXED;
-    const key = getScopedKey(base, scopeUid);
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    console.error(`Failed to load ${type} assets:`, err);
-    return [];
-  }
+export function loadStoredAssets(_type: 'liquid' | 'fixed', _scopeUid?: string): AssetItem[] {
+  return [];
 }
 
 export function saveStoredAssets(
-  type: 'liquid' | 'fixed',
-  items: AssetItem[],
-  scopeUid?: string
+  _type: 'liquid' | 'fixed',
+  _items: AssetItem[],
+  _scopeUid?: string
 ): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const base = type === 'liquid' ? STORAGE_KEYS.ASSETS_LIQUID : STORAGE_KEYS.ASSETS_FIXED;
-    const key = getScopedKey(base, scopeUid);
-    localStorage.setItem(key, JSON.stringify(items));
-  } catch (err) {
-    console.error(`Failed to save ${type} assets:`, err);
-  }
+  // Pure database mode: no local storage caching
 }
 
-export function loadStoredInvestments(scopeUid?: string): InvestmentItem[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const key = getScopedKey(STORAGE_KEYS.INVESTMENTS, scopeUid);
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (err) {
-    console.error('Failed to load investments:', err);
-    return [];
-  }
+export function loadStoredInvestments(_scopeUid?: string): InvestmentItem[] {
+  return [];
 }
 
-export function saveStoredInvestments(items: InvestmentItem[], scopeUid?: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.INVESTMENTS, scopeUid);
-    localStorage.setItem(key, JSON.stringify(items));
-  } catch (err) {
-    console.error('Failed to save investments:', err);
-  }
+export function saveStoredInvestments(_items: InvestmentItem[], _scopeUid?: string): void {
+  // Pure database mode: no local storage caching
 }
 
-export function loadStoredDeletedIds(scopeUid?: string): string[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const key = getScopedKey(STORAGE_KEYS.DELETED_IDS, scopeUid);
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+export function loadStoredDeletedIds(_scopeUid?: string): string[] {
+  return [];
 }
 
-export function saveStoredDeletedIds(ids: string[], scopeUid?: string): void {
-  if (typeof window === 'undefined') return;
-  try {
-    const key = getScopedKey(STORAGE_KEYS.DELETED_IDS, scopeUid);
-    const trimmed = Array.from(new Set(ids)).slice(-500);
-    localStorage.setItem(key, JSON.stringify(trimmed));
-  } catch {
-    // ignore
-  }
+export function saveStoredDeletedIds(_ids: string[], _scopeUid?: string): void {
+  // Pure database mode: no local storage caching
 }
 
 export function loadStoredSettings(scopeUid?: string): AppSettings {
@@ -985,12 +804,17 @@ export function resetStorageToZero(scopeUid?: string): void {
   if (typeof window !== 'undefined') {
     try {
       const suffix = scopeUid ? `_${scopeUid}` : '';
-      localStorage.setItem(`budggt_assets_liquid${suffix}`, JSON.stringify([]));
-      localStorage.setItem(`budggt_assets_fixed${suffix}`, JSON.stringify([]));
-      localStorage.setItem(`budggt_debts${suffix}`, JSON.stringify([]));
-      localStorage.setItem(`budggt_investments${suffix}`, JSON.stringify([]));
-      localStorage.setItem(`budggt_subscriptions${suffix}`, JSON.stringify([]));
-      localStorage.setItem(`budggt_deleted_ids${suffix}`, JSON.stringify([]));
+      localStorage.removeItem(`budggt_assets_liquid${suffix}`);
+      localStorage.removeItem(`budggt_assets_fixed${suffix}`);
+      localStorage.removeItem(`budggt_debts${suffix}`);
+      localStorage.removeItem(`budggt_investments${suffix}`);
+      localStorage.removeItem(`budggt_subscriptions${suffix}`);
+      localStorage.removeItem(`budggt_deleted_ids${suffix}`);
+      localStorage.removeItem(`budggt_wallets${suffix}`);
+      localStorage.removeItem(`budggt_transactions${suffix}`);
+      localStorage.removeItem(`budggt_budgets${suffix}`);
+      localStorage.removeItem(`budggt_budget_config${suffix}`);
+      localStorage.removeItem(`budggt_goals${suffix}`);
     } catch {
       // ignore
     }

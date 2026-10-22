@@ -23,6 +23,7 @@ import {
   CalendarClock,
   Activity,
   ArrowUpRight,
+  BarChart3,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -257,8 +258,7 @@ export function DashboardTab() {
     { id: 'subscriptions', label: 'Langganan', icon: CalendarClock, action: () => setActiveTab('subscriptions') },
     { id: 'utang', label: 'Utang', icon: CreditCard, action: () => setActiveTab('debt') },
     { id: 'investasi', label: 'Investasi', icon: TrendingUp, action: () => setActiveTab('invest') },
-    { id: 'analytics', label: 'Analisis', icon: Activity, action: () => setActiveTab('analytics') },
-    { id: 'health-score', label: 'Skor Sehat', icon: Eye, action: () => setActiveTab('health-score') },
+    { id: 'analytics', label: 'Analisis & Skor', icon: BarChart3, action: () => setActiveTab('analytics') },
     { id: 'ai-advisor', label: 'AI Advisor', icon: Sparkles, action: () => setActiveTab('ai-advisor') },
     { id: 'laporan', label: 'Laporan', icon: FileText, action: () => setActiveTab('reports') },
   ];
@@ -421,11 +421,21 @@ export function DashboardTab() {
               <p className="text-xs sm:text-sm text-slate-300/90 font-medium mt-2 sm:mt-3 leading-snug">
                 {dashboardSummary.dailyOverbudget
                   ? `Melebihi kuota harian (${formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari`
+                  : dashboardSummary.dailyBudgetQuota > 0 && dashboardSummary.remainingVariableBudget <= 0
+                  ? `Kuota operasional periode ini (${formatRupiah(dashboardSummary.monthlyVariableBudget, hide)}) telah habis terpakai di hari sebelumnya`
                   : `Tersedia dari kuota harian ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari di luar tagihan tetap`}
               </p>
               {dashboardSummary.hasMonthlyBudget && (
-                <p className="text-[11px] sm:text-xs text-[#D4F826] font-semibold mt-1">
-                  Jatah aman s/d {budgetPeriod.endShortLabel} ({budgetPeriod.daysRemainingUntilPayday} hari lagi): Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
+                <p className="text-[11px] sm:text-xs font-semibold mt-1">
+                  {dashboardSummary.remainingVariableBudget <= 0 ? (
+                    <span className="text-amber-300">
+                      Sisa kuota s/d {budgetPeriod.endShortLabel} ({budgetPeriod.daysRemainingUntilPayday} hari lagi): Maks Rp0/hari (rem belanja agar tidak defisit)
+                    </span>
+                  ) : (
+                    <span className="text-[#D4F826]">
+                      Jatah aman s/d {budgetPeriod.endShortLabel} ({budgetPeriod.daysRemainingUntilPayday} hari lagi): Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
+                    </span>
+                  )}
                 </p>
               )}
             </div>
@@ -584,10 +594,21 @@ export function DashboardTab() {
                 </span>
               </div>
             </div>
-            <div>
-              <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
-                Progres Pengeluaran
-              </h3>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
+                  Progres Pengeluaran
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('analytics')}
+                  className="hidden lg:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-white/10 hover:bg-[#D4F826] hover:text-black dark:hover:bg-[#D4F826] dark:hover:text-black text-[11px] font-bold text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
+                  title="Buka Analisis Keuangan Lengkap"
+                >
+                  <BarChart3 size={12} className="shrink-0" />
+                  <span>Analisis Lengkap</span>
+                </button>
+              </div>
               <p className="text-xs text-gray-400 mt-0.5">
                 Hari {periodCurrentDay} dari {periodTotalDays} ({activePeriodLabel})
               </p>

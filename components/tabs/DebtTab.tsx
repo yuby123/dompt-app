@@ -25,11 +25,31 @@ import {
   Search,
   Filter,
   Check,
+  CalendarDays,
+  Sparkles,
+  Calculator,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatRupiah, formatNominalInput, parseNominalInput, formatFullDateIndo } from '@/lib/formatters';
 import { Debt, DebtPayment } from '@/lib/types';
+
+function computeInstallmentDueDate(startDateStr: string, tenorMonths: number, dueDayOfMonth: number): string {
+  if (!startDateStr || !tenorMonths || tenorMonths <= 0) return '';
+  const d = new Date(startDateStr);
+  if (isNaN(d.getTime())) return '';
+
+  const targetYear = d.getFullYear();
+  const targetMonth = d.getMonth() + tenorMonths;
+  const clampedDay = Math.max(1, Math.min(31, dueDayOfMonth || d.getDate() || 10));
+
+  const targetDateObj = new Date(targetYear, targetMonth, 1);
+  const maxDays = new Date(targetDateObj.getFullYear(), targetDateObj.getMonth() + 1, 0).getDate();
+  const actualDay = Math.min(clampedDay, maxDays);
+
+  const finalObj = new Date(targetDateObj.getFullYear(), targetDateObj.getMonth(), actualDay);
+  return finalObj.toISOString().slice(0, 10);
+}
 
 export function DebtTab() {
   const {
@@ -90,9 +110,58 @@ export function DebtTab() {
   const [formDueDate, setFormDueDate] = useState('');
   const [formStartDate, setFormStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [formCategory, setFormCategory] = useState('cicilan');
+  const [formIsInstallment, setFormIsInstallment] = useState(true);
+  const [formTenorMonths, setFormTenorMonths] = useState('6');
+  const [formMonthlyInstallment, setFormMonthlyInstallment] = useState('');
+  const [formDueDayOfMonth, setFormDueDayOfMonth] = useState('10');
   const [formNote, setFormNote] = useState('');
   const [formDisburseCashflow, setFormDisburseCashflow] = useState(false);
   const [formDisburseWalletId, setFormDisburseWalletId] = useState('');
+
+  // Auto-calculation handlers for Installment
+  const handleTenorChange = (tenorStr: string) => {
+    setFormTenorMonths(tenorStr);
+    const tNum = parseInt(tenorStr, 10);
+    const totalVal = parseNominalInput(formTotalAmount);
+    const dayNum = parseInt(formDueDayOfMonth, 10) || 10;
+    if (tNum > 0) {
+      if (totalVal > 0) {
+        setFormMonthlyInstallment(formatNominalInput(String(Math.round(totalVal / tNum))));
+      }
+      const calcDue = computeInstallmentDueDate(formStartDate, tNum, dayNum);
+      if (calcDue) setFormDueDate(calcDue);
+    }
+  };
+
+  const handleDueDayChange = (dayStr: string) => {
+    setFormDueDayOfMonth(dayStr);
+    const dNum = parseInt(dayStr, 10);
+    const tNum = parseInt(formTenorMonths, 10) || 6;
+    if (tNum > 0 && dNum > 0) {
+      const calcDue = computeInstallmentDueDate(formStartDate, tNum, dNum);
+      if (calcDue) setFormDueDate(calcDue);
+    }
+  };
+
+  const handleTotalAmountChange = (valStr: string) => {
+    const formatted = formatNominalInput(valStr);
+    setFormTotalAmount(formatted);
+    const totalVal = parseNominalInput(formatted);
+    const tNum = parseInt(formTenorMonths, 10) || 6;
+    if (formIsInstallment && tNum > 0 && totalVal > 0) {
+      setFormMonthlyInstallment(formatNominalInput(String(Math.round(totalVal / tNum))));
+    }
+  };
+
+  const handleStartDateChange = (dateStr: string) => {
+    setFormStartDate(dateStr);
+    const tNum = parseInt(formTenorMonths, 10) || 6;
+    const dNum = parseInt(formDueDayOfMonth, 10) || 10;
+    if (formIsInstallment && tNum > 0) {
+      const calcDue = computeInstallmentDueDate(dateStr, tNum, dNum);
+      if (calcDue) setFormDueDate(calcDue);
+    }
+  };
 
   // Filtered debts list
   const filteredDebts = useMemo(() => {
@@ -170,14 +239,20 @@ export function DebtTab() {
 
   // Open Add Modal
   const handleOpenAdd = (type: 'payable' | 'receivable' = 'payable') => {
+    const today = new Date().toISOString().slice(0, 10);
     setEditingDebt(null);
     setFormType(type);
     setFormName('');
     setFormContactName('');
     setFormTotalAmount('');
-    setFormDueDate('');
-    setFormStartDate(new Date().toISOString().slice(0, 10));
+    setFormStartDate(today);
     setFormCategory(type === 'payable' ? 'cicilan' : 'personal');
+    setFormIsInstallment(type === 'payable');
+    setFormTenorMonths('6');
+    setFormMonthlyInstallment('');
+    setFormDueDayOfMonth('10');
+    const autoDue = computeInstallmentDueDate(today, 6, 10);
+    setFormDueDate(autoDue);
     setFormNote('');
     setFormDisburseCashflow(false);
     setFormDisburseWalletId(wallets[0]?.id || '');
@@ -192,8 +267,19 @@ export function DebtTab() {
     setFormContactName(debt.contactName || '');
     setFormTotalAmount(formatNominalInput(String(debt.totalAmount)));
     setFormDueDate(debt.dueDate || '');
-    setFormStartDate(debt.startDate || new Date().toISOString().slice(0, 10));
+    const sDate = debt.startDate || new Date().toISOString().slice(0, 10);
+    setFormStartDate(sDate);
     setFormCategory(debt.category || (debt.type === 'payable' ? 'cicilan' : 'personal'));
+    const isInst = debt.isInstallment ?? (debt.category === 'cicilan' || Boolean(debt.tenorMonths));
+    setFormIsInstallment(isInst);
+    setFormTenorMonths(debt.tenorMonths ? String(debt.tenorMonths) : '6');
+    setFormMonthlyInstallment(debt.monthlyInstallment ? formatNominalInput(String(debt.monthlyInstallment)) : '');
+    const defaultDay = debt.dueDayOfMonth
+      ? String(debt.dueDayOfMonth)
+      : debt.dueDate
+      ? String(new Date(debt.dueDate).getDate())
+      : '10';
+    setFormDueDayOfMonth(defaultDay);
     setFormNote(debt.note || '');
     setFormDisburseCashflow(false);
     setIsAddModalOpen(true);
@@ -204,6 +290,18 @@ export function DebtTab() {
     e.preventDefault();
     const val = parseNominalInput(formTotalAmount);
     if (!formName.trim() || val <= 0) return;
+
+    const tenorNum = formIsInstallment && formTenorMonths ? parseInt(formTenorMonths, 10) : undefined;
+    const dueDayNum = formIsInstallment && formDueDayOfMonth ? Math.max(1, Math.min(31, parseInt(formDueDayOfMonth, 10))) : undefined;
+    const rawMonthly = parseNominalInput(formMonthlyInstallment);
+    const monthlyNum = formIsInstallment
+      ? (rawMonthly > 0 ? rawMonthly : (tenorNum && tenorNum > 0 ? Math.round(val / tenorNum) : undefined))
+      : undefined;
+
+    let finalDueDate = formDueDate;
+    if (!finalDueDate && formIsInstallment && tenorNum && dueDayNum) {
+      finalDueDate = computeInstallmentDueDate(formStartDate, tenorNum, dueDayNum);
+    }
 
     if (editingDebt) {
       // Update
@@ -218,9 +316,13 @@ export function DebtTab() {
         contactName: formContactName.trim() || (formType === 'payable' ? 'Lembaga / Pihak' : 'Peminjam'),
         totalAmount: val,
         remainingAmount: newRem,
-        dueDate: formDueDate,
+        dueDate: finalDueDate,
         startDate: formStartDate,
         category: formCategory,
+        isInstallment: formIsInstallment,
+        tenorMonths: tenorNum,
+        monthlyInstallment: monthlyNum,
+        dueDayOfMonth: dueDayNum,
         note: formNote.trim(),
       });
     } else {
@@ -232,9 +334,13 @@ export function DebtTab() {
           contactName: formContactName.trim() || (formType === 'payable' ? 'Lembaga / Pihak' : 'Peminjam'),
           totalAmount: val,
           remainingAmount: val,
-          dueDate: formDueDate,
+          dueDate: finalDueDate,
           startDate: formStartDate,
           category: formCategory,
+          isInstallment: formIsInstallment,
+          tenorMonths: tenorNum,
+          monthlyInstallment: monthlyNum,
+          dueDayOfMonth: dueDayNum,
           status: 'active',
           note: formNote.trim(),
         },
@@ -250,12 +356,18 @@ export function DebtTab() {
   // Open Payment Modal
   const handleOpenPay = (debt: Debt) => {
     setPayingDebt(debt);
-    setPayAmount(formatNominalInput(String(debt.remainingAmount)));
+    const defaultAmount = (debt.monthlyInstallment && debt.monthlyInstallment > 0)
+      ? Math.min(debt.monthlyInstallment, debt.remainingAmount)
+      : debt.remainingAmount;
+    setPayAmount(formatNominalInput(String(defaultAmount)));
     setPayWalletId(wallets[0]?.id || '');
     setPayDate(new Date().toISOString().slice(0, 10));
+    const nextInstallmentNum = (debt.payments?.length || 0) + 1;
     setPayNote(
       debt.type === 'payable'
-        ? `Cicilan ${debt.name}`
+        ? (debt.isInstallment || debt.tenorMonths
+            ? `Cicilan ke-${nextInstallmentNum} ${debt.name}`
+            : `Cicilan ${debt.name}`)
         : `Penerimaan pelunasan ${debt.name}`
     );
   };
@@ -628,10 +740,16 @@ export function DebtTab() {
                           </strong>
                         </span>
                       </div>
+                      {item.dueDayOfMonth ? (
+                        <div className="flex items-center gap-1 font-semibold text-lime-700 dark:text-[#D4F826]">
+                          <CalendarDays size={13} className="shrink-0" />
+                          <span>Bayar tiap tgl: <strong>{item.dueDayOfMonth}</strong></span>
+                        </div>
+                      ) : null}
                       {item.dueDate && (
                         <div className="flex items-center gap-1">
-                          <Calendar size={13} className="text-gray-400" />
-                          <span>Jatuh tempo: {item.dueDate}</span>
+                          <Calendar size={13} className="text-gray-400 shrink-0" />
+                          <span>{item.dueDayOfMonth ? `Target lunas: ${item.dueDate}` : `Jatuh tempo: ${item.dueDate}`}</span>
                         </div>
                       )}
                     </div>
@@ -658,6 +776,40 @@ export function DebtTab() {
                     </div>
                   </div>
                 </div>
+
+                {/* Installment Scheme Highlights */}
+                {(item.isInstallment || item.monthlyInstallment || item.tenorMonths || item.dueDayOfMonth) && (
+                  <div className="p-3 rounded-2xl bg-gray-50/90 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                      {(item.monthlyInstallment || (item.tenorMonths && item.tenorMonths > 0)) && (
+                        <div className="flex items-center gap-1.5 font-bold text-gray-800 dark:text-gray-200">
+                          <CreditCard size={14} className="text-lime-600 dark:text-[#D4F826] shrink-0" />
+                          <span>
+                            Cicilan: <strong className="text-gray-950 dark:text-white">{formatRupiah(item.monthlyInstallment || Math.round(item.totalAmount / (item.tenorMonths || 1)), hide)}</strong>/bln
+                          </span>
+                        </div>
+                      )}
+                      {item.tenorMonths && (
+                        <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400 font-medium">
+                          <Clock size={13} className="text-gray-400 shrink-0" />
+                          <span>Tenor: <strong className="text-gray-700 dark:text-gray-300">{item.tenorMonths} Bulan</strong></span>
+                        </div>
+                      )}
+                      {item.dueDayOfMonth && (
+                        <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400 font-medium">
+                          <CalendarDays size={13} className="text-lime-600 dark:text-[#D4F826] shrink-0" />
+                          <span>Jatuh tempo: <strong className="text-lime-700 dark:text-[#D4F826]">Tiap tgl {item.dueDayOfMonth}</strong></span>
+                        </div>
+                      )}
+                    </div>
+
+                    {!isPaid && (item.monthlyInstallment || (item.tenorMonths && item.tenorMonths > 0)) && (
+                      <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
+                        Estimasi sisa: <strong className="text-gray-800 dark:text-gray-200">~{Math.max(1, Math.ceil(item.remainingAmount / (item.monthlyInstallment || Math.round(item.totalAmount / (item.tenorMonths || 1)))))}x cicilan</strong>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Progress Bar & Repayment stats */}
                 <div className="space-y-1.5 pt-1">
@@ -863,17 +1015,223 @@ export function DebtTab() {
                 {/* Total Amount */}
                 <div>
                   <label className="text-xs font-bold text-gray-500 block mb-1">
-                    Total Nominal Pokok (Rp)
+                    Total Nominal Pokok Pinjaman (Rp)
                   </label>
                   <input
                     type="text"
                     inputMode="numeric"
                     value={formTotalAmount}
-                    onChange={(e) => setFormTotalAmount(formatNominalInput(e.target.value))}
-                    placeholder="Contoh: 5.000.000"
+                    onChange={(e) => handleTotalAmountChange(e.target.value)}
+                    placeholder="Contoh: 6.000.000"
                     required
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
+                </div>
+
+                {/* Category */}
+                <div>
+                  <label className="text-xs font-bold text-gray-500 block mb-1">Kategori</label>
+                  <select
+                    value={formCategory}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFormCategory(val);
+                      if (val === 'cicilan') {
+                        setFormIsInstallment(true);
+                        const tot = parseNominalInput(formTotalAmount);
+                        const t = parseInt(formTenorMonths, 10) || 6;
+                        if (tot > 0 && (!formMonthlyInstallment || formMonthlyInstallment === '0')) {
+                          setFormMonthlyInstallment(formatNominalInput(String(Math.round(tot / t))));
+                        }
+                      }
+                    }}
+                    className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                  >
+                    <option value="cicilan">Cicilan & Paylater</option>
+                    <option value="bank">Perbankan / Pinjaman Resmi</option>
+                    <option value="personal">Personal / Teman & Keluarga</option>
+                    <option value="modal">Modal Usaha</option>
+                    <option value="kartu_kredit">Kartu Kredit</option>
+                    <option value="lainnya">Lainnya</option>
+                  </select>
+                </div>
+
+                {/* Skema Cicilan Bulanan & Tanggal Bayar */}
+                <div className="p-4 rounded-3xl bg-lime-500/5 dark:bg-[#D4F826]/5 border-2 border-lime-500/30 dark:border-[#D4F826]/30 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-lime-500/20 dark:bg-[#D4F826]/20 flex items-center justify-center text-lime-700 dark:text-[#D4F826] shrink-0">
+                        <CalendarDays size={18} />
+                      </div>
+                      <div>
+                        <div className="text-xs font-black text-gray-900 dark:text-white flex items-center gap-1.5">
+                          <span>Skema Cicilan & Tempo Bulanan</span>
+                          {formIsInstallment && (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-lime-500 text-black font-extrabold rounded-md leading-none">
+                              Aktif
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                          Atur tempo bulan, cicilan per bulan, dan tanggal pembayaran
+                        </p>
+                      </div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={formIsInstallment}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setFormIsInstallment(checked);
+                          if (checked) {
+                            const tNum = parseInt(formTenorMonths, 10) || 6;
+                            const tot = parseNominalInput(formTotalAmount);
+                            if (tot > 0 && (!formMonthlyInstallment || formMonthlyInstallment === '0')) {
+                              setFormMonthlyInstallment(formatNominalInput(String(Math.round(tot / tNum))));
+                            }
+                          }
+                        }}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-lime-500 dark:peer-checked:bg-[#D4F826]"></div>
+                    </label>
+                  </div>
+
+                  {formIsInstallment && (
+                    <div className="space-y-3.5 pt-1 border-t border-lime-500/15 dark:border-[#D4F826]/15">
+                      {/* 1. Tenor / Durasi Bulan */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs font-bold text-gray-700 dark:text-gray-300">
+                            Tempo / Durasi Cicilan (Bulan)
+                          </label>
+                          <span className="text-[11px] font-black text-lime-700 dark:text-[#D4F826]">
+                            {formTenorMonths || '0'} Bulan
+                          </span>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="1"
+                            max="120"
+                            value={formTenorMonths}
+                            onChange={(e) => handleTenorChange(e.target.value)}
+                            placeholder="Contoh: 6"
+                            className="w-full p-3 pr-16 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                          />
+                          <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">
+                            Bulan
+                          </span>
+                        </div>
+                        {/* Quick Tenor Chips */}
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {['3', '6', '12', '24', '36'].map((t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => handleTenorChange(t)}
+                              className={`px-2.5 py-1 rounded-xl text-[11px] font-black cursor-pointer transition-all ${
+                                formTenorMonths === t
+                                  ? 'bg-lime-500 text-black shadow-xs scale-102'
+                                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-lime-500'
+                              }`}
+                            >
+                              {t} bln
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* 2. Nominal Cicilan Tiap Bulan */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs font-bold text-gray-700 dark:text-gray-300">
+                            Besaran Cicilan Tiap Bulan (Rp)
+                          </label>
+                          {parseNominalInput(formTotalAmount) > 0 && parseInt(formTenorMonths, 10) > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const tot = parseNominalInput(formTotalAmount);
+                                const t = parseInt(formTenorMonths, 10);
+                                setFormMonthlyInstallment(formatNominalInput(String(Math.round(tot / t))));
+                              }}
+                              className="text-[11px] font-bold text-lime-700 dark:text-[#D4F826] hover:underline cursor-pointer flex items-center gap-1"
+                            >
+                              <Sparkles size={11} />
+                              <span>Hitung Rata ({formatRupiah(Math.round(parseNominalInput(formTotalAmount) / parseInt(formTenorMonths, 10)))})</span>
+                            </button>
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={formMonthlyInstallment}
+                          onChange={(e) => setFormMonthlyInstallment(formatNominalInput(e.target.value))}
+                          placeholder="Contoh: 1.000.000"
+                          className="w-full p-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                        />
+                        {/* Summary calculation */}
+                        {parseNominalInput(formMonthlyInstallment) > 0 && parseInt(formTenorMonths, 10) > 0 && (
+                          <div className="flex items-center justify-between text-[11px] font-semibold text-gray-500 dark:text-gray-400 mt-1 px-1">
+                            <span>
+                              Estimasi total: {formatRupiah(parseNominalInput(formMonthlyInstallment))} × {formTenorMonths} bln
+                            </span>
+                            <span className="font-extrabold text-gray-800 dark:text-gray-200">
+                              = {formatRupiah(parseNominalInput(formMonthlyInstallment) * parseInt(formTenorMonths, 10))}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 3. Tanggal Jatuh Tempo Tiap Bulan */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-xs font-bold text-gray-700 dark:text-gray-300">
+                            Tanggal Pembayaran Tiap Bulan (Jatuh Tempo)
+                          </label>
+                          <span className="text-[11px] font-black text-lime-700 dark:text-[#D4F826]">
+                            Tiap Tanggal {formDueDayOfMonth || '10'}
+                          </span>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            min="1"
+                            max="31"
+                            value={formDueDayOfMonth}
+                            onChange={(e) => handleDueDayChange(e.target.value)}
+                            placeholder="Contoh: 10"
+                            className="w-full p-3 pr-28 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                          />
+                          <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">
+                            Tiap Bulan
+                          </span>
+                        </div>
+                        {/* Quick Date Chips */}
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {['1', '5', '10', '15', '20', '25', '28'].map((d) => (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => handleDueDayChange(d)}
+                              className={`px-2.5 py-1 rounded-xl text-[11px] font-black cursor-pointer transition-all ${
+                                formDueDayOfMonth === d
+                                  ? 'bg-lime-500 text-black shadow-xs scale-102'
+                                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-lime-500'
+                              }`}
+                            >
+                              Tgl {d}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1.5 px-0.5">
+                          Pengingat pembayaran cicilan akan berulang setiap tanggal ini setiap bulannya.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Dates: Start & Due */}
@@ -885,14 +1243,21 @@ export function DebtTab() {
                     <input
                       type="date"
                       value={formStartDate}
-                      onChange={(e) => setFormStartDate(e.target.value)}
+                      onChange={(e) => handleStartDateChange(e.target.value)}
                       className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-gray-500 block mb-1">
-                      Jatuh Tempo (Target)
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-gray-500">
+                        Jatuh Tempo (Target)
+                      </label>
+                      {formIsInstallment && formTenorMonths && (
+                        <span className="text-[10px] text-lime-600 dark:text-[#D4F826] font-semibold">
+                          Auto {formTenorMonths} bln
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="date"
                       value={formDueDate}
@@ -900,23 +1265,6 @@ export function DebtTab() {
                       className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
                   </div>
-                </div>
-
-                {/* Category */}
-                <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">Kategori</label>
-                  <select
-                    value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value)}
-                    className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
-                  >
-                    <option value="cicilan">Cicilan & Paylater</option>
-                    <option value="bank">Perbankan / Pinjaman Resmi</option>
-                    <option value="personal">Personal / Teman & Keluarga</option>
-                    <option value="modal">Modal Usaha</option>
-                    <option value="kartu_kredit">Kartu Kredit</option>
-                    <option value="lainnya">Lainnya</option>
-                  </select>
                 </div>
 
                 {/* Cashflow Sync Option (Only on new additions) */}
@@ -954,6 +1302,29 @@ export function DebtTab() {
                         </select>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {/* Auto-sync info banner for Utang Saya */}
+                {formType === 'payable' && (
+                  <div className="flex items-start gap-2.5 p-3 rounded-2xl bg-lime-500/10 dark:bg-[#D4F826]/10 border border-lime-500/20 dark:border-[#D4F826]/30 text-gray-800 dark:text-gray-200 text-xs">
+                    <span className="text-base shrink-0 leading-none mt-0.5">⚡</span>
+                    <div className="space-y-0.5">
+                      <div className="font-extrabold text-lime-700 dark:text-[#D4F826]">
+                        Sinkronisasi Otomatis ke Budget
+                      </div>
+                      <div className="text-[11px] text-gray-600 dark:text-gray-400 font-medium">
+                        {formIsInstallment && (parseNominalInput(formMonthlyInstallment) > 0 || (parseNominalInput(formTotalAmount) > 0 && parseInt(formTenorMonths, 10) > 0)) ? (
+                          <>
+                            Cicilan sebesar <strong>{formatRupiah(parseNominalInput(formMonthlyInstallment) || Math.round(parseNominalInput(formTotalAmount) / (parseInt(formTenorMonths, 10) || 1)))}/bulan</strong> otomatis tercatat di <strong>Menu Budget (Kebutuhan &gt; Pos Tagihan Bulanan / Fixed)</strong> setiap <strong>tanggal {formDueDayOfMonth || '10'}</strong>.
+                          </>
+                        ) : (
+                          <>
+                            Utang ini otomatis tercatat di <strong>Menu Budget (Kebutuhan)</strong> dan dihitung di <strong>Pos Tagihan Bulanan (Fixed)</strong> dengan target jatuh tempo.
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -1021,7 +1392,7 @@ export function DebtTab() {
               </div>
 
               {/* Debt Summary Pill */}
-              <div className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 text-xs space-y-1">
+              <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 text-xs space-y-1.5">
                 <div className="flex justify-between text-gray-500">
                   <span>Sisa Kewajiban Saat Ini:</span>
                   <span className="font-extrabold text-rose-500">
@@ -1034,6 +1405,15 @@ export function DebtTab() {
                     {formatRupiah(payingDebt.totalAmount)}
                   </span>
                 </div>
+                {(payingDebt.monthlyInstallment || payingDebt.dueDayOfMonth) && (
+                  <div className="flex justify-between text-gray-500 pt-1 border-t border-gray-200 dark:border-gray-700">
+                    <span>Cicilan Rutin:</span>
+                    <span className="font-extrabold text-lime-700 dark:text-[#D4F826]">
+                      {payingDebt.monthlyInstallment ? `${formatRupiah(payingDebt.monthlyInstallment)}/bln` : ''}
+                      {payingDebt.dueDayOfMonth ? ` (Tiap tgl ${payingDebt.dueDayOfMonth})` : ''}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <form onSubmit={handleSubmitPay} className="space-y-3.5">
@@ -1050,11 +1430,29 @@ export function DebtTab() {
                     required
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
-                  <div className="flex gap-1.5 mt-1.5">
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {payingDebt.monthlyInstallment && payingDebt.monthlyInstallment > 0 && payingDebt.remainingAmount > payingDebt.monthlyInstallment && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount(formatNominalInput(String(payingDebt.monthlyInstallment)))}
+                        className="text-[11px] font-bold text-lime-700 dark:text-[#D4F826] bg-lime-500/10 dark:bg-[#D4F826]/10 px-2.5 py-1 rounded-xl hover:underline cursor-pointer"
+                      >
+                        1x Cicilan ({formatRupiah(payingDebt.monthlyInstallment)})
+                      </button>
+                    )}
+                    {payingDebt.monthlyInstallment && payingDebt.monthlyInstallment > 0 && payingDebt.remainingAmount >= payingDebt.monthlyInstallment * 2 && (
+                      <button
+                        type="button"
+                        onClick={() => setPayAmount(formatNominalInput(String(payingDebt.monthlyInstallment! * 2)))}
+                        className="text-[11px] font-bold text-lime-700 dark:text-[#D4F826] bg-lime-500/10 dark:bg-[#D4F826]/10 px-2.5 py-1 rounded-xl hover:underline cursor-pointer"
+                      >
+                        2x Cicilan ({formatRupiah(payingDebt.monthlyInstallment * 2)})
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setPayAmount(formatNominalInput(String(payingDebt.remainingAmount)))}
-                      className="text-[11px] font-bold text-lime-600 dark:text-[#D4F826] hover:underline cursor-pointer"
+                      className="text-[11px] font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 px-2.5 py-1 rounded-xl hover:underline cursor-pointer"
                     >
                       Bayar Penuh Sisa ({formatRupiah(payingDebt.remainingAmount)})
                     </button>
@@ -1174,9 +1572,33 @@ export function DebtTab() {
                       : formatRupiah(detailDebt.remainingAmount)}
                   </span>
                 </div>
+                {detailDebt.monthlyInstallment && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-gray-500">Cicilan Bulanan:</span>
+                    <span className="font-bold text-lime-700 dark:text-[#D4F826]">
+                      {formatRupiah(detailDebt.monthlyInstallment)} / bulan
+                    </span>
+                  </div>
+                )}
+                {detailDebt.tenorMonths && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-gray-500">Tempo / Tenor:</span>
+                    <span className="font-bold text-gray-700 dark:text-gray-300">
+                      {detailDebt.tenorMonths} Bulan
+                    </span>
+                  </div>
+                )}
+                {detailDebt.dueDayOfMonth && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-gray-500">Jatuh Tempo Bulanan:</span>
+                    <span className="font-bold text-lime-700 dark:text-[#D4F826]">
+                      Setiap tanggal {detailDebt.dueDayOfMonth}
+                    </span>
+                  </div>
+                )}
                 {detailDebt.dueDate && (
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-gray-500">Target Jatuh Tempo:</span>
+                    <span className="text-gray-500">Target Pelunasan Akhir:</span>
                     <span className="font-bold text-gray-700 dark:text-gray-300">
                       {detailDebt.dueDate}
                     </span>

@@ -79,6 +79,21 @@ function fromFirestoreFields(fields?: Record<string, any>): Record<string, any> 
   return result;
 }
 
+export const dynamic = 'force-dynamic';
+
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+  Pragma: 'no-cache',
+  Expires: '0',
+};
+
+function createNoCacheResponse(body: any, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: NO_CACHE_HEADERS,
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -90,26 +105,33 @@ export async function POST(req: NextRequest) {
     };
 
     if (!path || typeof path !== 'string' || !path.startsWith('users/')) {
-      return NextResponse.json({ ok: false, error: 'Invalid path' }, { status: 400 });
+      return createNoCacheResponse({ ok: false, error: 'Invalid path' }, 400);
     }
 
     const cleanPath = path.replace(/^\/+|\/+$/g, '');
 
     if (action === 'get') {
       const url = `${BASE_URL}/${cleanPath}?key=${encodeURIComponent(API_KEY)}`;
-      const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+      const res = await fetch(url, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
+      });
       if (res.status === 404) {
-        return NextResponse.json({ ok: true, exists: false, data: null });
+        return createNoCacheResponse({ ok: true, exists: false, data: null });
       }
       if (!res.ok) {
         const errText = await res.text();
-        return NextResponse.json(
+        return createNoCacheResponse(
           { ok: false, status: res.status, error: errText },
-          { status: 200 }
+          200
         );
       }
       const docJson = await res.json();
-      return NextResponse.json({
+      return createNoCacheResponse({
         ok: true,
         exists: true,
         data: fromFirestoreFields(docJson.fields),
@@ -118,22 +140,29 @@ export async function POST(req: NextRequest) {
 
     if (action === 'list') {
       const url = `${BASE_URL}/${cleanPath}?pageSize=300&key=${encodeURIComponent(API_KEY)}`;
-      const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+      const res = await fetch(url, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
+      });
       if (res.status === 404) {
-        return NextResponse.json({ ok: true, docs: [] });
+        return createNoCacheResponse({ ok: true, docs: [] });
       }
       if (!res.ok) {
         const errText = await res.text();
-        return NextResponse.json(
+        return createNoCacheResponse(
           { ok: false, status: res.status, error: errText, docs: [] },
-          { status: 200 }
+          200
         );
       }
       const listJson = await res.json();
       const docs = Array.isArray(listJson.documents)
         ? listJson.documents.map((d: any) => fromFirestoreFields(d.fields))
         : [];
-      return NextResponse.json({ ok: true, docs });
+      return createNoCacheResponse({ ok: true, docs });
     }
 
     if (action === 'set') {
@@ -149,19 +178,23 @@ export async function POST(req: NextRequest) {
       const url = `${BASE_URL}/${cleanPath}?key=${encodeURIComponent(API_KEY)}${maskQuery}`;
       const res = await fetch(url, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
         body: JSON.stringify({ fields }),
         cache: 'no-store',
       });
       if (!res.ok) {
         const errText = await res.text();
-        return NextResponse.json(
+        return createNoCacheResponse(
           { ok: false, status: res.status, error: errText },
-          { status: 200 }
+          200
         );
       }
       const savedJson = await res.json();
-      return NextResponse.json({
+      return createNoCacheResponse({
         ok: true,
         data: fromFirestoreFields(savedJson.fields),
       });
@@ -169,15 +202,22 @@ export async function POST(req: NextRequest) {
 
     if (action === 'delete') {
       const url = `${BASE_URL}/${cleanPath}?key=${encodeURIComponent(API_KEY)}`;
-      const res = await fetch(url, { method: 'DELETE', cache: 'no-store' });
-      return NextResponse.json({ ok: res.ok || res.status === 404 });
+      const res = await fetch(url, {
+        method: 'DELETE',
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
+      });
+      return createNoCacheResponse({ ok: res.ok || res.status === 404 });
     }
 
-    return NextResponse.json({ ok: false, error: 'Unsupported action' }, { status: 400 });
+    return createNoCacheResponse({ ok: false, error: 'Unsupported action' }, 400);
   } catch (err: any) {
-    return NextResponse.json(
+    return createNoCacheResponse(
       { ok: false, error: err?.message || 'Internal error' },
-      { status: 200 }
+      200
     );
   }
 }

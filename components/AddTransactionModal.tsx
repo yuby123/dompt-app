@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Delete, Check, Sparkles } from 'lucide-react';
+import { X, Delete, Check, Sparkles, AlertTriangle } from 'lucide-react';
 import { useApp } from './AppContext';
 import { TransactionType } from '@/lib/types';
 import { CategoryIcon } from './CategoryIcon';
-import { formatNumberOnly } from '@/lib/formatters';
-import { detectExpenseNature } from '@/lib/budgetUtils';
+import { formatNumberOnly, formatRupiah } from '@/lib/formatters';
+import { detectExpenseNature, isDateInBudgetPeriod } from '@/lib/budgetUtils';
 
 function AddTransactionForm() {
   const {
@@ -24,6 +24,9 @@ function AddTransactionForm() {
     openScanModal,
     activeDate,
     addToast,
+    budgetConfig,
+    budgetPeriod,
+    transactions,
   } = useApp();
 
   const amountInputRef = useRef<HTMLInputElement>(null);
@@ -145,6 +148,72 @@ function AddTransactionForm() {
     amountInputRef.current?.focus();
   };
 
+  // Proactive budget calculation for selected expense category
+  const matchingSubcategory = useMemo(() => {
+    if (type !== 'expense' || !selectedCategoryId) return null;
+    const chosenCat = categories.find((c) => c.id === selectedCategoryId);
+    const catNameLower = (chosenCat?.name || '').toLowerCase().trim();
+    const noteLower = (note || '').toLowerCase().trim();
+
+    const subs = budgetConfig?.subcategories || [];
+    return (
+      subs.find((s) => {
+        const sNameLower = s.name.toLowerCase().trim();
+        if (s.id.replace('sub-', '') === selectedCategoryId.replace('cat-', '')) return true;
+        if (sNameLower && (catNameLower === sNameLower || catNameLower.includes(sNameLower) || sNameLower.includes(catNameLower))) {
+          return true;
+        }
+        if (noteLower && sNameLower && (noteLower.includes(sNameLower) || sNameLower.includes(noteLower))) {
+          return true;
+        }
+        return false;
+      }) || null
+    );
+  }, [type, selectedCategoryId, note, categories, budgetConfig?.subcategories]);
+
+  const subcategoryBudgetStatus = useMemo(() => {
+    if (!matchingSubcategory || matchingSubcategory.allocatedAmount <= 0) return null;
+
+    let spentSoFar = 0;
+    (transactions || []).forEach((tx) => {
+      if (editingTransaction && tx.id === editingTransaction.transaction.id) return;
+      if (tx.type !== 'expense') return;
+      const d = new Date(tx.date);
+      if (!isDateInBudgetPeriod(d, budgetPeriod)) return;
+
+      const txCat = tx.categoryId ? categories.find((c) => c.id === tx.categoryId) : undefined;
+      const txCatName = (txCat?.name || '').toLowerCase().trim();
+      const txNote = (tx.note || '').toLowerCase().trim();
+      const sName = matchingSubcategory.name.toLowerCase().trim();
+
+      const isDirectMatch =
+        (tx.categoryId && matchingSubcategory.id.replace('sub-', '') === tx.categoryId.replace('cat-', '')) ||
+        (sName && (txCatName.includes(sName) || sName.includes(txCatName))) ||
+        (txNote && sName && (txNote.includes(sName) || sName.includes(txNote)));
+
+      if (isDirectMatch) {
+        spentSoFar += tx.amount;
+      }
+    });
+
+    const willTotalSpend = spentSoFar + currentAmount;
+    const isOver = willTotalSpend > matchingSubcategory.allocatedAmount;
+    const isAlreadyOver = spentSoFar > matchingSubcategory.allocatedAmount;
+    const overAmount = willTotalSpend - matchingSubcategory.allocatedAmount;
+    const remainingBefore = Math.max(0, matchingSubcategory.allocatedAmount - spentSoFar);
+
+    return {
+      subcategory: matchingSubcategory,
+      allocated: matchingSubcategory.allocatedAmount,
+      spentSoFar,
+      willTotalSpend,
+      isOver,
+      isAlreadyOver,
+      overAmount,
+      remainingBefore,
+    };
+  }, [matchingSubcategory, transactions, budgetPeriod, currentAmount, editingTransaction, categories]);
+
   const handleSave = () => {
     if (currentAmount <= 0) return;
 
@@ -205,6 +274,14 @@ function AddTransactionForm() {
           date: finalDateIso,
           note: note.trim() || undefined,
         });
+      }
+
+      if (subcategoryBudgetStatus?.isOver && currentAmount > 0) {
+        addToast(
+          'Peringatan: Melebihi Anggaran',
+          `Pengeluaran "${subcategoryBudgetStatus.subcategory.name}" melebihi anggaran sebesar Rp${formatNumberOnly(subcategoryBudgetStatus.overAmount)}.`,
+          'info'
+        );
       }
     }
 
@@ -379,6 +456,26 @@ function AddTransactionForm() {
             </button>
           )}
         </div>
+
+        {/* Proactive Category Budget Alert */}
+        {subcategoryBudgetStatus?.isOver && currentAmount > 0 && (
+          <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-2xl p-3.5 flex items-start gap-3 text-xs text-rose-700 dark:text-rose-300 shadow-2xs">
+            <div className="w-7 h-7 rounded-xl bg-rose-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+              <AlertTriangle size={15} strokeWidth={2.5} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-black text-rose-800 dark:text-rose-200 flex items-center justify-between gap-1">
+                <span>⚠️ Peringatan Melebihi Anggaran!</span>
+                <span className="font-black tabular-nums text-rose-600 dark:text-rose-400">
+                  +{formatRupiah(subcategoryBudgetStatus.overAmount, settings.hideBalance)}
+                </span>
+              </div>
+              <p className="text-[11px] text-rose-600/90 dark:text-rose-400/90 mt-0.5 leading-snug">
+                Pagu <strong>{subcategoryBudgetStatus.subcategory.emoji} {subcategoryBudgetStatus.subcategory.name}</strong> sebesar {formatRupiah(subcategoryBudgetStatus.allocated, settings.hideBalance)} (terpakai {formatRupiah(subcategoryBudgetStatus.spentSoFar, settings.hideBalance)}). Transaksi ini akan melampaui batas anggaran.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Wallet Selector */}
         {type === 'transfer' ? (

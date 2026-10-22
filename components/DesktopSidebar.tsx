@@ -19,6 +19,7 @@ import {
   CalendarClock,
   Activity,
   Megaphone,
+  BarChart3,
 } from 'lucide-react';
 import { TabType, useApp } from './AppContext';
 
@@ -62,10 +63,10 @@ export function DesktopSidebar() {
     { id: 'wallets', label: 'Dompet', icon: Wallet },
     { id: 'transactions', label: 'Transaksi', icon: ArrowRightLeft },
     { id: 'budget', label: 'Budget', icon: PieChart },
+    { id: 'analytics', label: 'Analisis & Skor', icon: BarChart3 },
     { id: 'goals', label: 'Goals', icon: Target },
     { id: 'assets', label: 'Aset', icon: Landmark },
     { id: 'subscriptions', label: 'Langganan', icon: CalendarClock },
-    { id: 'health-score', label: 'Skor Sehat', icon: Activity },
     { id: 'debt', label: 'Utang', icon: CreditCard },
     { id: 'invest', label: 'Investasi', icon: TrendingUp },
     { id: 'ai-advisor', label: 'AI Advisor', icon: Sparkles },

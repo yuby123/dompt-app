@@ -26,6 +26,7 @@ import {
 import {
   cacheRegisteredAccountLocally,
   clearAllData,
+  getCleanDefaultWallets,
   getCloudAccountUid,
   getInitialBudgets,
   getInitialSampleTransactions,
@@ -313,8 +314,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [dataResetVersion, setDataResetVersion] = useState<number>(0);
 
   const setActiveTab = (tab: TabType) => {
+    const targetTab = tab === 'health-score' ? 'analytics' : tab;
     setPreviousTab(activeTab);
-    setActiveTabState(tab);
+    setActiveTabState(targetTab);
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -324,14 +326,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setActiveTabState(previousTab || 'dashboard');
   };
 
-  // Core Data States (initialized with deterministic defaults for SSR parity, hydrated in useEffect)
-  const [wallets, setWallets] = useState<Wallet[]>(DEFAULT_WALLETS);
+  // Core Data States (Start completely empty; populated exclusively by direct Firestore GET on load)
+  const [wallets, setWallets] = useState<Wallet[]>([]);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
-  const [transactions, setTransactions] = useState<Transaction[]>(() => getInitialSampleTransactions());
-  const [budgets, setBudgets] = useState<Budget[]>(() => getInitialBudgets());
-  const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(DEFAULT_BUDGET_CONFIG);
-  const [goals, setGoals] = useState<Goal[]>(DEFAULT_GOALS);
-  const [debts, setDebts] = useState<Debt[]>(DEFAULT_DEBTS);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(EMPTY_BUDGET_CONFIG);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [debts, setDebts] = useState<Debt[]>([]);
   const [subscriptions, setSubscriptions] = useState<RecurringItem[]>([]);
   const [liquidAssets, setLiquidAssets] = useState<AssetItem[]>([]);
   const [fixedAssets, setFixedAssets] = useState<AssetItem[]>([]);
@@ -354,10 +356,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const activeMonth = activeDateObj.getMonth();
   const activeDay = activeDateObj.getDate();
 
-  const effectivePaydayDay = useMemo(() => {
-    const raw = budgetConfig?.paydayDay || settings?.paydayDay || budgetConfig?.settings?.paydayDay || 1;
-    return Math.max(1, Math.min(31, Math.round(Number(raw) || 1)));
-  }, [budgetConfig?.paydayDay, settings?.paydayDay, budgetConfig?.settings?.paydayDay]);
+  const rawPayday = budgetConfig?.paydayDay || settings?.paydayDay || budgetConfig?.settings?.paydayDay || 1;
+  const effectivePaydayDay = Math.max(1, Math.min(31, Math.round(Number(rawPayday) || 1)));
 
   const budgetPeriod = useMemo<BudgetPeriodInfo>(() => {
     return getBudgetPeriodInfo(activeYear, activeMonth, activeDay, effectivePaydayDay);
@@ -474,12 +474,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       updatedAt: now,
     };
     setBudgetConfig(fullCfg);
-    saveStoredBudgetConfig(fullCfg, uid);
     saveUserBudgetConfig(uid, fullCfg).catch((err) =>
       console.warn('Error saving extended budget config to Firestore:', err)
     );
     if (mirrorUid) {
-      saveStoredBudgetConfig(fullCfg, mirrorUid);
       saveUserBudgetConfig(mirrorUid, fullCfg).catch(() => {});
     }
   };
@@ -488,28 +486,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const idList = (Array.isArray(ids) ? ids : [ids]).filter((x): x is string => Boolean(x));
     const next = Array.from(new Set([...currentDeleted, ...idList])).slice(-400);
     setDeletedIds(next);
-    if (localScopeUid) {
-      saveStoredDeletedIds(next, localScopeUid);
-    }
     return next;
   };
 
-  // Reconcile subscriptions across Cloud Firestore (/subscriptions), budgetConfig.subscriptions, localStorage, and budgetConfig.subcategories
-  const reconcileAndSyncSubscriptions = async (
-    uid: string,
+  // Pure in-memory reconcile for subscriptions directly from cloud state (NO writes to database during sync!)
+  const reconcileCloudSubscriptions = (
     cloudSubs: RecurringItem[],
-    localSubs: RecurringItem[],
     budget: BudgetConfig,
     activeWallets: Wallet[],
-    deletedSet: Set<string>,
-    mirrorUid?: string,
-    isBackgroundSync = false
-  ): Promise<RecurringItem[]> => {
-    const cloudIds = new Set(cloudSubs.map((s) => s.id));
+    deletedSet: Set<string>
+  ): RecurringItem[] => {
     const embeddedSubs = Array.isArray(budget.subscriptions) ? budget.subscriptions : [];
-
-    // 1. Merge cloudSubs + embeddedSubs + localSubs (excluding deletedSet, preferring newer updatedAt)
     const mergedMap = new Map<string, RecurringItem>();
+
     const addOrUpdateRec = (item: RecurringItem) => {
       if (!item?.id || deletedSet.has(item.id)) return;
       if (item.subcategoryId && deletedSet.has(item.subcategoryId)) return;
@@ -540,13 +529,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     for (const item of embeddedSubs) addOrUpdateRec(item);
     for (const item of cloudSubs) addOrUpdateRec(item);
-    for (const localItem of localSubs) addOrUpdateRec(localItem);
 
     const subcats = (budget.subcategories || []).filter(
       (s) => !deletedSet.has(s.id) && !(s.subscriptionId && deletedSet.has(s.subscriptionId))
     );
 
-    // 2. Filter out orphaned expense subscriptions whose subcategory was deleted from budgetConfig
     const validSubs: RecurringItem[] = [];
     for (const rec of mergedMap.values()) {
       if (rec.type !== 'expense') {
@@ -556,9 +543,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (subcats.length === 0) {
         if (!rec.subcategoryId) {
           validSubs.push(rec);
-        } else if (cloudIds.has(rec.id)) {
-          deleteUserSubscription(uid, rec.id).catch(() => {});
-          if (mirrorUid) deleteUserSubscription(mirrorUid, rec.id).catch(() => {});
         }
         continue;
       }
@@ -589,13 +573,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           categoryId: matchedSub.categoryId || rec.categoryId,
           lastRecordedPeriod: matchedSub.lastRecordedPeriod || rec.lastRecordedPeriod,
         });
-      } else if (cloudIds.has(rec.id)) {
-        deleteUserSubscription(uid, rec.id).catch(() => {});
-        if (mirrorUid) deleteUserSubscription(mirrorUid, rec.id).catch(() => {});
       }
     }
 
-    // 3. Reconstruct any missing expense subscription from budgetConfig.subcategories
+    // Reconstruct expense subscriptions from subcategories in memory
     const preferredWallet =
       activeWallets.find((w) => w.name.toLowerCase().includes('dana')) ||
       activeWallets.find(
@@ -637,7 +618,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             ? 'cat-air'
             : 'cat-tagihan');
 
-        const reconstructed: RecurringItem = {
+        validSubs.push({
           id: targetSubId,
           name: sub.name,
           emoji: sub.emoji || (sub.group === 'keinginan' ? '🎬' : '🛜'),
@@ -652,43 +633,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           isActive: sub.isSubscriptionActive !== false,
           lastRecordedPeriod: sub.lastRecordedPeriod,
           updatedAt: new Date().toISOString(),
-        };
-        validSubs.push(reconstructed);
-      }
-    }
-
-    // 4. Persist reconciled subscriptions to localStorage (and to Cloud only when not in a passive background pull)
-    saveStoredSubscriptions(validSubs, uid);
-    if (mirrorUid) {
-      saveStoredSubscriptions(validSubs, mirrorUid);
-    }
-    if (!isBackgroundSync) {
-      for (const item of validSubs) {
-        if (!cloudIds.has(item.id)) {
-          saveUserSubscription(uid, item).catch(() => {});
-        }
-        if (mirrorUid) {
-          saveUserSubscription(mirrorUid, item).catch(() => {});
-        }
+        });
       }
     }
 
     return validSubs;
   };
 
-  // Unified Cloud + Local Bi-Directional Sync Engine (works across HP, Laptop, Tablet, and different Chrome browsers)
+  // Pure 100% Database Read Sync (ZERO writes during sync to prevent stale overwrites)
   const syncAllAccountDataWithCloud = async (
     primaryUid: string,
     email: string,
     displayName: string,
-    isNewRegistration = false,
+    _isNewRegistration = false,
     mirrorUid?: string,
-    isBackgroundSync = false
+    _isBackgroundSync = false
   ) => {
     const syncStartTime = Date.now();
-    const legacyUid = email ? `user_${email.replace(/[^a-z0-9]/g, '_')}` : undefined;
 
-    // Fetch primary UID collections independently so a single network hiccup never fails the others
+    // Fetch primary UID collections directly from Firestore
     const [
       loadedWallets,
       loadedTx,
@@ -697,15 +660,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       loadedDebts,
       loadedSubs,
     ] = await Promise.all([
-      fetchUserWallets(primaryUid, false).catch(() => [] as Wallet[]),
+      fetchUserWallets(primaryUid).catch(() => [] as Wallet[]),
       fetchUserTransactions(primaryUid).catch(() => [] as Transaction[]),
       fetchUserGoals(primaryUid).catch(() => [] as Goal[]),
-      fetchUserBudgetConfig(primaryUid, false).catch(() => null),
+      fetchUserBudgetConfig(primaryUid).catch(() => null),
       fetchUserDebts(primaryUid).catch(() => [] as Debt[]),
       fetchUserSubscriptions(primaryUid).catch(() => [] as RecurringItem[]),
     ]);
 
-    // Also fetch secondary/mirror UID if user ever logged in via a different method (e.g. Google vs Email)
     let mirrorWallets: Wallet[] = [];
     let mirrorTx: Transaction[] = [];
     let mirrorGoals: Goal[] = [];
@@ -722,21 +684,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         mirrorDebts,
         mirrorSubs,
       ] = await Promise.all([
-        fetchUserWallets(mirrorUid, false).catch(() => [] as Wallet[]),
+        fetchUserWallets(mirrorUid).catch(() => [] as Wallet[]),
         fetchUserTransactions(mirrorUid).catch(() => [] as Transaction[]),
         fetchUserGoals(mirrorUid).catch(() => [] as Goal[]),
-        fetchUserBudgetConfig(mirrorUid, false).catch(() => null),
+        fetchUserBudgetConfig(mirrorUid).catch(() => null),
         fetchUserDebts(mirrorUid).catch(() => [] as Debt[]),
         fetchUserSubscriptions(mirrorUid).catch(() => [] as RecurringItem[]),
       ]);
     }
 
-    // Abort applying fetched state if the user performed a local write while this network fetch was in flight
+    // Abort if user made an intentional local mutation on THIS tab while network fetch was in flight
     if (lastLocalMutationRef.current >= syncStartTime) {
       return;
     }
 
-    // Pick the newest Cloud BudgetConfig snapshot between primaryUid and mirrorUid
     const effectiveCloudBudget = (() => {
       if (loadedBudget && mirrorBudget) {
         return (loadedBudget.updatedAt || '') >= (mirrorBudget.updatedAt || '')
@@ -751,60 +712,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       lastSeenCloudUpdatedAtRef.current = cloudUpdatedAt;
     }
 
-    const localBudget = isNewRegistration ? EMPTY_BUDGET_CONFIG : loadStoredBudgetConfig(primaryUid);
-    const localUpdatedAt = localBudget?.updatedAt || '';
-
-    // Check if THIS browser tab performed a local write very recently (< 8 seconds ago)
-    const hasRecentLocalWrite =
-      !isNewRegistration &&
-      !isBackgroundSync &&
-      lastLocalMutationRef.current > 0 &&
-      Date.now() - lastLocalMutationRef.current < 8000;
-
-    // Cloud is authoritative whenever the user has an existing Cloud snapshot and this tab hasn't just mutated data
-    const cloudHasSnapshot = Boolean(
-      effectiveCloudBudget ||
-        loadedTx.length > 0 ||
-        loadedWallets.length > 0 ||
-        loadedGoals.length > 0 ||
-        loadedDebts.length > 0 ||
-        loadedSubs.length > 0
-    );
-    const preferCloudAuthority = Boolean(
-      isBackgroundSync ||
-        (cloudHasSnapshot &&
-          (!hasRecentLocalWrite ||
-            !localUpdatedAt ||
-            (cloudUpdatedAt && cloudUpdatedAt >= localUpdatedAt)))
-    );
-
-    // Helper: only allow a local-only item (missing from Cloud) to survive & upload if it was literally just created on THIS device (< 8s ago)
-    // Otherwise, if Cloud already has a snapshot and an item is missing from Cloud, it was deleted on another device (e.g. HP) and must NOT resurrect.
-    const canKeepLocalOnlyItem = (itemUpdatedAt?: string, itemCreatedAt?: string): boolean => {
-      if (!cloudHasSnapshot) return true;
-      if (isBackgroundSync || !hasRecentLocalWrite) return false;
-      const itemTs = itemUpdatedAt || itemCreatedAt || '';
-      if (!itemTs) return false;
-      const ageMs = Date.now() - new Date(itemTs).getTime();
-      return ageMs >= 0 && ageMs < 8000;
-    };
-
-    // 1. Deleted IDs reconciliation
-    const localDeleted = loadStoredDeletedIds(primaryUid);
-    const mirrorDeleted = mirrorUid ? loadStoredDeletedIds(mirrorUid) : [];
     const cloudDeleted = [
       ...(loadedBudget?.deletedIds || []),
       ...(mirrorBudget?.deletedIds || []),
     ];
-    const combinedDeleted = isNewRegistration
-      ? []
-      : Array.from(new Set([...localDeleted, ...mirrorDeleted, ...cloudDeleted])).slice(-400);
-    const deletedSet = new Set<string>(combinedDeleted);
-    setDeletedIds(combinedDeleted);
-    saveStoredDeletedIds(combinedDeleted, primaryUid);
-    if (mirrorUid) saveStoredDeletedIds(combinedDeleted, mirrorUid);
+    const deletedSet = new Set<string>(cloudDeleted);
+    setDeletedIds(cloudDeleted);
 
-    // 2. Transactions sync (strictly respecting Cloud deletions & Cloud authority on open tabs)
+    // 1. Transactions directly from Firestore
     const cloudTxMap = new Map<string, Transaction>();
     for (const t of [...(mirrorTx || []), ...(loadedTx || [])]) {
       if (!t?.id || deletedSet.has(t.id)) continue;
@@ -813,150 +728,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         cloudTxMap.set(t.id, t);
       }
     }
-
-    const localTx = isNewRegistration ? [] : loadStoredTransactions(primaryUid);
-    const legacyTx = !isNewRegistration && legacyUid ? loadStoredTransactions(legacyUid) : [];
-    const allLocalTx = [...legacyTx, ...localTx].filter((t) => t?.id && !deletedSet.has(t.id));
-
-    const finalTxMap = new Map<string, Transaction>(cloudTxMap);
-    const txToUpload: Transaction[] = [];
-
-    for (const lTx of allLocalTx) {
-      // Never upload initial guest sample transactions (tx-1..tx-20) to a cloud user account
-      if (/^tx-\d+[a-z]?$/.test(lTx.id)) continue;
-      const cTx = finalTxMap.get(lTx.id);
-      if (!cTx) {
-        if (canKeepLocalOnlyItem(lTx.updatedAt, lTx.createdAt)) {
-          finalTxMap.set(lTx.id, lTx);
-          txToUpload.push(lTx);
-        }
-      } else if (hasRecentLocalWrite && (lTx.updatedAt || '') > (cTx.updatedAt || '')) {
-        finalTxMap.set(lTx.id, lTx);
-        txToUpload.push(lTx);
-      }
-    }
-
-    const finalTx = Array.from(finalTxMap.values()).sort(
+    const finalTx = Array.from(cloudTxMap.values()).sort(
       (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
     );
     setTransactions(finalTx);
-    saveStoredTransactions(finalTx, primaryUid);
-    if (mirrorUid) saveStoredTransactions(finalTx, mirrorUid);
-    if (!isBackgroundSync) {
-      for (const t of txToUpload) {
-        saveUserTransaction(primaryUid, t).catch(() => {});
-        if (mirrorUid) saveUserTransaction(mirrorUid, t).catch(() => {});
-      }
-    }
 
-    // 3. Wallets sync & deduplication of untouched Rp 0 defaults
-    const demoWalletIds = new Set([
-      'wallet-bca',
-      'wallet-mandiri',
-      'wallet-gopay',
-      'wallet-cash',
-      'wallet-rdn',
-      'wallet-cc',
-      'wallet-paylater',
-    ]);
+    // 2. Wallets directly from Firestore
     const cloudWalletMap = new Map<string, Wallet>();
     for (const w of [...(mirrorWallets || []), ...(loadedWallets || [])]) {
       if (!w?.id || deletedSet.has(w.id)) continue;
       const existing = cloudWalletMap.get(w.id);
-      if (
-        !existing ||
-        (w.updatedAt || '') > (existing.updatedAt || '') ||
-        ((w.updatedAt || '') === (existing.updatedAt || '') &&
-          w.initialBalance !== 0 &&
-          existing.initialBalance === 0)
-      ) {
+      if (!existing || (w.updatedAt || '') >= (existing.updatedAt || '')) {
         cloudWalletMap.set(w.id, w);
       }
     }
-
-    const localWallets = isNewRegistration ? [] : loadStoredWallets(primaryUid);
-    const finalWalletMap = new Map<string, Wallet>(cloudWalletMap);
-    const walletsToUpload: Wallet[] = [];
-
-    for (const lW of localWallets) {
-      if (!lW?.id || deletedSet.has(lW.id)) continue;
-      if (demoWalletIds.has(lW.id)) continue;
-      const cW = finalWalletMap.get(lW.id);
-      if (!cW) {
-        if ((cloudWalletMap.size > 0 || cloudHasSnapshot) && !canKeepLocalOnlyItem(lW.updatedAt, lW.createdAt)) {
-          continue;
-        }
-        const isUntouchedDefault =
-          lW.initialBalance === 0 &&
-          (lW.name === 'Dompet Tunai' || lW.name === 'Rekening Bank' || lW.name === 'Dompet Utama');
-        const cloudAlreadyHasSameName = Array.from(finalWalletMap.values()).some(
-          (w) => w.name.toLowerCase().trim() === lW.name.toLowerCase().trim()
-        );
-        if (isUntouchedDefault && cloudAlreadyHasSameName) {
-          continue;
-        }
-        finalWalletMap.set(lW.id, lW);
-        walletsToUpload.push(lW);
-      } else if (hasRecentLocalWrite && (lW.updatedAt || '') > (cW.updatedAt || '')) {
-        finalWalletMap.set(lW.id, lW);
-        walletsToUpload.push(lW);
-      }
-    }
-
-    let finalWallets = Array.from(finalWalletMap.values());
-    if (finalWallets.length === 0) {
-      finalWallets = await fetchUserWallets(primaryUid, true).catch(() => loadStoredWallets(primaryUid));
-    } else {
-      // Deduplicate extra untouched Rp0 default wallets if another wallet with the same name exists
-      const txWalletIds = new Set(finalTx.map((t) => t.walletId));
-      const duplicateIdsToDelete: string[] = [];
-      const deduplicated: Wallet[] = [];
-      for (const w of finalWallets) {
-        const isUntouchedDefault =
-          w.initialBalance === 0 &&
-          !txWalletIds.has(w.id) &&
-          (w.name === 'Dompet Tunai' || w.name === 'Rekening Bank' || w.name === 'Dompet Utama');
-        const hasOtherWithSameName = finalWallets.some(
-          (other) =>
-            other.id !== w.id &&
-            other.name.toLowerCase().trim() === w.name.toLowerCase().trim() &&
-            (other.initialBalance !== 0 ||
-              txWalletIds.has(other.id) ||
-              other.id === 'wallet-cash-main' ||
-              other.id === 'wallet-bank-main')
-        );
-        if (
-          isUntouchedDefault &&
-          hasOtherWithSameName &&
-          w.id !== 'wallet-cash-main' &&
-          w.id !== 'wallet-bank-main'
-        ) {
-          duplicateIdsToDelete.push(w.id);
-        } else {
-          deduplicated.push(w);
-        }
-      }
-      if (deduplicated.length > 0) {
-        finalWallets = deduplicated;
-      }
-      if (!isBackgroundSync) {
-        for (const dupId of duplicateIdsToDelete) {
-          deleteUserWallet(primaryUid, dupId).catch(() => {});
-        }
-      }
-    }
-
+    const finalWallets = Array.from(cloudWalletMap.values());
     setWallets(finalWallets);
-    saveStoredWallets(finalWallets, primaryUid);
-    if (mirrorUid) saveStoredWallets(finalWallets, mirrorUid);
-    if (!isBackgroundSync) {
-      for (const w of walletsToUpload) {
-        saveUserWallet(primaryUid, w).catch(() => {});
-        if (mirrorUid) saveUserWallet(mirrorUid, w).catch(() => {});
-      }
-    }
 
-    // 4. Goals sync
+    // 3. Goals directly from Firestore
     const cloudGoalMap = new Map<string, Goal>();
     for (const g of [...(mirrorGoals || []), ...(loadedGoals || [])]) {
       if (!g?.id || deletedSet.has(g.id)) continue;
@@ -965,33 +754,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         cloudGoalMap.set(g.id, g);
       }
     }
-    const localGoals = isNewRegistration ? [] : loadStoredGoals(primaryUid);
-    const goalsToUpload: Goal[] = [];
-    for (const lG of localGoals) {
-      if (!lG?.id || deletedSet.has(lG.id) || /^goal-[123]$/.test(lG.id)) continue;
-      const cG = cloudGoalMap.get(lG.id);
-      if (!cG) {
-        if (canKeepLocalOnlyItem(lG.updatedAt, lG.createdAt)) {
-          cloudGoalMap.set(lG.id, lG);
-          goalsToUpload.push(lG);
-        }
-      } else if (hasRecentLocalWrite && (lG.updatedAt || '') > (cG.updatedAt || '')) {
-        cloudGoalMap.set(lG.id, lG);
-        goalsToUpload.push(lG);
-      }
-    }
-    const finalGoals = Array.from(cloudGoalMap.values());
-    setGoals(finalGoals);
-    saveStoredGoals(finalGoals, primaryUid);
-    if (mirrorUid) saveStoredGoals(finalGoals, mirrorUid);
-    if (!isBackgroundSync) {
-      for (const g of goalsToUpload) {
-        saveUserGoal(primaryUid, g).catch(() => {});
-        if (mirrorUid) saveUserGoal(mirrorUid, g).catch(() => {});
-      }
-    }
+    setGoals(Array.from(cloudGoalMap.values()));
 
-    // 5. Debts sync
+    // 4. Debts directly from Firestore
     const cloudDebtMap = new Map<string, Debt>();
     for (const d of [...(mirrorDebts || []), ...(loadedDebts || [])]) {
       if (!d?.id || deletedSet.has(d.id)) continue;
@@ -1000,206 +765,137 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         cloudDebtMap.set(d.id, d);
       }
     }
-    const localDebts = isNewRegistration ? [] : loadStoredDebts(primaryUid);
-    const debtsToUpload: Debt[] = [];
-    for (const lD of localDebts) {
-      if (!lD?.id || deletedSet.has(lD.id)) continue;
-      const cD = cloudDebtMap.get(lD.id);
-      if (!cD) {
-        if (canKeepLocalOnlyItem(lD.updatedAt, lD.createdAt)) {
-          cloudDebtMap.set(lD.id, lD);
-          debtsToUpload.push(lD);
-        }
-      } else if (
-        hasRecentLocalWrite &&
-        ((lD.updatedAt || '') > (cD.updatedAt || '') ||
-          (lD.payments?.length || 0) > (cD.payments?.length || 0))
-      ) {
-        cloudDebtMap.set(lD.id, lD);
-        debtsToUpload.push(lD);
-      }
-    }
-    const finalDebts = Array.from(cloudDebtMap.values());
-    setDebts(finalDebts);
-    saveStoredDebts(finalDebts, primaryUid);
-    if (mirrorUid) saveStoredDebts(finalDebts, mirrorUid);
-    if (!isBackgroundSync) {
-      for (const d of debtsToUpload) {
-        saveUserDebt(primaryUid, d).catch(() => {});
-        if (mirrorUid) saveUserDebt(mirrorUid, d).catch(() => {});
-      }
-    }
+    setDebts(Array.from(cloudDebtMap.values()));
 
-    // 6. BudgetConfig & Subcategories sync (Cloud-authoritative when Cloud has snapshot and no recent local write)
-    const localIsNewer =
-      !isNewRegistration &&
-      !isBackgroundSync &&
-      hasRecentLocalWrite &&
-      Boolean(localUpdatedAt && (!cloudUpdatedAt || localUpdatedAt > cloudUpdatedAt));
-
-    const authoritativeBudgetSource =
-      !localIsNewer && effectiveCloudBudget
-        ? effectiveCloudBudget
-        : localBudget.estimatedIncome > 0 || (localBudget.subcategories?.length || 0) > 0
-        ? localBudget
-        : effectiveCloudBudget || EMPTY_BUDGET_CONFIG;
-
-    // Filter subcategories strictly from the authoritative source so deleted subcategories never resurrect from a stale device
+    // 5. Budget Config & Subcategories directly from Firestore
+    const authoritativeBudgetSource = effectiveCloudBudget || EMPTY_BUDGET_CONFIG;
     const subcatMap = new Map<string, BudgetConfig['subcategories'][number]>();
     const sourceSubcats = authoritativeBudgetSource.subcategories || [];
     for (const s of sourceSubcats) {
       if (!s?.id || deletedSet.has(s.id)) continue;
       if (s.subscriptionId && deletedSet.has(s.subscriptionId)) continue;
-      if (/^sub-\d+$/.test(s.id) && Number(s.id.replace('sub-', '')) <= 20) continue;
       subcatMap.set(s.id, s);
     }
 
-    // 7. Liquid Assets, Fixed Assets, Investments, Category Budgets, and Settings sync
-    const pickAuthoritativeArray = <T extends { id: string }>(
-      cloudArr?: T[],
-      localArr?: T[]
-    ): T[] => {
-      // If Cloud has explicitly stored this array and Cloud is authoritative, use Cloud's exact array (no stale union!)
-      if (!localIsNewer && cloudArr !== undefined) {
-        return cloudArr.filter((item) => item?.id && !deletedSet.has(item.id));
+    // Auto-reconcile all active payable debts into subcategories so they are guaranteed in Fixed Bills
+    for (const d of cloudDebtMap.values()) {
+      if (d.type !== 'payable' || d.status !== 'active') continue;
+      const debtSubId = `sub-debt-${d.id}`;
+      const cleanDebtName = d.name.toLowerCase().trim();
+      const subDisplayName = d.name.toLowerCase().startsWith('cicilan')
+        ? d.name
+        : `Cicilan ${d.name}`;
+      const existing = Array.from(subcatMap.values()).find((s) => {
+        const sLower = s.name.toLowerCase().trim();
+        return (
+          s.id === debtSubId ||
+          sLower === subDisplayName.toLowerCase() ||
+          sLower === cleanDebtName
+        );
+      });
+      let dueDay: number | undefined = undefined;
+      if (d.dueDate) {
+        const pd = new Date(d.dueDate);
+        if (!isNaN(pd.getTime())) dueDay = pd.getDate();
       }
-      const map = new Map<string, T>();
-      for (const item of [...(cloudArr || []), ...(localArr || [])]) {
-        if (!item?.id || deletedSet.has(item.id)) continue;
-        map.set(item.id, item);
+      const debtEmoji = /kpr|rumah|kost|kontrak/i.test(d.name)
+        ? '🏠'
+        : /motor/i.test(d.name)
+        ? '🛵'
+        : /mobil/i.test(d.name)
+        ? '🚗'
+        : '💳';
+      const allocated = Number(d.remainingAmount ?? d.totalAmount) || 0;
+      if (existing) {
+        subcatMap.set(existing.id, {
+          ...existing,
+          dueDateDay: existing.dueDateDay || dueDay,
+          allocatedAmount: Math.max(existing.allocatedAmount, allocated),
+          isSubscriptionActive: true,
+        });
+      } else {
+        subcatMap.set(debtSubId, {
+          id: debtSubId,
+          name: subDisplayName,
+          group: 'kebutuhan',
+          allocatedAmount: allocated,
+          emoji: debtEmoji,
+          dueDateDay: dueDay,
+          subscriptionId: d.id,
+          isSubscriptionActive: true,
+        });
       }
-      return Array.from(map.values());
-    };
+    }
 
-    const finalLiquidAssets = pickAuthoritativeArray<AssetItem>(
-      effectiveCloudBudget?.liquidAssets ?? mirrorBudget?.liquidAssets,
-      isNewRegistration ? [] : loadStoredAssets('liquid', primaryUid)
+    // 6. Liquid Assets, Fixed Assets, Investments, Category Budgets directly from Firestore
+    const finalLiquidAssets = (effectiveCloudBudget?.liquidAssets || []).filter(
+      (a) => a?.id && !deletedSet.has(a.id)
     );
-    const finalFixedAssets = pickAuthoritativeArray<AssetItem>(
-      effectiveCloudBudget?.fixedAssets ?? mirrorBudget?.fixedAssets,
-      isNewRegistration ? [] : loadStoredAssets('fixed', primaryUid)
+    const finalFixedAssets = (effectiveCloudBudget?.fixedAssets || []).filter(
+      (a) => a?.id && !deletedSet.has(a.id)
     );
-    const finalInvestments = pickAuthoritativeArray<InvestmentItem>(
-      effectiveCloudBudget?.investments ?? mirrorBudget?.investments,
-      isNewRegistration
-        ? []
-        : loadStoredInvestments(primaryUid).filter((inv) => !/^inv-[123]$/.test(inv.id))
+    const finalInvestments = (effectiveCloudBudget?.investments || []).filter(
+      (i) => i?.id && !deletedSet.has(i.id)
     );
-    const finalCategoryBudgets = pickAuthoritativeArray<Budget>(
-      effectiveCloudBudget?.categoryBudgets ?? mirrorBudget?.categoryBudgets,
-      isNewRegistration
-        ? []
-        : loadStoredBudgets(primaryUid).filter((b) => b.id !== 'budget-total-current')
+    const finalCategoryBudgets = (effectiveCloudBudget?.categoryBudgets || []).filter(
+      (b) => b?.id && !deletedSet.has(b.id)
     );
 
     setLiquidAssets(finalLiquidAssets);
-    saveStoredAssets('liquid', finalLiquidAssets, primaryUid);
-    if (mirrorUid) saveStoredAssets('liquid', finalLiquidAssets, mirrorUid);
-
     setFixedAssets(finalFixedAssets);
-    saveStoredAssets('fixed', finalFixedAssets, primaryUid);
-    if (mirrorUid) saveStoredAssets('fixed', finalFixedAssets, mirrorUid);
-
     setInvestments(finalInvestments);
-    saveStoredInvestments(finalInvestments, primaryUid);
-    if (mirrorUid) saveStoredInvestments(finalInvestments, mirrorUid);
-
     setBudgets(finalCategoryBudgets);
-    saveStoredBudgets(finalCategoryBudgets, primaryUid);
-    if (mirrorUid) saveStoredBudgets(finalCategoryBudgets, mirrorUid);
 
-    // Settings merge
+    // 7. Settings
     const cloudSettings = effectiveCloudBudget?.settings || mirrorBudget?.settings;
-    const localSettings = loadStoredSettings(primaryUid);
-    const mergedSettings: AppSettings = localIsNewer
-      ? {
-          ...(cloudSettings || {}),
-          ...localSettings,
-          userName: localSettings.userName || cloudSettings?.userName || displayName || '',
-          userEmail: email || localSettings.userEmail || cloudSettings?.userEmail || '',
-        }
-      : {
-          ...localSettings,
-          ...(cloudSettings || {}),
-          userName: cloudSettings?.userName || displayName || localSettings.userName || '',
-          userEmail: email || cloudSettings?.userEmail || localSettings.userEmail || '',
-        };
+    if (cloudSettings) {
+      setSettings((prev) => ({
+        ...prev,
+        ...cloudSettings,
+        userName: cloudSettings.userName || displayName || prev.userName,
+        userEmail: email || cloudSettings.userEmail || prev.userEmail,
+      }));
+    }
+
     const resolvedPaydayDay =
       authoritativeBudgetSource.paydayDay ||
-      mergedSettings.paydayDay ||
-      effectiveCloudBudget?.paydayDay ||
-      localBudget?.paydayDay ||
+      cloudSettings?.paydayDay ||
       1;
-    mergedSettings.paydayDay = resolvedPaydayDay;
-
-    setSettings(mergedSettings);
-    saveStoredSettings(mergedSettings, primaryUid);
-    if (mirrorUid) saveStoredSettings(mergedSettings, mirrorUid);
 
     const finalBudget: BudgetConfig = {
-      estimatedIncome: authoritativeBudgetSource.estimatedIncome,
-      needsPercent: authoritativeBudgetSource.needsPercent,
-      wantsPercent: authoritativeBudgetSource.wantsPercent,
-      savingsPercent: authoritativeBudgetSource.savingsPercent,
+      estimatedIncome: authoritativeBudgetSource.estimatedIncome || 0,
+      needsPercent: authoritativeBudgetSource.needsPercent || 50,
+      wantsPercent: authoritativeBudgetSource.wantsPercent || 30,
+      savingsPercent: authoritativeBudgetSource.savingsPercent || 20,
       paydayDay: resolvedPaydayDay,
       subcategories: Array.from(subcatMap.values()),
     };
 
-    // 8. Reconcile Subscriptions (only include local subscriptions if Cloud has no snapshot yet or local has recent write)
+    // 8. Reconcile subscriptions in memory
     const combinedCloudSubs = [...(mirrorSubs || []), ...(loadedSubs || [])];
-    const cloudEmbeddedSubs = effectiveCloudBudget?.subscriptions ?? mirrorBudget?.subscriptions;
-
-    const localRawSubs =
-      isNewRegistration || preferCloudAuthority
-        ? []
-        : loadStoredSubscriptions(primaryUid);
-    const legacyRawSubs =
-      isNewRegistration || preferCloudAuthority || !legacyUid
-        ? []
-        : loadStoredSubscriptions(legacyUid);
-    const mirrorLocalSubs =
-      isNewRegistration || preferCloudAuthority || !mirrorUid
-        ? []
-        : loadStoredSubscriptions(mirrorUid);
-    const combinedLocalSubs = [...legacyRawSubs, ...mirrorLocalSubs, ...localRawSubs];
-
-    const reconciledSubs = await reconcileAndSyncSubscriptions(
-      primaryUid,
+    const reconciledSubs = reconcileCloudSubscriptions(
       combinedCloudSubs,
-      combinedLocalSubs,
       {
         ...finalBudget,
-        subscriptions: cloudEmbeddedSubs,
+        subscriptions: effectiveCloudBudget?.subscriptions,
       },
       finalWallets,
-      deletedSet,
-      mirrorUid,
-      isBackgroundSync || preferCloudAuthority
+      deletedSet
     );
     setSubscriptions(reconciledSubs);
 
-    const completeBudgetToSave: BudgetConfig = {
+    const completeBudget: BudgetConfig = {
       ...finalBudget,
       subscriptions: reconciledSubs,
       liquidAssets: finalLiquidAssets,
       fixedAssets: finalFixedAssets,
       investments: finalInvestments,
       categoryBudgets: finalCategoryBudgets,
-      settings: mergedSettings,
-      deletedIds: combinedDeleted,
+      settings: cloudSettings,
+      deletedIds: cloudDeleted,
       updatedAt: cloudUpdatedAt || new Date().toISOString(),
     };
-    setBudgetConfig(completeBudgetToSave);
-    saveStoredBudgetConfig(completeBudgetToSave, primaryUid);
-    if (mirrorUid) saveStoredBudgetConfig(completeBudgetToSave, mirrorUid);
-
-    // Only write back to Cloud on initial login/migration, NEVER during passive background/focus pulls!
-    if (!isBackgroundSync && (!cloudHasSnapshot || localIsNewer)) {
-      saveUserBudgetConfig(primaryUid, completeBudgetToSave).catch(() => {});
-      if (mirrorUid) {
-        saveUserBudgetConfig(mirrorUid, completeBudgetToSave).catch(() => {});
-      }
-    }
+    setBudgetConfig(completeBudget);
   };
 
   // Load and sync an Email/Password account session with Cloud Firestore Database
@@ -1234,30 +930,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
     } catch (err) {
       if (!isBackgroundSync) {
-        console.warn('Fallback to cached account data while syncing Firestore:', err);
-        const fallbackWallets = loadStoredWallets(cloudUid);
-        setWallets(fallbackWallets);
-        setTransactions(loadStoredTransactions(cloudUid));
-        setGoals(loadStoredGoals(cloudUid));
-        setDebts(loadStoredDebts(cloudUid));
-        setLiquidAssets(loadStoredAssets('liquid', cloudUid));
-        setFixedAssets(loadStoredAssets('fixed', cloudUid));
-        setInvestments(loadStoredInvestments(cloudUid));
-        const localBudget = loadStoredBudgetConfig(cloudUid);
-        setBudgetConfig(localBudget);
-        const rawSubs = loadStoredSubscriptions(cloudUid);
-        const deletedSet = new Set(loadStoredDeletedIds(cloudUid));
-        const reconciledSubs = await reconcileAndSyncSubscriptions(
-          cloudUid,
-          [],
-          rawSubs,
-          localBudget,
-          fallbackWallets,
-          deletedSet,
-          undefined,
-          true
-        );
-        setSubscriptions(reconciledSubs);
+        console.warn('Error loading account data from Firestore:', err);
       }
     } finally {
       isCloudSyncingRef.current = false;
@@ -1461,7 +1134,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Hydrate local storage data on client mount & migrate any local PC accounts to Cloud Firestore
+  // Check active session on client mount and fetch fresh data directly from Cloud Firestore
   useEffect(() => {
     queueMicrotask(async () => {
       const activeLocal = loadActiveLocalUser();
@@ -1476,20 +1149,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         };
         setUser(normalizedLocal);
       }
-      setWallets(loadStoredWallets(scope));
       setCategories(loadStoredCategories());
-      setTransactions(loadStoredTransactions(scope));
-      setBudgets(loadStoredBudgets(scope));
-      const initialBudget = loadStoredBudgetConfig(scope);
-      setBudgetConfig(initialBudget);
-      setGoals(loadStoredGoals(scope));
-      setDebts(loadStoredDebts(scope));
-      setLiquidAssets(loadStoredAssets('liquid', scope));
-      setFixedAssets(loadStoredAssets('fixed', scope));
-      setInvestments(loadStoredInvestments(scope));
-      setDeletedIds(loadStoredDeletedIds(scope));
-      const initialRawSubs = loadStoredSubscriptions(scope);
-      setSubscriptions(initialRawSubs);
       setSettings(
         activeLocal
           ? {
@@ -1502,17 +1162,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setIsLocked(Boolean(storedSettings.pinEnabled));
       setActiveDate(getTodayDateStr());
 
-      // Automatically sync any previously registered local accounts on this PC to Cloud Firestore DB
-      const registeredList = loadRegisteredAccounts();
-      for (const acc of registeredList) {
-        if (acc.email && acc.passwordHash) {
-          const cUid = getCloudAccountUid(acc.email);
-          registerCloudEmailAccount(cUid, acc.displayName, acc.email, acc.passwordHash).catch(
-            () => {}
-          );
-        }
-      }
-
+      // No PUT/POST/PATCH requests on initial load - pure GET to fetch fresh cloud state
       if (activeLocal?.email) {
         await loadAndSyncCloudAccountSession(activeLocal, false, true);
       }
@@ -1937,8 +1587,54 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       });
     }
+
+    // Also include any active payable debts not yet captured above
+    debts.forEach((debt) => {
+      if (debt.type !== 'payable' || debt.status !== 'active') return;
+      if ((debt.remainingAmount ?? debt.totalAmount) <= 0) return;
+
+      const cleanDebtName = debt.name.toLowerCase().trim();
+      const subDisplayName = debt.name.toLowerCase().startsWith('cicilan')
+        ? debt.name
+        : `Cicilan ${debt.name}`;
+
+      if (seenNames.has(cleanDebtName) || seenNames.has(subDisplayName.toLowerCase())) return;
+
+      const alreadyPaidInPeriod = periodExpenseNotes.some(
+        (n) => n.includes(cleanDebtName) || n.includes(subDisplayName.toLowerCase())
+      );
+      if (alreadyPaidInPeriod) {
+        seenNames.add(cleanDebtName);
+        return;
+      }
+
+      let dueDay = 15;
+      if (debt.dueDate) {
+        const pd = new Date(debt.dueDate);
+        if (!isNaN(pd.getTime())) dueDay = pd.getDate();
+      }
+
+      seenNames.add(cleanDebtName);
+      seenNames.add(subDisplayName.toLowerCase());
+      const mLabel = activeDay > dueDay ? nextMonthShort : curMonthShort;
+      bills.push({
+        id: `bill-debt-${debt.id}`,
+        name: subDisplayName,
+        dueDate: `${String(dueDay).padStart(2, '0')} ${mLabel}`,
+        amount: debt.remainingAmount ?? debt.totalAmount,
+        iconEmoji: /kpr|rumah|kost|kontrak/i.test(debt.name)
+          ? '🏠'
+          : /motor/i.test(debt.name)
+          ? '🛵'
+          : /mobil/i.test(debt.name)
+          ? '🚗'
+          : '💳',
+        category: 'KEBUTUHAN (CICILAN)',
+      });
+    });
+
     return bills;
-  }, [walletsWithBalance, subscriptions, budgetConfig, transactions, budgetPeriod, activeYear, activeMonth, activeDay]);
+  }, [walletsWithBalance, subscriptions, budgetConfig, debts, transactions, budgetPeriod, activeYear, activeMonth, activeDay]);
 
   // Dashboard summary metrics
   const dashboardSummary = useMemo<DashboardSummary>(() => {
@@ -2343,6 +2039,76 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setDebts(nextDebts);
     saveStoredDebts(nextDebts, localScopeUid);
     if (mirrorUid) saveStoredDebts(nextDebts, mirrorUid);
+
+    // Auto-sync payable debt directly into Budget Subcategories (KEBUTUHAN & POS TAGIHAN BULANAN)
+    let nextBudgetConfig = budgetConfig;
+    if (newDebt.type === 'payable') {
+      const debtSubId = `sub-debt-${id}`;
+      const subDisplayName = newDebt.name.toLowerCase().startsWith('cicilan')
+        ? newDebt.name
+        : `Cicilan ${newDebt.name}`;
+      const cleanDebtName = newDebt.name.toLowerCase().trim();
+
+      let dueDay: number | undefined = newDebt.dueDayOfMonth;
+      if (dueDay === undefined && newDebt.dueDate) {
+        const pd = new Date(newDebt.dueDate);
+        if (!isNaN(pd.getTime())) dueDay = pd.getDate();
+      }
+
+      const debtEmoji = /kpr|rumah|kost|kontrak/i.test(newDebt.name)
+        ? '🏠'
+        : /motor/i.test(newDebt.name)
+        ? '🛵'
+        : /mobil/i.test(newDebt.name)
+        ? '🚗'
+        : '💳';
+
+      const allocated = (newDebt.monthlyInstallment && newDebt.monthlyInstallment > 0)
+        ? Math.min(newDebt.monthlyInstallment, newDebt.remainingAmount || newDebt.totalAmount)
+        : (newDebt.remainingAmount || newDebt.totalAmount);
+
+      let updatedSubs = [...(budgetConfig.subcategories || [])];
+      const existingIdx = updatedSubs.findIndex((s) => {
+        const sLower = s.name.toLowerCase().trim();
+        return (
+          s.id === debtSubId ||
+          sLower === subDisplayName.toLowerCase() ||
+          sLower === cleanDebtName
+        );
+      });
+
+      if (existingIdx >= 0) {
+        updatedSubs[existingIdx] = {
+          ...updatedSubs[existingIdx],
+          name: subDisplayName,
+          allocatedAmount: allocated,
+          dueDateDay: dueDay !== undefined ? dueDay : updatedSubs[existingIdx].dueDateDay,
+          isSubscriptionActive: newDebt.status === 'active',
+          subscriptionId: id,
+        };
+      } else {
+        updatedSubs.push({
+          id: debtSubId,
+          name: subDisplayName,
+          group: 'kebutuhan',
+          allocatedAmount: allocated,
+          emoji: debtEmoji,
+          dueDateDay: dueDay,
+          subscriptionId: id,
+          isSubscriptionActive: newDebt.status === 'active',
+        });
+      }
+
+      nextBudgetConfig = {
+        ...budgetConfig,
+        subcategories: updatedSubs,
+        updatedAt: now,
+      };
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
+    }
+
     if (isCloudUser && user?.uid) {
       saveUserDebt(user.uid, newDebt).catch((err) =>
         console.warn('Error saving debt to Firestore:', err)
@@ -2350,7 +2116,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (mirrorUid) {
         saveUserDebt(mirrorUid, newDebt).catch(() => {});
       }
-      persistExtendedBudgetToCloud(user.uid, mirrorUid);
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+      });
     }
 
     // Cashflow integration: if user chose to disburse or release money from/to a wallet
@@ -2382,9 +2150,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    const toastSubText = newDebt.type === 'payable'
+      ? (newDebt.monthlyInstallment && newDebt.monthlyInstallment > 0)
+        ? `${newDebt.name} (${formatRupiah(newDebt.monthlyInstallment)}/bln) otomatis dicatat di Pos Tagihan Bulanan (Fixed).`
+        : `${newDebt.name} (${formatRupiah(newDebt.totalAmount)}) otomatis dicatat di Pos Tagihan Bulanan (Fixed).`
+      : `${newDebt.name} sebesar ${formatRupiah(newDebt.totalAmount)} telah disimpan.`;
+
     addToast(
-      newDebt.type === 'payable' ? 'Utang Berhasil Dicatat' : 'Piutang Berhasil Dicatat',
-      `${newDebt.name} sebesar ${formatRupiah(newDebt.totalAmount)} telah disimpan.`
+      newDebt.type === 'payable' ? 'Utang Dicatat & Masuk ke Budget' : 'Piutang Berhasil Dicatat',
+      toastSubText
     );
   };
 
@@ -2409,6 +2183,58 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     saveStoredDebts(nextDebts, localScopeUid);
     if (mirrorUid) saveStoredDebts(nextDebts, mirrorUid);
     const itemToSync = nextDebts.find((d) => d.id === id);
+
+    let nextBudgetConfig = budgetConfig;
+    if (itemToSync && itemToSync.type === 'payable') {
+      const debtSubId = `sub-debt-${id}`;
+      const cleanDebtName = itemToSync.name.toLowerCase().trim();
+      const subDisplayName = itemToSync.name.toLowerCase().startsWith('cicilan')
+        ? itemToSync.name
+        : `Cicilan ${itemToSync.name}`;
+
+      let dueDay: number | undefined = itemToSync.dueDayOfMonth;
+      if (dueDay === undefined && itemToSync.dueDate) {
+        const pd = new Date(itemToSync.dueDate);
+        if (!isNaN(pd.getTime())) dueDay = pd.getDate();
+      }
+
+      const allocated = (itemToSync.monthlyInstallment && itemToSync.monthlyInstallment > 0)
+        ? Math.min(itemToSync.monthlyInstallment, itemToSync.remainingAmount || itemToSync.totalAmount)
+        : (itemToSync.remainingAmount || itemToSync.totalAmount);
+      const isStillActive = itemToSync.status === 'active' && itemToSync.remainingAmount > 0;
+
+      let changedSub = false;
+      const updatedSubs = (budgetConfig.subcategories || []).map((s) => {
+        const sLower = s.name.toLowerCase().trim();
+        if (
+          s.id === debtSubId ||
+          sLower === subDisplayName.toLowerCase() ||
+          sLower === cleanDebtName
+        ) {
+          changedSub = true;
+          return {
+            ...s,
+            name: subDisplayName,
+            allocatedAmount: allocated,
+            dueDateDay: dueDay !== undefined ? dueDay : s.dueDateDay,
+            isSubscriptionActive: isStillActive,
+          };
+        }
+        return s;
+      });
+
+      if (changedSub) {
+        nextBudgetConfig = {
+          ...budgetConfig,
+          subcategories: updatedSubs,
+          updatedAt: now,
+        };
+        setBudgetConfig(nextBudgetConfig);
+        saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+        if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
+      }
+    }
+
     if (isCloudUser && user?.uid && itemToSync) {
       saveUserDebt(user.uid, itemToSync).catch((err) =>
         console.warn('Error updating debt in Firestore:', err)
@@ -2416,9 +2242,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (mirrorUid) {
         saveUserDebt(mirrorUid, itemToSync).catch(() => {});
       }
-      persistExtendedBudgetToCloud(user.uid, mirrorUid);
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+      });
     }
-    addToast('Perubahan Disimpan', 'Data utang/piutang berhasil diperbarui.');
+    addToast('Perubahan Disimpan', 'Data utang/piutang & sinkronisasi budget berhasil diperbarui.');
   };
 
   const deleteDebt = (id: string) => {
@@ -3688,33 +3516,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const resetAllAppData = async () => {
     try {
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem('budggt_assets_liquid', JSON.stringify([]));
-          localStorage.setItem('budggt_assets_fixed', JSON.stringify([]));
-          localStorage.setItem('budggt_debts', JSON.stringify([]));
-          localStorage.setItem('budggt_investments', JSON.stringify([]));
-          localStorage.setItem('budggt_subscriptions', JSON.stringify([]));
-          if (user?.uid) {
-            localStorage.setItem(`budggt_assets_liquid_${user.uid}`, JSON.stringify([]));
-            localStorage.setItem(`budggt_assets_fixed_${user.uid}`, JSON.stringify([]));
-            localStorage.setItem(`budggt_debts_${user.uid}`, JSON.stringify([]));
-            localStorage.setItem(`budggt_investments_${user.uid}`, JSON.stringify([]));
-            localStorage.setItem(`budggt_subscriptions_${user.uid}`, JSON.stringify([]));
-          }
-        } catch {
-          // ignore
-        }
-      }
+      clearAllData(localScopeUid);
+      resetStorageToZero(localScopeUid);
+
       if (isCloudUser && user?.uid) {
         addToast('Mereset Data...', 'Sedang membersihkan catatan di cloud Firestore...', 'info');
-        clearAllData(localScopeUid);
-        resetStorageToZero(localScopeUid);
         const cleanWallets = await resetUserFirestoreData(user.uid);
-        if (cleanWallets && cleanWallets.length > 0) {
-          setWallets(cleanWallets);
-          saveStoredWallets(cleanWallets, localScopeUid);
-        }
+        setWallets(cleanWallets && cleanWallets.length > 0 ? cleanWallets : getCleanDefaultWallets());
         setTransactions([]);
         setGoals([]);
         setDebts([]);
@@ -3729,10 +3537,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setDataResetVersion((v) => v + 1);
         addToast('Data Cloud Direset', 'Semua catatan di akun cloud Anda berhasil dikosongkan ke 0.', 'success');
       } else {
-        clearAllData(localScopeUid);
-        resetStorageToZero(localScopeUid);
-        const cleanW = loadStoredWallets(localScopeUid);
-        setWallets(cleanW);
+        setWallets(getCleanDefaultWallets());
         setCategories(loadStoredCategories());
         setTransactions([]);
         setBudgets([]);

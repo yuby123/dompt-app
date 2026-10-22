@@ -8,11 +8,15 @@ export const DEFAULT_DEBTS: Debt[] = [
     contactName: 'BCA Smartcash / Paylater',
     totalAmount: 6000000,
     remainingAmount: 2000000,
-    dueDate: '2026-05-10',
+    dueDate: '2026-07-10',
     startDate: '2026-01-10',
     category: 'cicilan',
+    isInstallment: true,
+    tenorMonths: 6,
+    monthlyInstallment: 1000000,
+    dueDayOfMonth: 10,
     status: 'active',
-    note: 'Cicilan 6 bulan, tersisa 2 bulan lagi',
+    note: 'Cicilan 6 bulan, tersisa 2 bulan lagi (Tiap tgl 10)',
     payments: [
       {
         id: 'pay-sample-1',

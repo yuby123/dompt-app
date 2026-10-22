@@ -168,7 +168,12 @@ export function AiAdvisorTab() {
     try {
       const res = await fetch('/api/ai-advisor', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
+        cache: 'no-store',
         body: JSON.stringify({
           message: text,
           history: historyPayload,

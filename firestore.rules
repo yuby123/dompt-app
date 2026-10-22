@@ -96,7 +96,7 @@ service cloud.firestore {
 
     function isValidDebt(data) {
       return data.keys().hasAll(['id', 'userId', 'name', 'type', 'totalAmount', 'remainingAmount', 'dueDate', 'contactName', 'status'])
-        && data.keys().hasOnly(['id', 'userId', 'name', 'type', 'totalAmount', 'remainingAmount', 'dueDate', 'contactName', 'startDate', 'walletId', 'category', 'interestRate', 'status', 'note', 'paymentsJson', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'name', 'type', 'totalAmount', 'remainingAmount', 'dueDate', 'contactName', 'startDate', 'walletId', 'category', 'interestRate', 'isInstallment', 'tenorMonths', 'monthlyInstallment', 'dueDayOfMonth', 'status', 'note', 'paymentsJson', 'createdAt', 'updatedAt'])
         && data.id is string && data.id.size() <= 128
         && data.userId is string && data.userId.size() <= 128
         && data.name is string && data.name.size() > 0 && data.name.size() <= 100
@@ -110,6 +110,10 @@ service cloud.firestore {
         && (!('walletId' in data) || (data.walletId is string && data.walletId.size() <= 128))
         && (!('category' in data) || (data.category is string && data.category.size() <= 50))
         && (!('interestRate' in data) || data.interestRate is number)
+        && (!('isInstallment' in data) || data.isInstallment is bool)
+        && (!('tenorMonths' in data) || data.tenorMonths is number)
+        && (!('monthlyInstallment' in data) || data.monthlyInstallment is number)
+        && (!('dueDayOfMonth' in data) || data.dueDayOfMonth is number)
         && (!('note' in data) || (data.note is string && data.note.size() <= 500))
         && (!('paymentsJson' in data) || (data.paymentsJson is string && data.paymentsJson.size() <= 20000));
     }

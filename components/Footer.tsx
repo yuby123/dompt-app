@@ -48,15 +48,15 @@ export function Footer() {
         { label: 'Portofolio Investasi', tab: 'invest' },
         { label: 'Manajemen Aset Bersih', tab: 'assets' },
         { label: 'Utang & Cicilan Aktif', tab: 'debt' },
-        { label: 'Skor Kesehatan Finansial', tab: 'health-score' },
+        { label: 'Anggaran & Estimasi', tab: 'budget' },
       ],
     },
     {
       title: 'Analitik & Sistem',
       links: [
+        { label: 'Analisis & Skor Finansial', tab: 'analytics' },
         { label: 'AI Financial Advisor', tab: 'ai-advisor' },
         { label: 'Laporan & Ekspor CSV', tab: 'reports' },
-        { label: 'Analitik Kalender', tab: 'analytics' },
         { label: 'Panduan & Metodologi', tab: 'tutorial' },
         { label: 'Profil & Keamanan', tab: 'settings' },
       ],

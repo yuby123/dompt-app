@@ -1,19 +1,34 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+  Pragma: 'no-cache',
+  Expires: '0',
+};
+
+function createNoCacheResponse(body: any, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: NO_CACHE_HEADERS,
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { imageBase64, mimeType } = await req.json();
 
     if (!imageBase64) {
-      return NextResponse.json({ error: 'Gambar tidak ditemukan' }, { status: 400 });
+      return createNoCacheResponse({ error: 'Gambar tidak ditemukan' }, 400);
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json(
+      return createNoCacheResponse(
         { error: 'GEMINI_API_KEY belum dikonfigurasi di lingkungan server' },
-        { status: 500 }
+        500
       );
     }
 
@@ -118,15 +133,15 @@ Analisis bukti transaksi/transfer (SeaBank, BCA, Mandiri, BRI, BNI, Jago, DANA, 
     const text = response.text || '{}';
     const parsed = JSON.parse(text);
 
-    return NextResponse.json({
+    return createNoCacheResponse({
       success: true,
       data: parsed,
     });
   } catch (err: any) {
     console.error('Scan receipt error:', err);
-    return NextResponse.json(
+    return createNoCacheResponse(
       { error: err?.message || 'Gagal memproses gambar screenshot' },
-      { status: 500 }
+      500
     );
   }
 }

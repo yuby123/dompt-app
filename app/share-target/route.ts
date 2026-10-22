@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+  Pragma: 'no-cache',
+  Expires: '0',
+};
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
@@ -44,6 +52,7 @@ export async function POST(req: NextRequest) {
     return new NextResponse(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
+        ...NO_CACHE_HEADERS,
       },
     });
   } catch (err) {

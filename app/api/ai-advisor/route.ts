@@ -1,6 +1,21 @@
 import { GoogleGenAI } from '@google/genai';
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+  Pragma: 'no-cache',
+  Expires: '0',
+};
+
+function createNoCacheResponse(body: any, status = 200) {
+  return NextResponse.json(body, {
+    status,
+    headers: NO_CACHE_HEADERS,
+  });
+}
+
 function parseNaturalLanguageTransaction(message: string, availableWallets: string[], availableCategories: string[]) {
   const lower = message.toLowerCase();
 
@@ -185,12 +200,12 @@ export async function POST(req: NextRequest) {
     const { message, history, contextData } = bodyData;
 
     if (!message || typeof message !== 'string') {
-      return NextResponse.json({ text: 'Silakan ketik pesan atau pertanyaan keuanganmu.' }, { status: 400 });
+      return createNoCacheResponse({ text: 'Silakan ketik pesan atau pertanyaan keuanganmu.' }, 400);
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({
+      return createNoCacheResponse({
         text: buildFallbackResponse(message, contextData),
       });
     }
@@ -294,10 +309,10 @@ Gunakan bahasa Indonesia yang ramah, santai, dan cerdas.
       responseText = buildFallbackResponse(message, contextData);
     }
 
-    return NextResponse.json({ text: responseText });
+    return createNoCacheResponse({ text: responseText });
   } catch (error: any) {
     console.error('AI Advisor error:', error);
-    return NextResponse.json({
+    return createNoCacheResponse({
       text: buildFallbackResponse(bodyData?.message || '', bodyData?.contextData || {}),
     });
   }

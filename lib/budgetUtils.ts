@@ -435,6 +435,28 @@ export function calculateBudgetBreakdown({
     });
   }
 
+  // 2b. Auto-include active payable debts (cicilan utang) into fixed obligations
+  (debts || []).forEach((debt) => {
+    if (debt.type !== 'payable' || debt.status !== 'active') return;
+    const debtSubId = `sub-debt-${debt.id}`;
+    const cleanDebtName = debt.name.toLowerCase().trim();
+    const alreadyIncluded = activeFixedSubs.some((s) => {
+      const sLower = s.name.toLowerCase().trim();
+      return (
+        s.id === debtSubId ||
+        sLower === `cicilan ${cleanDebtName}` ||
+        sLower === cleanDebtName
+      );
+    });
+    if (!alreadyIncluded) {
+      activeFixedSubs.push({
+        id: debtSubId,
+        name: debt.name.toLowerCase().startsWith('cicilan') ? debt.name : `Cicilan ${debt.name}`,
+        allocatedAmount: Number(debt.remainingAmount ?? debt.totalAmount) || 0,
+      });
+    }
+  });
+
   // Helper to match a fixed expense note/category to one of activeFixedSubs
   const fixedSubSpentMap: Record<string, number> = {};
   let unallocatedFixedExp = 0;

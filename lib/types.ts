@@ -150,6 +150,10 @@ export interface Debt {
   walletId?: string;
   category?: string;
   interestRate?: number;
+  isInstallment?: boolean; // Apakah skema cicilan bulanan
+  tenorMonths?: number; // Durasi tempo cicilan dalam bulan (contoh: 3, 6, 12, 24)
+  monthlyInstallment?: number; // Besaran nominal cicilan per bulan (contoh: 1.000.000)
+  dueDayOfMonth?: number; // Tanggal jatuh tempo pembayaran tiap bulannya (1-31, contoh: 10)
   status: 'active' | 'paid';
   note?: string;
   payments?: DebtPayment[];

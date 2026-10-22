@@ -47,7 +47,12 @@ async function cloudRestApi(
   try {
     const res = await fetch('/api/cloud-sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
+      cache: 'no-store',
       body: JSON.stringify({ action, path, data, merge }),
     });
     if (!res.ok) return null;
@@ -187,7 +192,7 @@ export async function loginCloudEmailAccount(
       };
     }
 
-    const updated: UserProfileData = {
+    const profile: UserProfileData = {
       uid,
       email: data.email || cleanEmail,
       displayName: data.displayName || 'Pengguna Dompt',
@@ -195,10 +200,9 @@ export async function loginCloudEmailAccount(
       passwordHash,
       ...(data.settingsJson ? { settingsJson: data.settingsJson } : {}),
       createdAt: data.createdAt || now,
-      updatedAt: now,
+      updatedAt: data.updatedAt || now,
     };
-    await setDoc(userDocRef, updated, { merge: true });
-    return { ok: true, profile: updated };
+    return { ok: true, profile };
   } catch (error) {
     const getRes = await cloudRestApi('get', path);
     if (getRes?.ok) {
@@ -216,7 +220,7 @@ export async function loginCloudEmailAccount(
           error: 'Password yang Anda masukkan salah. Silakan periksa kembali.',
         };
       }
-      const updated: UserProfileData = {
+      const profile: UserProfileData = {
         uid,
         email: data.email || cleanEmail,
         displayName: data.displayName || 'Pengguna Dompt',
@@ -224,10 +228,9 @@ export async function loginCloudEmailAccount(
         passwordHash,
         ...(data.settingsJson ? { settingsJson: data.settingsJson } : {}),
         createdAt: data.createdAt || now,
-        updatedAt: now,
+        updatedAt: data.updatedAt || now,
       };
-      await cloudRestApi('set', path, updated, true);
-      return { ok: true, profile: updated };
+      return { ok: true, profile };
     }
     handleFirestoreError(error, OperationType.GET, path);
   }
@@ -315,46 +318,11 @@ export async function syncUserProfile(user: User): Promise<UserProfileData> {
   }
 }
 
-// Wallets
+// Wallets (Pure read-only fetch - zero writes during load)
 export async function fetchUserWallets(
-  userId: string,
-  autoCreateDefaults = true
+  userId: string
 ): Promise<Wallet[]> {
   const path = `users/${userId}/wallets`;
-  const createCleanWallets = async (): Promise<Wallet[]> => {
-    const now = new Date().toISOString();
-    const initialWallets: Wallet[] = [
-      {
-        id: 'wallet-cash-main',
-        name: 'Dompet Tunai',
-        type: 'cash',
-        initialBalance: 0,
-        reservedAmount: 0,
-        color: '#16A34A',
-        icon: 'Banknote',
-        isVerified: true,
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: 'wallet-bank-main',
-        name: 'Rekening Bank',
-        type: 'bank',
-        initialBalance: 0,
-        reservedAmount: 0,
-        color: '#005E9E',
-        icon: 'Landmark',
-        isVerified: true,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ];
-    for (const w of initialWallets) {
-      await saveUserWallet(userId, w);
-    }
-    return initialWallets;
-  };
-
   const mapWalletDoc = (d: any): Wallet => ({
     id: d.id,
     name: d.name || 'Dompet Utama',
@@ -371,28 +339,13 @@ export async function fetchUserWallets(
   try {
     const colRef = collection(db, 'users', userId, 'wallets');
     const snap = await getDocs(query(colRef));
-
     if (snap.empty) {
-      return autoCreateDefaults ? await createCleanWallets() : [];
+      return [];
     }
-
-    const wallets = snap.docs.map((docSnap) => mapWalletDoc(docSnap.data()));
-
-    // If account was seeded with old demo template balances (e.g. BCA 19.115.000)
-    if (wallets.some((w) => w.id === 'wallet-bca' && w.initialBalance === 19115000)) {
-      for (const d of snap.docs) {
-        await deleteDoc(d.ref);
-      }
-      return autoCreateDefaults ? await createCleanWallets() : [];
-    }
-
-    return wallets;
+    return snap.docs.map((docSnap) => mapWalletDoc(docSnap.data()));
   } catch (error) {
     const listRes = await cloudRestApi('list', path);
     if (listRes?.ok && Array.isArray(listRes.docs)) {
-      if (listRes.docs.length === 0) {
-        return autoCreateDefaults ? await createCleanWallets() : [];
-      }
       return listRes.docs.map(mapWalletDoc);
     }
     handleFirestoreError(error, OperationType.GET, path);
@@ -598,10 +551,9 @@ export async function deleteUserGoal(userId: string, goalId: string): Promise<vo
   }
 }
 
-// Budget Config + Extended Cross-Device State (Subscriptions, Assets, Investments, Settings, DeletedIds)
+// Budget Config + Extended Cross-Device State (Pure read-only fetch - zero writes during load)
 export async function fetchUserBudgetConfig(
-  userId: string,
-  autoCreateEmpty = false
+  userId: string
 ): Promise<BudgetConfig | null> {
   const path = `users/${userId}/budgetConfig/main`;
   const parseBudgetData = (data: Record<string, any>): BudgetConfig => {
@@ -651,26 +603,14 @@ export async function fetchUserBudgetConfig(
     const docRef = doc(db, 'users', userId, 'budgetConfig', 'main');
     const snap = await getDoc(docRef);
     if (!snap.exists()) {
-      if (autoCreateEmpty) {
-        await saveUserBudgetConfig(userId, EMPTY_BUDGET_CONFIG);
-        return EMPTY_BUDGET_CONFIG;
-      }
       return null;
     }
     const data = snap.data();
-    if (!('subcategoriesJson' in data) && data.estimatedIncome === 5000000) {
-      await saveUserBudgetConfig(userId, EMPTY_BUDGET_CONFIG);
-      return EMPTY_BUDGET_CONFIG;
-    }
     return parseBudgetData(data);
   } catch (error) {
     const getRes = await cloudRestApi('get', path);
     if (getRes?.ok) {
       if (!getRes.exists || !getRes.data) {
-        if (autoCreateEmpty) {
-          await saveUserBudgetConfig(userId, EMPTY_BUDGET_CONFIG);
-          return EMPTY_BUDGET_CONFIG;
-        }
         return null;
       }
       return parseBudgetData(getRes.data);
@@ -869,6 +809,10 @@ export async function fetchUserDebts(userId: string): Promise<Debt[]> {
       walletId: d.walletId || undefined,
       category: d.category || 'cicilan',
       interestRate: Number(d.interestRate) || 0,
+      isInstallment: d.isInstallment !== undefined ? Boolean(d.isInstallment) : (d.category === 'cicilan' || Boolean(d.tenorMonths)),
+      tenorMonths: d.tenorMonths !== undefined ? Number(d.tenorMonths) : undefined,
+      monthlyInstallment: d.monthlyInstallment !== undefined ? Number(d.monthlyInstallment) : undefined,
+      dueDayOfMonth: d.dueDayOfMonth !== undefined ? Number(d.dueDayOfMonth) : undefined,
       status: d.status === 'paid' || Number(d.remainingAmount) <= 0 ? 'paid' : 'active',
       note: d.note || '',
       payments,
@@ -910,6 +854,10 @@ export async function saveUserDebt(userId: string, debt: Debt): Promise<void> {
     ...(debt.walletId ? { walletId: debt.walletId.substring(0, 128) } : {}),
     ...(debt.category ? { category: debt.category.substring(0, 50) } : {}),
     ...(debt.interestRate ? { interestRate: Number(debt.interestRate) } : {}),
+    ...(debt.isInstallment !== undefined ? { isInstallment: Boolean(debt.isInstallment) } : {}),
+    ...(debt.tenorMonths !== undefined ? { tenorMonths: Number(debt.tenorMonths) } : {}),
+    ...(debt.monthlyInstallment !== undefined ? { monthlyInstallment: Number(debt.monthlyInstallment) } : {}),
+    ...(debt.dueDayOfMonth !== undefined ? { dueDayOfMonth: Number(debt.dueDayOfMonth) } : {}),
     ...(debt.note ? { note: debt.note.substring(0, 500) } : {}),
   };
 

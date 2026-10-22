@@ -36,7 +36,7 @@ function WalletModalForm() {
     if (!name.trim()) return;
 
     const rawNum = parseNominalInput(initialBalance);
-    const balanceNum = isDebtType && rawNum > 0 ? -Math.abs(rawNum) : rawNum;
+    const balanceNum = Math.max(0, rawNum);
     const selectedOption = WALLET_TYPE_OPTIONS.find((o) => o.type === type);
 
     if (editingWallet) {

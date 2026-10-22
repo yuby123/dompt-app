@@ -22,6 +22,7 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { TabType, useApp } from './AppContext';
+import { BrandLogo } from './BrandLogo';
 
 const emptySubscribe = () => () => {};
 
@@ -88,17 +89,10 @@ export function DesktopSidebar() {
             onClick={() => setActiveTab('dashboard')}
             className="flex items-center gap-3 cursor-pointer group text-left"
           >
-            <div
-              className={`w-9 h-9 rounded-2xl ${
-                isOrange
-                  ? 'bg-[#FF6B00] text-white'
-                  : isPink
-                  ? 'bg-[#FFA4A4] text-black'
-                  : 'bg-[#D4F826] text-black'
-              } font-display font-black flex items-center justify-center text-base shadow-xs group-hover:scale-105 transition-transform`}
-            >
-              D.
-            </div>
+            <BrandLogo
+              size="md"
+              className="shadow-xs group-hover:scale-105 transition-transform"
+            />
             <span className="font-display text-2xl font-black tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0">
               Dompt.
             </span>

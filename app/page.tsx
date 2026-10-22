@@ -21,6 +21,7 @@ import { AnalyticsTab } from '@/components/tabs/AnalyticsTab';
 import { SubscriptionsTab } from '@/components/tabs/SubscriptionsTab';
 import { HealthScoreTab } from '@/components/tabs/HealthScoreTab';
 import { AddTransactionModal } from '@/components/AddTransactionModal';
+import { TransferModal } from '@/components/TransferModal';
 import { ScanReceiptModal } from '@/components/ScanReceiptModal';
 import { WalletModal } from '@/components/WalletModal';
 import { AppLockModal } from '@/components/AppLockModal';
@@ -91,6 +92,7 @@ function MainAppContent() {
 
       {/* Modals & Overlays */}
       <AddTransactionModal />
+      <TransferModal />
       <ScanReceiptModal />
       <WalletModal />
       <AuthModal />

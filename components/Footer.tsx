@@ -13,6 +13,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { useApp, TabType } from './AppContext';
+import { BrandLogo } from './BrandLogo';
 
 export function Footer() {
   const {
@@ -74,9 +75,13 @@ export function Footer() {
               <button
                 type="button"
                 onClick={() => setActiveTab('dashboard')}
-                className="font-display text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0 cursor-pointer"
+                className="font-display text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-2.5 group"
               >
-                Dompt.
+                <BrandLogo
+                  size="sm"
+                  className="shadow-2xs group-hover:scale-105 transition-transform"
+                />
+                <span>Dompt.</span>
               </button>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed max-w-sm">
                 Arsitektur keuangan pribadi generasi baru dengan isolasi multi-akun,

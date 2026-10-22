@@ -327,7 +327,7 @@ export function DebtTab() {
       });
     } else {
       // Add
-      addDebt(
+      const ok = addDebt(
         {
           name: formName.trim(),
           type: formType,
@@ -348,6 +348,7 @@ export function DebtTab() {
           ? { disburseWalletId: formDisburseWalletId }
           : undefined
       );
+      if (!ok) return;
     }
 
     setIsAddModalOpen(false);
@@ -360,7 +361,7 @@ export function DebtTab() {
       ? Math.min(debt.monthlyInstallment, debt.remainingAmount)
       : debt.remainingAmount;
     setPayAmount(formatNominalInput(String(defaultAmount)));
-    setPayWalletId(wallets[0]?.id || '');
+    setPayWalletId(walletsWithBalance[0]?.id || wallets[0]?.id || '');
     setPayDate(new Date().toISOString().slice(0, 10));
     const nextInstallmentNum = (debt.payments?.length || 0) + 1;
     setPayNote(
@@ -379,11 +380,12 @@ export function DebtTab() {
     const amountNum = parseNominalInput(payAmount);
     if (amountNum <= 0) return;
 
-    payDebtInstallment(payingDebt.id, amountNum, {
-      walletId: payWalletId || undefined,
+    const ok = payDebtInstallment(payingDebt.id, amountNum, {
+      walletId: payWalletId,
       date: payDate,
       note: payNote.trim(),
     });
+    if (!ok) return;
 
     setPayingDebt(null);
   };
@@ -868,11 +870,7 @@ export function DebtTab() {
 
                     <button
                       type="button"
-                      onClick={() => {
-                        if (confirm(`Hapus catatan "${item.name}"?`)) {
-                          deleteDebt(item.id);
-                        }
-                      }}
+                      onClick={() => deleteDebt(item.id)}
                       className="p-1.5 text-gray-400 hover:text-rose-500 rounded-lg transition-colors cursor-pointer"
                       title="Hapus catatan"
                     >
@@ -893,17 +891,7 @@ export function DebtTab() {
 
                       <button
                         type="button"
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Tandai lunas penuh untuk "${item.name}" sebesar ${formatRupiah(
-                                item.remainingAmount
-                              )}?`
-                            )
-                          ) {
-                            settleDebt(item.id);
-                          }
-                        }}
+                        onClick={() => settleDebt(item.id)}
                         className="px-3 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs font-bold cursor-pointer transition-colors"
                       >
                         Lunasi Penuh
@@ -1285,7 +1273,7 @@ export function DebtTab() {
                     </label>
 
                     {formDisburseCashflow && (
-                      <div className="pl-6 space-y-1">
+                      <div className="pl-6 space-y-2">
                         <label className="text-[11px] font-bold text-gray-500 block">
                           {formType === 'payable' ? 'Pilih Dompet Penerima:' : 'Pilih Dompet Sumber Uang:'}
                         </label>
@@ -1294,12 +1282,29 @@ export function DebtTab() {
                           onChange={(e) => setFormDisburseWalletId(e.target.value)}
                           className="w-full p-2.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white"
                         >
-                          {wallets.map((w) => (
+                          {walletsWithBalance.map((w) => (
                             <option key={w.id} value={w.id}>
-                              {w.name} ({formatRupiah(w.initialBalance)})
+                              {w.name} ({formatRupiah(w.balance, hide)})
                             </option>
                           ))}
                         </select>
+                        {(() => {
+                          const selectedW = walletsWithBalance.find((w) => w.id === formDisburseWalletId);
+                          const totalVal = parseNominalInput(formTotalAmount);
+                          if (formType === 'receivable' && selectedW && totalVal > selectedW.balance) {
+                            return (
+                              <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 text-[11px] text-red-700 dark:text-red-300 flex items-start gap-2">
+                                <AlertCircle size={15} className="text-red-500 shrink-0 mt-0.5" />
+                                <div>
+                                  <span className="font-extrabold">Uang di {selectedW.name} Tidak Cukup!</span>{' '}
+                                  Saldo tersedia {formatRupiah(selectedW.balance, hide)}, kurang{' '}
+                                  <strong>{formatRupiah(totalVal - selectedW.balance, hide)}</strong>.
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     )}
                   </div>
@@ -1469,12 +1474,31 @@ export function DebtTab() {
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   >
                     <option value="">-- Tanpa Potong Dompet (Catat Saja) --</option>
-                    {wallets.map((w) => (
+                    {walletsWithBalance.map((w) => (
                       <option key={w.id} value={w.id}>
-                        {w.name}
+                        {w.name} ({formatRupiah(w.balance, hide)})
                       </option>
                     ))}
                   </select>
+                  {(() => {
+                    const selectedW = payWalletId
+                      ? walletsWithBalance.find((w) => w.id === payWalletId)
+                      : undefined;
+                    const amt = parseNominalInput(payAmount);
+                    if (payingDebt.type === 'payable' && selectedW && amt > selectedW.balance) {
+                      return (
+                        <div className="mt-2 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 text-[11px] text-red-700 dark:text-red-300 flex items-start gap-2">
+                          <AlertCircle size={15} className="text-red-500 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-extrabold">Uang di {selectedW.name} Tidak Cukup!</span>{' '}
+                            Saldo tersedia {formatRupiah(selectedW.balance, hide)}, kurang{' '}
+                            <strong>{formatRupiah(amt - selectedW.balance, hide)}</strong>. Dompet tidak boleh minus.
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                   <p className="text-[10px] text-gray-400 mt-1">
                     Jika memilih dompet, transaksi pengeluaran/pemasukan riil otomatis tercatat di Dompet & Riwayat.
                   </p>

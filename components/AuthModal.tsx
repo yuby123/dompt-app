@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from './AppContext';
+import { BrandLogo } from './BrandLogo';
 
 export function AuthModal() {
   const {
@@ -226,9 +227,7 @@ export function AuthModal() {
             /* Switch / Login / Register with Email & Password */
             <div className="space-y-4">
               <div className="text-center space-y-1.5">
-                <div className="w-12 h-12 mx-auto rounded-2xl bg-[#D4F826] text-black font-black flex items-center justify-center text-xl shadow-md">
-                  D.
-                </div>
+                <BrandLogo size="lg" className="mx-auto shadow-md" />
                 <h2 className="text-xl font-black">
                   {mode === 'login' ? 'Masuk ke Akun Lain' : 'Daftar Akun Baru'}
                 </h2>

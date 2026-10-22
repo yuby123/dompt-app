@@ -213,7 +213,7 @@ export function BudgetTab() {
         if (tx.type === 'expense') {
           const catInfo = tx.categoryId ? catMap.get(tx.categoryId) : undefined;
           const catName = catInfo?.name || '';
-          const txGroup = tx.budgetGroup || catInfo?.group;
+          const txGroup = tx.expenseNature === 'savings' ? 'tabungan' : (tx.budgetGroup || catInfo?.group);
 
           const cleanTxNote = (tx.note || '')
             .toLowerCase()
@@ -264,6 +264,15 @@ export function BudgetTab() {
               if (catName.includes(subNameLower) || subNameLower.includes(catName)) {
                 return true;
               }
+            }
+
+            // E. Synonym match for Tabungan category ('cat-tabungan' -> 'Nabung Dana Darurat' / 'Tabungan')
+            if (
+              txGroup === 'tabungan' &&
+              (tx.categoryId === 'cat-tabungan' || /tabung|nabung|simpan/i.test(catName)) &&
+              /nabung|tabung|darurat|simpan/i.test(subNameLower)
+            ) {
+              return true;
             }
 
             return false;

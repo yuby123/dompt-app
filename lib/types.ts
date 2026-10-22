@@ -30,7 +30,7 @@ export interface Category {
   type: 'expense' | 'income';
   groupName: string;
   budgetGroup?: BudgetGroup;
-  expenseNature?: 'variable' | 'fixed'; // 'variable' (Pengeluaran Harian) | 'fixed' (Tagihan Bulanan)
+  expenseNature?: 'variable' | 'fixed' | 'savings'; // 'variable' (Pengeluaran Harian) | 'fixed' (Tagihan Bulanan) | 'savings' (Alokasi Tabungan)
   iconKey: string;
   emoji?: string;
   colorValue: string;
@@ -176,7 +176,7 @@ export interface Transaction {
   amount: number;
   categoryId?: string | null;
   budgetGroup?: BudgetGroup;
-  expenseNature?: 'variable' | 'fixed'; // 'variable' (Pengeluaran Harian) | 'fixed' (Tagihan Bulanan)
+  expenseNature?: 'variable' | 'fixed' | 'savings'; // 'variable' (Pengeluaran Harian) | 'fixed' (Tagihan Bulanan) | 'savings' (Alokasi Tabungan)
   walletId: string;
   transferWalletId?: string | null;
   date: string; // ISO date string

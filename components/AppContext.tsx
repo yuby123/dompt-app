@@ -234,7 +234,7 @@ interface AppContextType {
 
   // CRUD Operations
   addTransaction: (data: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }) => string;
-  updateTransaction: (id: string, data: Partial<Transaction>) => void;
+  updateTransaction: (id: string, data: Partial<Transaction>) => boolean;
   deleteTransaction: (id: string) => void;
 
   addWallet: (data: Omit<Wallet, 'id' | 'createdAt' | 'updatedAt'>) => void;
@@ -247,11 +247,11 @@ interface AppContextType {
   deleteGoal: (id: string) => void;
   toggleLockGoal: (id: string) => void;
 
-  addDebt: (data: Omit<Debt, 'id' | 'createdAt' | 'updatedAt'>, options?: { disburseWalletId?: string }) => void;
+  addDebt: (data: Omit<Debt, 'id' | 'createdAt' | 'updatedAt'>, options?: { disburseWalletId?: string }) => boolean;
   updateDebt: (id: string, data: Partial<Debt>) => void;
   deleteDebt: (id: string) => void;
-  payDebtInstallment: (debtId: string, amount: number, options?: { walletId?: string; date?: string; note?: string }) => void;
-  settleDebt: (debtId: string, options?: { walletId?: string; date?: string; note?: string }) => void;
+  payDebtInstallment: (debtId: string, amount: number, options?: { walletId?: string; date?: string; note?: string }) => boolean;
+  settleDebt: (debtId: string, options?: { walletId?: string; date?: string; note?: string }) => boolean;
 
   updateBudgetConfig: (config: Partial<BudgetConfig>) => void;
   addBudgetSubcategory: (item: { name: string; group: BudgetGroup; allocatedAmount: number; emoji: string; dueDateDay?: number }) => void;
@@ -262,7 +262,7 @@ interface AppContextType {
   updateSubscription: (id: string, data: Partial<RecurringItem>) => void;
   deleteSubscription: (id: string) => void;
   toggleSubscriptionActive: (id: string) => void;
-  recordSubscriptionPayment: (id: string) => void;
+  recordSubscriptionPayment: (id: string) => boolean;
   syncSubscriptionsToBudget: () => void;
 
   addAsset: (type: 'liquid' | 'fixed', item: Omit<AssetItem, 'id'>) => void;
@@ -271,13 +271,24 @@ interface AppContextType {
   addInvestment: (item: Omit<InvestmentItem, 'id'>) => void;
   deleteInvestment: (id: string) => void;
 
-  transferFunds: (fromWalletId: string, toWalletId: string, amount: number, note?: string, date?: string) => void;
+  transferFunds: (fromWalletId: string, toWalletId: string, amount: number, note?: string, date?: string) => boolean;
   updateSettings: (data: Partial<AppSettings>) => void;
   toggleHideBalance: () => void;
   setThemeMode: (mode: ThemeMode) => void;
   setAccentColor: (accent: AccentColor) => void;
   deductAiCredit: (amount?: number) => boolean;
   addAiCredits: (amount: number) => void;
+
+  // Insufficient Balance Alert & Helpers
+  insufficientBalanceAlert: InsufficientBalanceAlertInfo | null;
+  setInsufficientBalanceAlert: (alert: InsufficientBalanceAlertInfo | null) => void;
+  triggerInsufficientBalanceAlert: (
+    walletId: string,
+    paymentAmount: number,
+    transactionLabel?: string,
+    customWalletBalance?: number
+  ) => void;
+  getWalletBalance: (walletId?: string, excludeTxId?: string) => number;
 
   // Utilities
   toasts: ToastMessage[];
@@ -306,12 +317,22 @@ interface AppContextType {
   dataResetVersion: number;
 }
 
+export interface InsufficientBalanceAlertInfo {
+  walletName: string;
+  walletBalance: number;
+  paymentAmount: number;
+  shortfall: number;
+  transactionLabel?: string;
+}
+
 const AppContext = createContext<AppContextType | null>(null);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [activeTab, setActiveTabState] = useState<TabType>('dashboard');
   const [previousTab, setPreviousTab] = useState<TabType>('dashboard');
   const [dataResetVersion, setDataResetVersion] = useState<number>(0);
+  const [insufficientBalanceAlert, setInsufficientBalanceAlert] =
+    useState<InsufficientBalanceAlertInfo | null>(null);
 
   const setActiveTab = (tab: TabType) => {
     const targetTab = tab === 'health-score' ? 'analytics' : tab;
@@ -1385,15 +1406,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return map;
   }, [wallets, transactions]);
 
-  // Calculate wallet balances
+  // Calculate wallet balances (guaranteed non-negative: wallets can never go below Rp0)
   const walletsWithBalance = useMemo<WalletWithBalance[]>(() => {
+    const sortedChronologicalTxs = [...transactions].sort((a, b) => {
+      const timeA = new Date(a.date || a.createdAt || 0).getTime();
+      const timeB = new Date(b.date || b.createdAt || 0).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+    });
+
     return wallets.map((wallet) => {
-      let balance = wallet.initialBalance;
+      let balance = Math.max(0, Number(wallet.initialBalance) || 0);
       let expenseThisMonth = 0;
       let incomeThisMonth = 0;
       let txCount = 0;
 
-      transactions.forEach((tx) => {
+      sortedChronologicalTxs.forEach((tx) => {
         const effectiveWalletId = resolvedWalletIdMap.get(tx.id) || tx.walletId;
         const txDate = parseLocalDay(tx.date);
         const isThisMonth = isDateInBudgetPeriod(txDate, budgetPeriod);
@@ -1401,13 +1429,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (effectiveWalletId === wallet.id) {
           txCount++;
           if (tx.type === 'expense') {
-            balance -= tx.amount;
+            balance = Math.max(0, balance - tx.amount);
             if (isThisMonth) expenseThisMonth += tx.amount;
           } else if (tx.type === 'income') {
             balance += tx.amount;
             if (isThisMonth) incomeThisMonth += tx.amount;
           } else if (tx.type === 'transfer') {
-            balance -= tx.amount;
+            balance = Math.max(0, balance - tx.amount);
           }
         }
 
@@ -1417,16 +1445,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       });
 
+      const finalBalance = Math.max(0, balance);
       const goalsReserved = goals
         .filter((g) => g.walletId === wallet.id && g.currentAmount > 0)
         .reduce((acc, g) => acc + g.currentAmount, 0);
-      const reserved = goalsReserved > 0 ? goalsReserved : wallet.reservedAmount || 0;
-      const available = balance - reserved;
+      const rawReserved = goalsReserved > 0 ? goalsReserved : Math.max(0, wallet.reservedAmount || 0);
+      const reserved = Math.min(finalBalance, Math.max(0, rawReserved));
+      const available = Math.max(0, finalBalance - reserved);
 
       return {
         ...wallet,
+        initialBalance: Math.max(0, Number(wallet.initialBalance) || 0),
         reservedAmount: reserved,
-        balance,
+        balance: finalBalance,
         expenseThisMonth,
         incomeThisMonth,
         transactionCount: txCount,
@@ -1435,10 +1466,71 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   }, [wallets, transactions, goals, budgetPeriod, resolvedWalletIdMap]);
 
-  // Total balance
+  // Total balance (guaranteed non-negative)
   const totalBalance = useMemo(() => {
-    return walletsWithBalance.reduce((acc, w) => acc + w.balance, 0);
+    return Math.max(
+      0,
+      walletsWithBalance.reduce((acc, w) => acc + Math.max(0, w.balance), 0)
+    );
   }, [walletsWithBalance]);
+
+  // Helper to get a wallet's current balance (optionally excluding a specific transaction when editing)
+  const getWalletBalance = (walletId?: string, excludeTxId?: string): number => {
+    const targetWallet =
+      (walletId ? walletsWithBalance.find((w) => w.id === walletId) : undefined) ||
+      walletsWithBalance[0];
+    if (!targetWallet) return 0;
+
+    if (!excludeTxId) {
+      return Math.max(0, targetWallet.balance);
+    }
+
+    const oldTx = transactions.find((t) => t.id === excludeTxId);
+    const oldEffectiveWalletId = oldTx
+      ? resolvedWalletIdMap.get(oldTx.id) || oldTx.walletId
+      : undefined;
+    const refundedBalance =
+      oldTx &&
+      oldEffectiveWalletId === targetWallet.id &&
+      (oldTx.type === 'expense' || oldTx.type === 'transfer')
+        ? targetWallet.balance + oldTx.amount
+        : targetWallet.balance;
+
+    return Math.max(0, refundedBalance);
+  };
+
+  const triggerInsufficientBalanceAlert = (
+    walletId: string,
+    paymentAmount: number,
+    transactionLabel?: string,
+    customWalletBalance?: number
+  ) => {
+    const targetWallet =
+      (walletId ? walletsWithBalance.find((w) => w.id === walletId) : undefined) ||
+      (walletId ? wallets.find((w) => w.id === walletId) : undefined) ||
+      walletsWithBalance[0] ||
+      wallets[0];
+    const walletName = targetWallet?.name || 'Dompet';
+    const walletBalance =
+      customWalletBalance !== undefined
+        ? Math.max(0, customWalletBalance)
+        : getWalletBalance(targetWallet?.id || walletId);
+    const shortfall = Math.max(0, paymentAmount - walletBalance);
+
+    setInsufficientBalanceAlert({
+      walletName,
+      walletBalance,
+      paymentAmount,
+      shortfall,
+      transactionLabel,
+    });
+
+    addToast(
+      'Saldo Dompet Tidak Cukup!',
+      `Saldo ${walletName} (${formatRupiah(walletBalance)}) tidak mencukupi untuk pembayaran sebesar ${formatRupiah(paymentAmount)}.`,
+      'error'
+    );
+  };
 
   // Enriched transaction details
   const transactionDetails = useMemo<TransactionDetail[]>(() => {
@@ -1725,6 +1817,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // CRUD: Transaction
   const addTransaction = (data: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): string => {
+    // Prevent negative wallet balance on any expense or transfer payment
+    if (data.type === 'expense' || data.type === 'transfer') {
+      const targetWallet =
+        walletsWithBalance.find((w) => w.id === data.walletId) || walletsWithBalance[0];
+      const currentWalletBalance = targetWallet ? Math.max(0, targetWallet.balance) : 0;
+      if (!targetWallet || data.amount > currentWalletBalance) {
+        triggerInsufficientBalanceAlert(
+          targetWallet?.id || data.walletId,
+          data.amount,
+          data.note || (data.type === 'transfer' ? 'Transfer Saldo' : 'Transaksi Pembayaran'),
+          currentWalletBalance
+        );
+        return '';
+      }
+    }
+
     markLocalMutation();
     const now = new Date().toISOString();
     const generatedId = data.id || `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
@@ -1756,7 +1864,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return generatedId;
   };
 
-  const updateTransaction = (id: string, data: Partial<Transaction>) => {
+  const updateTransaction = (id: string, data: Partial<Transaction>): boolean => {
+    const existingTx = transactions.find((t) => t.id === id);
+    const nextType = data.type ?? existingTx?.type;
+    const nextAmount = data.amount ?? existingTx?.amount ?? 0;
+    const nextWalletId = data.walletId ?? existingTx?.walletId;
+
+    if (nextType === 'expense' || nextType === 'transfer') {
+      const availableForUpdate = getWalletBalance(nextWalletId, id);
+      if (nextAmount > availableForUpdate) {
+        triggerInsufficientBalanceAlert(
+          nextWalletId || '',
+          nextAmount,
+          data.note ?? existingTx?.note ?? 'Perubahan Transaksi Pembayaran',
+          availableForUpdate
+        );
+        return false;
+      }
+    }
+
     markLocalMutation();
     const now = new Date().toISOString();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
@@ -1785,6 +1911,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     addToast('Transaksi Diperbarui', 'Perubahan transaksi berhasil disimpan.');
+    return true;
   };
 
   const deleteTransaction = (id: string) => {
@@ -1849,6 +1976,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const newW: Wallet = {
       ...data,
+      initialBalance: Math.max(0, Number(data.initialBalance) || 0),
       id: `wallet-${Date.now()}`,
       isVerified: true,
       createdAt: now,
@@ -1874,10 +2002,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     markLocalMutation();
     const now = new Date().toISOString();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
+    const safeData: Partial<Wallet> = {
+      ...data,
+      ...(data.initialBalance !== undefined
+        ? { initialBalance: Math.max(0, Number(data.initialBalance) || 0) }
+        : {}),
+    };
     let targetW: Wallet | undefined;
     const updated = wallets.map((w) => {
       if (w.id === id) {
-        targetW = { ...w, ...data, updatedAt: now };
+        targetW = { ...w, ...safeData, updatedAt: now };
         return targetW;
       }
       return w;
@@ -2019,7 +2153,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const addDebt = (
     debtData: Omit<Debt, 'id' | 'createdAt' | 'updatedAt'>,
     options?: { disburseWalletId?: string }
-  ) => {
+  ): boolean => {
+    // Validate wallet balance first if lending money (receivable) from a wallet
+    if (options?.disburseWalletId && debtData.type === 'receivable') {
+      const selectedWallet = walletsWithBalance.find((w) => w.id === options.disburseWalletId);
+      const currentBalance = selectedWallet ? Math.max(0, selectedWallet.balance) : 0;
+      if (!selectedWallet || debtData.totalAmount > currentBalance) {
+        triggerInsufficientBalanceAlert(
+          options.disburseWalletId,
+          debtData.totalAmount,
+          `Pinjaman Keluar / Piutang: ${debtData.name}`,
+          currentBalance
+        );
+        return false;
+      }
+    }
+
     markLocalMutation();
     const id = `debt-${Date.now()}`;
     const now = new Date().toISOString();
@@ -2160,6 +2309,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       newDebt.type === 'payable' ? 'Utang Dicatat & Masuk ke Budget' : 'Piutang Berhasil Dicatat',
       toastSubText
     );
+    return true;
   };
 
   const updateDebt = (id: string, data: Partial<Debt>) => {
@@ -2301,16 +2451,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     debtId: string,
     amount: number,
     options?: { walletId?: string; date?: string; note?: string }
-  ) => {
+  ): boolean => {
     const debt = debts.find((d) => d.id === debtId);
-    if (!debt || amount <= 0) return;
+    if (!debt || amount <= 0) return false;
+
+    const paymentDate = options?.date || new Date().toISOString().slice(0, 10);
+    const selectedWallet =
+      options?.walletId === ''
+        ? undefined
+        : options?.walletId
+        ? walletsWithBalance.find((w) => w.id === options.walletId)
+        : walletsWithBalance[0];
+
+    // Prevent negative wallet balance when paying payable debt
+    if (debt.type === 'payable' && selectedWallet) {
+      const currentWalletBalance = Math.max(0, selectedWallet.balance);
+      if (amount > currentWalletBalance) {
+        triggerInsufficientBalanceAlert(
+          selectedWallet.id,
+          amount,
+          `Bayar Cicilan Utang: ${debt.name}`,
+          currentWalletBalance
+        );
+        return false;
+      }
+    }
 
     markLocalMutation();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
-    const paymentDate = options?.date || new Date().toISOString().slice(0, 10);
-    const selectedWallet =
-      (options?.walletId ? wallets.find((w) => w.id === options.walletId) : undefined) ||
-      wallets[0];
 
     let createdTxId: string | undefined = undefined;
 
@@ -2330,6 +2498,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           expenseNature: 'fixed',
           categoryId: 'cat-tagihan',
         });
+        if (!createdTxId) return false;
       } else {
         // Someone paying back our receivable -> Income to selected wallet
         createdTxId = addTransaction({
@@ -2458,15 +2627,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         `Cicilan ${formatRupiah(amount)} tercatat di Pos Tagihan & memotong budget tersedia bulan ini.`
       );
     }
+    return true;
   };
 
   const settleDebt = (
     debtId: string,
     options?: { walletId?: string; date?: string; note?: string }
-  ) => {
+  ): boolean => {
     const debt = debts.find((d) => d.id === debtId);
-    if (!debt) return;
-    payDebtInstallment(debtId, debt.remainingAmount, {
+    if (!debt) return false;
+    return payDebtInstallment(debtId, debt.remainingAmount, {
       walletId: options?.walletId,
       date: options?.date,
       note: options?.note || 'Pelunasan Penuh',
@@ -3041,9 +3211,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addToast('Jadwal Dihapus', 'Langganan & alokasi subkategori budget terkait telah dihapus.', 'info');
   };
 
-  const recordSubscriptionPayment = (id: string) => {
+  const recordSubscriptionPayment = (id: string): boolean => {
     const item = subscriptions.find((i) => i.id === id);
-    if (!item) return;
+    if (!item) return false;
+
+    const targetWalletId = item.walletId || walletsWithBalance[0]?.id || wallets[0]?.id || 'wallet-bca';
+    if (item.type === 'expense') {
+      const currentWalletBalance = getWalletBalance(targetWalletId);
+      if (item.amount > currentWalletBalance) {
+        triggerInsufficientBalanceAlert(
+          targetWalletId,
+          item.amount,
+          `Tagihan Rutin: ${item.name}`,
+          currentWalletBalance
+        );
+        return false;
+      }
+    }
 
     markLocalMutation();
     const now = new Date().toISOString();
@@ -3068,6 +3252,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       matchedSub?.group ||
       item.budgetGroup ||
       (item.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
+
+    const createdId = addTransaction({
+      walletId: targetWalletId,
+      categoryId: item.categoryId || (matchedSub ? matchedSub.id.replace('sub-', 'cat-') : 'cat-tagihan'),
+      budgetGroup: item.type === 'expense' ? determinedBudgetGroup : undefined,
+      expenseNature: item.type === 'expense' ? 'fixed' : undefined,
+      type: item.type,
+      amount: item.amount,
+      note: `${item.name} (Otomatis Rutin)`,
+      date: dateStr,
+    });
+    if (!createdId) return false;
 
     const updatedItem: RecurringItem = {
       ...item,
@@ -3106,17 +3302,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    addTransaction({
-      walletId: item.walletId || wallets[0]?.id || 'wallet-bca',
-      categoryId: item.categoryId || (matchedSub ? matchedSub.id.replace('sub-', 'cat-') : 'cat-tagihan'),
-      budgetGroup: item.type === 'expense' ? determinedBudgetGroup : undefined,
-      expenseNature: item.type === 'expense' ? 'fixed' : undefined,
-      type: item.type,
-      amount: item.amount,
-      note: `${item.name} (Otomatis Rutin)`,
-      date: dateStr,
-    });
-
     addToast(
       'Pembayaran Dicatat',
       item.type === 'expense'
@@ -3124,6 +3309,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : `${item.name} berhasil dicatat sebagai pemasukan rutin.`,
       'success'
     );
+    return true;
   };
 
   const syncSubscriptionsToBudget = () => {
@@ -3317,12 +3503,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     amount: number,
     note?: string,
     date?: string
-  ) => {
+  ): boolean => {
+    const fromW = walletsWithBalance.find((w) => w.id === fromWalletId);
+    const toW = wallets.find((w) => w.id === toWalletId);
+    const currentFromBalance = fromW ? Math.max(0, fromW.balance) : 0;
+
+    if (!fromW || amount > currentFromBalance) {
+      triggerInsufficientBalanceAlert(
+        fromWalletId,
+        amount,
+        note || `Transfer ke ${toW?.name || 'Dompet'}`,
+        currentFromBalance
+      );
+      return false;
+    }
+
     markLocalMutation();
     const now = new Date().toISOString();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
-    const fromW = wallets.find((w) => w.id === fromWalletId);
-    const toW = wallets.find((w) => w.id === toWalletId);
 
     const tx: Transaction = {
       id: `tx-transfer-${Date.now()}`,
@@ -3354,6 +3552,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     addToast('Transfer Berhasil', `Rp ${amount.toLocaleString('id-ID')} dipindahkan.`);
+    return true;
   };
 
   // Settings
@@ -3675,6 +3874,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAccentColor,
         deductAiCredit,
         addAiCredits,
+        insufficientBalanceAlert,
+        setInsufficientBalanceAlert,
+        triggerInsufficientBalanceAlert,
+        getWalletBalance,
         toasts,
         addToast,
         removeToast,

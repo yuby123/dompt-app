@@ -159,6 +159,7 @@ export function ScanReceiptModal() {
     scanInitialImage,
     setScanInitialImage,
     wallets,
+    walletsWithBalance,
     categories,
     addTransaction,
     transferFunds,
@@ -415,24 +416,26 @@ export function ScanReceiptModal() {
       : new Date().toISOString();
 
     if (customType === 'transfer') {
-      const targetW = wallets.find((w) => w.id !== selectedWalletId);
-      transferFunds(
-        selectedWalletId || wallets[0]?.id || '',
-        targetW?.id || wallets[1]?.id || '',
+      const targetW = walletsWithBalance.find((w) => w.id !== selectedWalletId);
+      const ok = transferFunds(
+        selectedWalletId || walletsWithBalance[0]?.id || wallets[0]?.id || '',
+        targetW?.id || walletsWithBalance[1]?.id || wallets[1]?.id || '',
         finalAmount,
         customNote.trim() || 'Transfer dari screenshot',
         dateToUse
       );
+      if (!ok) return;
     } else {
-      addTransaction({
+      const createdId = addTransaction({
         type: customType,
         amount: finalAmount,
-        walletId: selectedWalletId || wallets[0]?.id || '',
+        walletId: selectedWalletId || walletsWithBalance[0]?.id || wallets[0]?.id || '',
         categoryId: selectedCategoryId || null,
         transferWalletId: null,
         date: dateToUse,
         note: customNote.trim() || undefined,
       });
+      if (!createdId) return;
     }
 
     showToast(
@@ -747,12 +750,35 @@ export function ScanReceiptModal() {
                       onChange={(e) => setSelectedWalletId(e.target.value)}
                       className="w-full p-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl font-bold text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-teal-500"
                     >
-                      {wallets.map((w) => (
+                      {walletsWithBalance.map((w) => (
                         <option key={w.id} value={w.id}>
-                          {w.name} ({formatRupiah(w.initialBalance)})
+                          {w.name} ({formatRupiah(w.balance)})
                         </option>
                       ))}
                     </select>
+                    {(() => {
+                      const activeW =
+                        walletsWithBalance.find((w) => w.id === selectedWalletId) ||
+                        walletsWithBalance[0];
+                      const activeAmt = customAmount || extractedData.amount || 0;
+                      if (
+                        (customType === 'expense' || customType === 'transfer') &&
+                        activeW &&
+                        activeAmt > activeW.balance
+                      ) {
+                        return (
+                          <div className="mt-2 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 text-[11px] text-red-700 dark:text-red-300 flex items-start gap-2">
+                            <AlertCircle size={15} className="text-red-500 shrink-0 mt-0.5" />
+                            <div>
+                              <span className="font-extrabold">Uang di {activeW.name} Tidak Cukup!</span>{' '}
+                              Saldo saat ini {formatRupiah(activeW.balance)}, kurang{' '}
+                              <strong>{formatRupiah(activeAmt - activeW.balance)}</strong>.
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
 
                   {/* Kategori Selector */}

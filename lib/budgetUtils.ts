@@ -7,6 +7,10 @@ export const FIXED_CATEGORY_IDS = new Set([
   'cat-bpjs',
   'cat-kuota',
   'cat-tagihan',
+]);
+
+// Category IDs that represent savings / investment allocations
+export const SAVINGS_CATEGORY_IDS = new Set([
   'cat-tabungan',
   'cat-investasi',
 ]);
@@ -29,6 +33,28 @@ export function getMonthlySubscriptionAmount(
 }
 
 /**
+ * Determines whether a transaction is a Savings / Investment Allocation (Alokasi Tabungan).
+ */
+export function isSavingsExpense(
+  tx: {
+    categoryId?: string | null;
+    note?: string;
+    budgetGroup?: string;
+    expenseNature?: 'variable' | 'fixed' | 'savings';
+  },
+  category?: Category | null
+): boolean {
+  if (tx.expenseNature === 'savings') return true;
+  if (tx.expenseNature === 'variable' || tx.expenseNature === 'fixed') return false;
+  if (tx.budgetGroup === 'tabungan') return true;
+  if (tx.categoryId && SAVINGS_CATEGORY_IDS.has(tx.categoryId)) return true;
+  if (category?.budgetGroup === 'tabungan' || category?.groupName === 'Tabungan' || category?.expenseNature === 'savings') {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Determines whether a transaction is a Fixed Expense (Tagihan Bulanan / Rutin)
  * or a Variable Expense (Pengeluaran Harian / Operasional seperti makan, jajan, transportasi).
  */
@@ -36,13 +62,17 @@ export function isFixedExpense(
   tx: {
     categoryId?: string | null;
     note?: string;
-    expenseNature?: 'variable' | 'fixed';
+    budgetGroup?: string;
+    expenseNature?: 'variable' | 'fixed' | 'savings';
   },
   category?: Category | null
 ): boolean {
   // 1. Explicit user designation on transaction has highest priority
   if (tx.expenseNature === 'fixed') return true;
-  if (tx.expenseNature === 'variable') return false;
+  if (tx.expenseNature === 'variable' || tx.expenseNature === 'savings') return false;
+
+  // Savings allocations belong to the 20% Tabungan bucket, not fixed bills
+  if (isSavingsExpense(tx, category)) return false;
 
   // 2. Debt / installment or automated recurring subscription payments are always fixed obligations
   if (tx.note && /bayar cicilan|cicilan utang|pelunasan utang|angsuran|\(otomatis rutin\)|\(langganan\)/i.test(tx.note)) {
@@ -77,14 +107,15 @@ export function isFixedExpense(
 }
 
 /**
- * Auto-detect whether an input should default to 'fixed' or 'variable'
+ * Auto-detect whether an input should default to 'savings', 'fixed', or 'variable'
  */
 export function detectExpenseNature(
   categoryId: string | null | undefined,
   note: string | undefined,
   categoryMap?: Map<string, Category>
-): 'variable' | 'fixed' {
+): 'variable' | 'fixed' | 'savings' {
   const cat = categoryId && categoryMap ? categoryMap.get(categoryId) : undefined;
+  if (isSavingsExpense({ categoryId, note }, cat)) return 'savings';
   return isFixedExpense({ categoryId, note }, cat) ? 'fixed' : 'variable';
 }
 
@@ -521,6 +552,8 @@ export function calculateBudgetBreakdown({
     const d = parseLocalDay(tx.date);
     if (isDateInBudgetPeriod(d, periodInfo)) {
       const cat = tx.categoryId ? categoryMap.get(tx.categoryId) || null : null;
+      // Savings allocations belong to the 20% Tabungan bucket, not Needs/Wants daily or fixed obligations
+      if (isSavingsExpense(tx, cat)) return;
       const fixed = isFixedExpense(tx, cat);
 
       if (fixed) {

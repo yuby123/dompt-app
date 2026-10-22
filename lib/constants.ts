@@ -260,8 +260,8 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'cat-hobi', name: 'Hobi', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', expenseNature: 'variable', iconKey: 'Film', emoji: '🎨', colorValue: '#7C3AED', isDefault: true },
   { id: 'cat-tagihan', name: 'Tagihan & Utilitas', type: 'expense', groupName: 'Kebutuhan', budgetGroup: 'kebutuhan', expenseNature: 'fixed', iconKey: 'FileText', emoji: '🧾', colorValue: '#0284C7', isDefault: true },
   { id: 'cat-hiburan', name: 'Hiburan & Langganan', type: 'expense', groupName: 'Keinginan', budgetGroup: 'keinginan', expenseNature: 'variable', iconKey: 'Film', emoji: '🎬', colorValue: '#EC4899', isDefault: true },
-  { id: 'cat-tabungan', name: 'Tabungan', type: 'expense', groupName: 'Tabungan', budgetGroup: 'tabungan', expenseNature: 'fixed', iconKey: 'PiggyBank', emoji: '🏦', colorValue: '#0D9488', isDefault: true },
-  { id: 'cat-investasi', name: 'Investasi', type: 'expense', groupName: 'Tabungan', budgetGroup: 'tabungan', expenseNature: 'fixed', iconKey: 'TrendingUp', emoji: '📈', colorValue: '#10B981', isDefault: true },
+  { id: 'cat-tabungan', name: 'Tabungan', type: 'expense', groupName: 'Tabungan', budgetGroup: 'tabungan', expenseNature: 'savings', iconKey: 'PiggyBank', emoji: '🏦', colorValue: '#0D9488', isDefault: true },
+  { id: 'cat-investasi', name: 'Investasi', type: 'expense', groupName: 'Tabungan', budgetGroup: 'tabungan', expenseNature: 'savings', iconKey: 'TrendingUp', emoji: '📈', colorValue: '#10B981', isDefault: true },
   
   // Income
   { id: 'cat-gaji', name: 'Gaji Pokok', type: 'income', groupName: 'Penghasilan', iconKey: 'Briefcase', emoji: '💼', colorValue: '#16A34A', isDefault: true },

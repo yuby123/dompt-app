@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Lock, Delete, ShieldAlert } from 'lucide-react';
 import { useApp } from './AppContext';
+import { BrandLogo } from './BrandLogo';
 
 export function AppLockModal() {
   const { isLocked, unlockApp, verifyPinCode, settings } = useApp();
@@ -67,9 +68,10 @@ export function AppLockModal() {
         animate={{ opacity: 1, scale: 1 }}
         className="w-full max-w-sm flex flex-col items-center text-center space-y-5 landscape:space-y-3 py-4 my-auto"
       >
-        <div className="w-14 h-14 landscape:w-12 landscape:h-12 rounded-2xl bg-[#D4F826] text-black font-black text-2xl flex items-center justify-center shadow-lg">
-          D.
-        </div>
+        <BrandLogo
+          size="xl"
+          className="landscape:w-12 landscape:h-12 shadow-lg"
+        />
 
         <div>
           <h2 className="text-2xl landscape:text-xl font-black tracking-tight">Dompt.</h2>

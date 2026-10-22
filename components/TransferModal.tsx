@@ -2,25 +2,39 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, ArrowRightLeft } from 'lucide-react';
+import { X, ArrowRightLeft, AlertTriangle } from 'lucide-react';
 import { useApp } from './AppContext';
-import { formatNumberOnly, formatNominalInput, parseNominalInput } from '@/lib/formatters';
+import { formatNumberOnly, formatNominalInput, parseNominalInput, formatRupiah } from '@/lib/formatters';
 
 function TransferModalForm() {
-  const { setIsTransferOpen, wallets, transferFunds, addToast } = useApp();
-  const [fromWalletId, setFromWalletId] = useState(() => wallets[0]?.id || '');
+  const {
+    setIsTransferOpen,
+    wallets,
+    walletsWithBalance,
+    settings,
+    transferFunds,
+    addToast,
+  } = useApp();
+  const [fromWalletId, setFromWalletId] = useState(() => walletsWithBalance[0]?.id || wallets[0]?.id || '');
   const [toWalletId, setToWalletId] = useState(
-    () => wallets.find((w) => w.id !== wallets[0]?.id)?.id || wallets[0]?.id || ''
+    () =>
+      walletsWithBalance.find((w) => w.id !== (walletsWithBalance[0]?.id || wallets[0]?.id))?.id ||
+      wallets[0]?.id ||
+      ''
   );
   const [amountStr, setAmountStr] = useState('');
   const [note, setNote] = useState('');
 
   const currentAmount = parseNominalInput(amountStr);
+  const fromWallet = walletsWithBalance.find((w) => w.id === fromWalletId) || walletsWithBalance[0];
+  const fromWalletBalance = Math.max(0, fromWallet?.balance || 0);
+  const isInsufficient = currentAmount > 0 && currentAmount > fromWalletBalance;
+  const shortfall = Math.max(0, currentAmount - fromWalletBalance);
 
   const handleFromWalletChange = (newFromId: string) => {
     setFromWalletId(newFromId);
     if (newFromId === toWalletId) {
-      const other = wallets.find((w) => w.id !== newFromId);
+      const other = walletsWithBalance.find((w) => w.id !== newFromId);
       if (other) setToWalletId(other.id);
     }
   };
@@ -32,8 +46,10 @@ function TransferModalForm() {
       addToast('Transfer Gagal', 'Dompet asal dan tujuan harus berbeda.', 'error');
       return;
     }
-    transferFunds(fromWalletId, toWalletId, currentAmount, note.trim() || undefined);
-    setIsTransferOpen(false);
+    const ok = transferFunds(fromWalletId, toWalletId, currentAmount, note.trim() || undefined);
+    if (ok) {
+      setIsTransferOpen(false);
+    }
   };
 
   return (
@@ -65,9 +81,9 @@ function TransferModalForm() {
             onChange={(e) => handleFromWalletChange(e.target.value)}
             className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-medium focus:ring-2 focus:ring-blue-500"
           >
-            {wallets.map((w) => (
+            {walletsWithBalance.map((w) => (
               <option key={w.id} value={w.id}>
-                {w.name}
+                {w.name} ({settings.hideBalance ? 'Rp ••••' : `Rp${formatNumberOnly(w.balance)}`})
               </option>
             ))}
           </select>
@@ -80,9 +96,9 @@ function TransferModalForm() {
             onChange={(e) => setToWalletId(e.target.value)}
             className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-medium focus:ring-2 focus:ring-blue-500"
           >
-            {wallets.map((w) => (
+            {walletsWithBalance.map((w) => (
               <option key={w.id} value={w.id} disabled={w.id === fromWalletId}>
-                {w.name}
+                {w.name} ({settings.hideBalance ? 'Rp ••••' : `Rp${formatNumberOnly(w.balance)}`})
               </option>
             ))}
           </select>
@@ -112,6 +128,19 @@ function TransferModalForm() {
             ))}
           </div>
         </div>
+
+        {isInsufficient && (
+          <div className="bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 rounded-2xl p-3 flex items-start gap-2.5 text-xs text-red-700 dark:text-red-300">
+            <AlertTriangle size={16} className="text-red-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Saldo {fromWallet?.name || 'Dompet'} Tidak Cukup!</p>
+              <p className="text-[11px] mt-0.5">
+                Saldo tersedia {formatRupiah(fromWalletBalance, settings.hideBalance)}, kurang{' '}
+                <strong>{formatRupiah(shortfall, settings.hideBalance)}</strong>. Dompet tidak boleh minus.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div>
           <label className="text-xs font-semibold text-gray-500 block mb-1">Catatan</label>

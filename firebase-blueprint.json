@@ -48,7 +48,7 @@
         "amount": { "type": "number" },
         "categoryId": { "type": "string", "maxLength": 100 },
         "budgetGroup": { "type": "string", "maxLength": 50 },
-        "expenseNature": { "type": "string", "enum": ["variable", "fixed"] },
+        "expenseNature": { "type": "string", "enum": ["variable", "fixed", "savings"] },
         "date": { "type": "string", "maxLength": 30 },
         "note": { "type": "string", "maxLength": 500 },
         "transferWalletId": { "type": "string", "maxLength": 128 },

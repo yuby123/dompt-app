@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from './AppContext';
+import { BrandLogo } from './BrandLogo';
 
 const emptySubscribe = () => () => {};
 
@@ -116,9 +117,12 @@ export function AuthScreen() {
     <div className="min-h-screen w-full bg-[#F6F7FB] dark:bg-[#08090F] bg-noise-subtle text-slate-900 dark:text-white flex flex-col selection:bg-[#D4F826] selection:text-black">
       {/* Clean Top Bar */}
       <header className="sticky top-0 z-30 backdrop-blur-xl bg-[#F6F7FB]/85 dark:bg-[#08090F]/85 border-b border-slate-200/80 dark:border-white/[0.08] px-6 py-4 flex items-center justify-between gap-8">
-        <span className="font-display text-xl font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap shrink-0">
-          Dompt.
-        </span>
+        <div className="flex items-center gap-3 shrink-0">
+          <BrandLogo size="sm" className="w-9 h-9 shadow-2xs" />
+          <span className="font-display text-xl font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap">
+            Dompt.
+          </span>
+        </div>
 
         <div className="flex items-center shrink-0">
           <button
@@ -228,9 +232,7 @@ export function AuthScreen() {
                 {/* Header */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <div className="w-11 h-11 rounded-2xl bg-[#D4F826] text-black font-display font-extrabold flex items-center justify-center text-lg">
-                      D.
-                    </div>
+                    <BrandLogo size="md" className="w-11 h-11 shadow-xs" />
                     <span className="text-xs text-slate-400 font-medium">
                       Sinkron Otomatis
                     </span>

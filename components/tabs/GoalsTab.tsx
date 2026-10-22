@@ -29,11 +29,13 @@ export function GoalsTab() {
   const {
     goals,
     wallets,
+    walletsWithBalance,
     addGoal,
     updateGoal,
     toggleLockGoal,
     deleteGoal,
     settings,
+    triggerInsufficientBalanceAlert,
   } = useApp();
 
   // Active Modals & Selection states
@@ -141,12 +143,25 @@ export function GoalsTab() {
 
     if (!name.trim() || targetVal <= 0) return;
 
+    const targetWId = walletId || walletsWithBalance[0]?.id || wallets[0]?.id || 'wallet-bca';
+    const targetW = walletsWithBalance.find((w) => w.id === targetWId) || walletsWithBalance[0];
+
+    if (initialVal > 0 && targetW && initialVal > targetW.availableBalance) {
+      triggerInsufficientBalanceAlert(
+        targetW.id,
+        initialVal,
+        `Setoran Awal Goal: ${name.trim()}`,
+        targetW.availableBalance
+      );
+      return;
+    }
+
     addGoal({
       name: name.trim(),
       emoji: emoji || '🎯',
       targetAmount: targetVal,
       currentAmount: initialVal,
-      walletId: walletId || wallets[0]?.id || 'wallet-bca',
+      walletId: targetWId,
       targetDate,
       isEmergencyFund,
       isLocked: isEmergencyFund,
@@ -170,6 +185,23 @@ export function GoalsTab() {
     const currentVal = parseNominalInput(editCurrentAmount);
 
     if (!editName.trim() || targetVal <= 0) return;
+
+    const targetW = walletsWithBalance.find((w) => w.id === editWalletId) || walletsWithBalance[0];
+    if (targetW) {
+      const otherGoalsReserved = goals
+        .filter((g) => g.id !== editingGoal.id && g.walletId === targetW.id && g.currentAmount > 0)
+        .reduce((acc, g) => acc + g.currentAmount, 0);
+      const maxAllowedForThisGoal = Math.max(0, targetW.balance - otherGoalsReserved);
+      if (currentVal > maxAllowedForThisGoal) {
+        triggerInsufficientBalanceAlert(
+          targetW.id,
+          currentVal,
+          `Alokasi Goal: ${editName.trim()}`,
+          maxAllowedForThisGoal
+        );
+        return;
+      }
+    }
 
     const updatedData: Partial<Goal> = {
       name: editName.trim(),
@@ -207,6 +239,21 @@ export function GoalsTab() {
     if (!selectedGoal) return;
     const val = parseNominalInput(depositDelta);
     if (!val || val <= 0) return;
+
+    if (mode === 'add') {
+      const targetW =
+        walletsWithBalance.find((w) => w.id === selectedGoal.walletId) || walletsWithBalance[0];
+      if (targetW && val > targetW.availableBalance) {
+        triggerInsufficientBalanceAlert(
+          targetW.id,
+          val,
+          `Tambah Tabungan Goal: ${selectedGoal.name}`,
+          targetW.availableBalance
+        );
+        return;
+      }
+    }
+
     const nextAmount =
       mode === 'add'
         ? selectedGoal.currentAmount + val
@@ -455,9 +502,9 @@ export function GoalsTab() {
                     onChange={(e) => setWalletId(e.target.value)}
                     className={`w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                   >
-                    {wallets.map((w) => (
+                    {walletsWithBalance.map((w) => (
                       <option key={w.id} value={w.id}>
-                        {w.name} ({w.type})
+                        {w.name} (Tersedia: {formatRupiah(w.availableBalance, hide)})
                       </option>
                     ))}
                   </select>
@@ -623,9 +670,9 @@ export function GoalsTab() {
                     onChange={(e) => setEditWalletId(e.target.value)}
                     className={`w-full p-3 bg-stone-50 dark:bg-stone-800 border border-stone-200 dark:border-stone-700 rounded-2xl text-xs font-bold text-stone-900 dark:text-white focus:outline-none focus:ring-2 ${brandAccentFocusRing}`}
                   >
-                    {wallets.map((w) => (
+                    {walletsWithBalance.map((w) => (
                       <option key={w.id} value={w.id}>
-                        {w.name} ({w.type})
+                        {w.name} (Saldo: {formatRupiah(w.balance, hide)})
                       </option>
                     ))}
                   </select>

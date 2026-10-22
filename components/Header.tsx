@@ -3,6 +3,7 @@
 import React from 'react';
 import { BookOpen, Moon, Sun, ArrowLeft } from 'lucide-react';
 import { TabType, useApp } from './AppContext';
+import { BrandLogo } from './BrandLogo';
 
 const emptySubscribe = () => () => {};
 
@@ -56,13 +57,12 @@ export function Header() {
         <button
           type="button"
           onClick={() => setActiveTab('dashboard')}
-          className="flex items-center gap-2 cursor-pointer group text-left shrink-0"
+          className="flex items-center gap-2.5 cursor-pointer group text-left shrink-0"
         >
-          <div
-            className={`w-8 h-8 rounded-xl ${badgeClass} font-display font-black flex items-center justify-center text-xs shadow-2xs transition-transform active:scale-95 shrink-0`}
-          >
-            D.
-          </div>
+          <BrandLogo
+            size="sm"
+            className="shadow-2xs group-hover:scale-105 transition-transform"
+          />
           <span className="font-display text-xl font-black tracking-tight text-slate-900 dark:text-white leading-none whitespace-nowrap">
             Dompt.
           </span>

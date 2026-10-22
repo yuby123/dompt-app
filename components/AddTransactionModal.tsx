@@ -27,6 +27,8 @@ function AddTransactionForm() {
     budgetConfig,
     budgetPeriod,
     transactions,
+    getWalletBalance,
+    triggerInsufficientBalanceAlert,
   } = useApp();
 
   const amountInputRef = useRef<HTMLInputElement>(null);
@@ -68,7 +70,7 @@ function AddTransactionForm() {
   const [note, setNote] = useState<string>(() => editingTransaction?.transaction.note || '');
   const [activeGroup, setActiveGroup] = useState<string>('Semua');
 
-  const [expenseNature, setExpenseNature] = useState<'variable' | 'fixed'>(() => {
+  const [expenseNature, setExpenseNature] = useState<'variable' | 'fixed' | 'savings'>(() => {
     if (editingTransaction?.transaction.expenseNature) {
       return editingTransaction.transaction.expenseNature;
     }
@@ -97,6 +99,18 @@ function AddTransactionForm() {
     activeGroup === 'Semua' ? availableCategories : availableCategories.filter((c) => c.groupName === activeGroup);
 
   const currentAmount = parseInt(amountStr, 10) || 0;
+  const activeWalletId = selectedWalletId || walletsWithBalance[0]?.id || wallets[0]?.id || '';
+  const selectedWalletObj =
+    walletsWithBalance.find((w) => w.id === activeWalletId) || walletsWithBalance[0];
+  const effectiveWalletBalance = getWalletBalance(
+    activeWalletId,
+    editingTransaction?.transaction.id
+  );
+  const isWalletInsufficient =
+    (type === 'expense' || type === 'transfer') &&
+    currentAmount > 0 &&
+    currentAmount > effectiveWalletBalance;
+  const walletShortfall = Math.max(0, currentAmount - effectiveWalletBalance);
 
   // When type changes, ensure valid default category
   const handleTypeChange = (newType: TransactionType) => {
@@ -116,9 +130,21 @@ function AddTransactionForm() {
 
   const handleSelectCategory = (catId: string) => {
     setSelectedCategoryId(catId);
-    if (!isManualExpenseNature) {
+    const chosenCat = categories.find((c) => c.id === catId);
+    const isTabunganCat =
+      chosenCat?.budgetGroup === 'tabungan' ||
+      chosenCat?.groupName === 'Tabungan' ||
+      chosenCat?.expenseNature === 'savings' ||
+      catId === 'cat-tabungan' ||
+      catId === 'cat-investasi';
+
+    if (isTabunganCat) {
+      setExpenseNature('savings');
+      setIsManualExpenseNature(false);
+    } else if (!isManualExpenseNature || expenseNature === 'savings') {
       const catMap = new Map(categories.map((c) => [c.id, c]));
       setExpenseNature(detectExpenseNature(catId, note, catMap));
+      setIsManualExpenseNature(false);
     }
   };
 
@@ -154,22 +180,46 @@ function AddTransactionForm() {
     const chosenCat = categories.find((c) => c.id === selectedCategoryId);
     const catNameLower = (chosenCat?.name || '').toLowerCase().trim();
     const noteLower = (note || '').toLowerCase().trim();
+    const isTabungan =
+      expenseNature === 'savings' ||
+      chosenCat?.budgetGroup === 'tabungan' ||
+      chosenCat?.groupName === 'Tabungan' ||
+      selectedCategoryId === 'cat-tabungan' ||
+      selectedCategoryId === 'cat-investasi';
 
     const subs = budgetConfig?.subcategories || [];
-    return (
-      subs.find((s) => {
-        const sNameLower = s.name.toLowerCase().trim();
-        if (s.id.replace('sub-', '') === selectedCategoryId.replace('cat-', '')) return true;
-        if (sNameLower && (catNameLower === sNameLower || catNameLower.includes(sNameLower) || sNameLower.includes(catNameLower))) {
-          return true;
-        }
-        if (noteLower && sNameLower && (noteLower.includes(sNameLower) || sNameLower.includes(noteLower))) {
-          return true;
-        }
-        return false;
-      }) || null
-    );
-  }, [type, selectedCategoryId, note, categories, budgetConfig?.subcategories]);
+
+    // Direct or name/note match first
+    const directMatch = subs.find((s) => {
+      if (isTabungan && s.group !== 'tabungan') return false;
+      const sNameLower = s.name.toLowerCase().trim();
+      if (s.id.replace('sub-', '') === selectedCategoryId.replace('cat-', '')) return true;
+      if (noteLower && sNameLower && (noteLower.includes(sNameLower) || sNameLower.includes(noteLower))) {
+        return true;
+      }
+      if (sNameLower && (catNameLower === sNameLower || catNameLower.includes(sNameLower) || sNameLower.includes(catNameLower))) {
+        return true;
+      }
+      return false;
+    });
+
+    if (directMatch) return directMatch;
+
+    // Fallback for Tabungan category (e.g. 'cat-tabungan' matching 'Nabung Dana Darurat' / 'sub-darurat')
+    if (isTabungan) {
+      const savingsSubs = subs.filter((s) => s.group === 'tabungan');
+      if (selectedCategoryId === 'cat-investasi') {
+        return savingsSubs.find((s) => /invest|saham|reksa|emas|crypto/i.test(s.name)) || savingsSubs[0] || null;
+      }
+      return (
+        savingsSubs.find((s) => /nabung|tabung|darurat|simpan/i.test(s.name)) ||
+        savingsSubs[0] ||
+        null
+      );
+    }
+
+    return null;
+  }, [type, selectedCategoryId, note, categories, budgetConfig?.subcategories, expenseNature]);
 
   const subcategoryBudgetStatus = useMemo(() => {
     if (!matchingSubcategory || matchingSubcategory.allocatedAmount <= 0) return null;
@@ -189,7 +239,10 @@ function AddTransactionForm() {
       const isDirectMatch =
         (tx.categoryId && matchingSubcategory.id.replace('sub-', '') === tx.categoryId.replace('cat-', '')) ||
         (sName && (txCatName.includes(sName) || sName.includes(txCatName))) ||
-        (txNote && sName && (txNote.includes(sName) || sName.includes(txNote)));
+        (txNote && sName && (txNote.includes(sName) || sName.includes(txNote))) ||
+        (matchingSubcategory.group === 'tabungan' &&
+          tx.categoryId === 'cat-tabungan' &&
+          /nabung|tabung|darurat|simpan/i.test(sName));
 
       if (isDirectMatch) {
         spentSoFar += tx.amount;
@@ -217,13 +270,27 @@ function AddTransactionForm() {
   const handleSave = () => {
     if (currentAmount <= 0) return;
 
+    const chosenCat = categories.find((c) => c.id === selectedCategoryId);
+
+    // Block any payment/outflow when selected wallet balance is smaller than payment amount
+    if ((type === 'expense' || type === 'transfer') && currentAmount > effectiveWalletBalance) {
+      triggerInsufficientBalanceAlert(
+        activeWalletId,
+        currentAmount,
+        note.trim() ||
+          (type === 'transfer'
+            ? 'Transfer Antar Dompet'
+            : chosenCat?.name || 'Transaksi Pembayaran'),
+        effectiveWalletBalance
+      );
+      return;
+    }
+
     const [y, m, d] = selectedDate.split('-').map(Number);
     const targetDate = new Date(y, m - 1, d, 12, 0, 0, 0);
     const now = new Date();
     targetDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), 0);
     const finalDateIso = targetDate.toISOString();
-
-    const chosenCat = categories.find((c) => c.id === selectedCategoryId);
 
     if (type === 'transfer') {
       if (!selectedWalletId || !transferTargetWalletId || selectedWalletId === transferTargetWalletId) {
@@ -231,7 +298,7 @@ function AddTransactionForm() {
         return;
       }
       if (editingTransaction) {
-        updateTransaction(editingTransaction.transaction.id, {
+        const ok = updateTransaction(editingTransaction.transaction.id, {
           type: 'transfer',
           amount: currentAmount,
           walletId: selectedWalletId,
@@ -240,40 +307,47 @@ function AddTransactionForm() {
           date: finalDateIso,
           note: note.trim() || undefined,
         });
+        if (!ok) return;
       } else {
-        transferFunds(
+        const ok = transferFunds(
           selectedWalletId,
           transferTargetWalletId,
           currentAmount,
           note.trim() || 'Transfer antar dompet',
           finalDateIso
         );
+        if (!ok) return;
       }
     } else {
+      const effectiveBudgetGroup =
+        type === 'expense' && expenseNature === 'savings' ? 'tabungan' : chosenCat?.budgetGroup;
+
       if (editingTransaction) {
-        updateTransaction(editingTransaction.transaction.id, {
+        const ok = updateTransaction(editingTransaction.transaction.id, {
           type,
           amount: currentAmount,
-          walletId: selectedWalletId || wallets[0]?.id || '',
+          walletId: activeWalletId,
           categoryId: selectedCategoryId || null,
-          budgetGroup: chosenCat?.budgetGroup,
+          budgetGroup: effectiveBudgetGroup,
           expenseNature: type === 'expense' ? expenseNature : undefined,
           transferWalletId: null,
           date: finalDateIso,
           note: note.trim() || undefined,
         });
+        if (!ok) return;
       } else {
-        addTransaction({
+        const createdId = addTransaction({
           type,
           amount: currentAmount,
-          walletId: selectedWalletId || wallets[0]?.id || '',
+          walletId: activeWalletId,
           categoryId: selectedCategoryId || null,
-          budgetGroup: chosenCat?.budgetGroup,
+          budgetGroup: effectiveBudgetGroup,
           expenseNature: type === 'expense' ? expenseNature : undefined,
           transferWalletId: null,
           date: finalDateIso,
           note: note.trim() || undefined,
         });
+        if (!createdId) return;
       }
 
       if (subcategoryBudgetStatus?.isOver && currentAmount > 0) {
@@ -457,6 +531,28 @@ function AddTransactionForm() {
           )}
         </div>
 
+        {/* Insufficient Wallet Balance Alert Banner */}
+        {isWalletInsufficient && (
+          <div className="bg-red-50 dark:bg-red-950/60 border-2 border-red-400 dark:border-red-600 rounded-2xl p-3.5 flex items-start gap-3 text-xs text-red-700 dark:text-red-300 shadow-xs">
+            <div className="w-7 h-7 rounded-xl bg-red-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+              <AlertTriangle size={15} strokeWidth={2.5} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="font-black text-red-800 dark:text-red-200 flex items-center justify-between gap-1">
+                <span>⛔ Uang di Dompet Tidak Cukup!</span>
+                <span className="font-black tabular-nums text-red-600 dark:text-red-400">
+                  Kurang {formatRupiah(walletShortfall, settings.hideBalance)}
+                </span>
+              </div>
+              <p className="text-[11px] text-red-600/95 dark:text-red-300/95 mt-0.5 leading-snug">
+                Saldo <strong>{selectedWalletObj?.name || 'Dompet'}</strong> saat ini{' '}
+                <strong>{formatRupiah(effectiveWalletBalance, settings.hideBalance)}</strong>, lebih kecil dari nominal pembayaran{' '}
+                <strong>{formatRupiah(currentAmount, settings.hideBalance)}</strong>. Dompet tidak boleh minus.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Proactive Category Budget Alert */}
         {subcategoryBudgetStatus?.isOver && currentAmount > 0 && (
           <div className="bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-2xl p-3.5 flex items-start gap-3 text-xs text-rose-700 dark:text-rose-300 shadow-2xs">
@@ -489,9 +585,9 @@ function AddTransactionForm() {
                 onChange={(e) => setSelectedWalletId(e.target.value)}
                 className="w-full p-2.5 text-sm font-medium bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500"
               >
-                {wallets.map((w) => (
+                {walletsWithBalance.map((w) => (
                   <option key={w.id} value={w.id}>
-                    {w.name}
+                    {w.name} ({settings.hideBalance ? 'Rp ••••' : `Rp${formatNumberOnly(w.balance)}`})
                   </option>
                 ))}
               </select>
@@ -505,9 +601,9 @@ function AddTransactionForm() {
                 onChange={(e) => setTransferTargetWalletId(e.target.value)}
                 className="w-full p-2.5 text-sm font-medium bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500"
               >
-                {wallets.map((w) => (
+                {walletsWithBalance.map((w) => (
                   <option key={w.id} value={w.id}>
-                    {w.name}
+                    {w.name} ({settings.hideBalance ? 'Rp ••••' : `Rp${formatNumberOnly(w.balance)}`})
                   </option>
                 ))}
               </select>
@@ -568,7 +664,24 @@ function AddTransactionForm() {
                 <button
                   key={grp}
                   type="button"
-                  onClick={() => setActiveGroup(grp)}
+                  onClick={() => {
+                    setActiveGroup(grp);
+                    if (grp === 'Tabungan') {
+                      const currentCat = availableCategories.find((c) => c.id === selectedCategoryId);
+                      if (currentCat?.groupName !== 'Tabungan' && currentCat?.budgetGroup !== 'tabungan') {
+                        const firstTabunganCat = availableCategories.find(
+                          (c) => c.groupName === 'Tabungan' || c.budgetGroup === 'tabungan'
+                        );
+                        if (firstTabunganCat) {
+                          handleSelectCategory(firstTabunganCat.id);
+                        } else {
+                          setExpenseNature('savings');
+                        }
+                      } else {
+                        setExpenseNature('savings');
+                      }
+                    }
+                  }}
                   className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg shrink-0 transition-colors ${
                     activeGroup === grp
                       ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900'
@@ -609,19 +722,31 @@ function AddTransactionForm() {
           </div>
         )}
 
-        {/* Pos Beban Anggaran (Tagihan Bulanan vs Pengeluaran Harian) */}
+        {/* Pos Beban Anggaran (Pengeluaran Harian vs Tagihan Bulanan vs Alokasi Tabungan) */}
         {type === 'expense' && (
-          <div className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200/80 dark:border-gray-700/60 space-y-2">
+          <div className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200/80 dark:border-gray-700/60 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-extrabold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                 Alokasi Pos Anggaran
               </span>
-              <span className="text-[10px] font-semibold text-gray-400">
-                {expenseNature === 'fixed' ? '📅 Pos Tagihan Tetap' : '🥪 Pos Operasional Harian'}
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  expenseNature === 'savings'
+                    ? 'bg-emerald-100/80 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
+                    : expenseNature === 'fixed'
+                    ? 'bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                    : 'bg-teal-100/80 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300'
+                }`}
+              >
+                {expenseNature === 'savings'
+                  ? '🏦 Pos Alokasi Tabungan'
+                  : expenseNature === 'fixed'
+                  ? '📅 Pos Tagihan Tetap'
+                  : '🥪 Pos Operasional Harian'}
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -634,11 +759,11 @@ function AddTransactionForm() {
                     : 'bg-transparent border-gray-200 dark:border-gray-700/60 text-gray-500 dark:text-gray-400 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
                 }`}
               >
-                <span className="text-base">🥪</span>
-                <div>
+                <span className="text-base shrink-0">🥪</span>
+                <div className="min-w-0">
                   <div className="text-xs font-bold leading-tight">Pengeluaran Harian</div>
                   <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
-                    Makan, jajan, transportasi (potong budget harian)
+                    Makan, jajan, transpor (potong budget harian)
                   </div>
                 </div>
               </button>
@@ -655,15 +780,91 @@ function AddTransactionForm() {
                     : 'bg-transparent border-gray-200 dark:border-gray-700/60 text-gray-500 dark:text-gray-400 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
                 }`}
               >
-                <span className="text-base">📅</span>
-                <div>
+                <span className="text-base shrink-0">📅</span>
+                <div className="min-w-0">
                   <div className="text-xs font-bold leading-tight">Tagihan Bulanan</div>
                   <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
-                    Wi-Fi, listrik, netflix, cicilan (TIDAK potong harian)
+                    Wi-Fi, listrik, cicilan (TIDAK potong harian)
+                  </div>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setExpenseNature('savings');
+                  setIsManualExpenseNature(true);
+                  const currentCat = availableCategories.find((c) => c.id === selectedCategoryId);
+                  if (currentCat?.groupName !== 'Tabungan' && currentCat?.budgetGroup !== 'tabungan') {
+                    const tabunganCat = availableCategories.find(
+                      (c) => c.id === 'cat-tabungan' || c.budgetGroup === 'tabungan' || c.groupName === 'Tabungan'
+                    );
+                    if (tabunganCat) {
+                      setSelectedCategoryId(tabunganCat.id);
+                    }
+                  }
+                }}
+                className={`flex items-start gap-2 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                  expenseNature === 'savings'
+                    ? 'bg-white dark:bg-gray-800 border-emerald-500 ring-2 ring-emerald-500/20 text-gray-900 dark:text-white shadow-xs'
+                    : 'bg-transparent border-gray-200 dark:border-gray-700/60 text-gray-500 dark:text-gray-400 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
+                }`}
+              >
+                <span className="text-base shrink-0">🏦</span>
+                <div className="min-w-0">
+                  <div className="text-xs font-bold leading-tight">Alokasi Tabungan</div>
+                  <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
+                    Dana darurat & investasi (Pos Tabungan 20%)
                   </div>
                 </div>
               </button>
             </div>
+
+            {/* Sub-pos Tabungan selector when Alokasi Tabungan is selected */}
+            {expenseNature === 'savings' && (budgetConfig?.subcategories || []).some((s) => s.group === 'tabungan') && (
+              <div className="pt-1.5 border-t border-gray-200/70 dark:border-gray-700/50">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                    Target Pos Tabungan & Investasi:
+                  </span>
+                  {matchingSubcategory && matchingSubcategory.group === 'tabungan' && (
+                    <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">
+                      Target: Rp{formatNumberOnly(matchingSubcategory.allocatedAmount)}/bln
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {(budgetConfig?.subcategories || [])
+                    .filter((s) => s.group === 'tabungan')
+                    .map((sub) => {
+                      const isSubActive = matchingSubcategory?.id === sub.id;
+                      return (
+                        <button
+                          key={sub.id}
+                          type="button"
+                          onClick={() => {
+                            const isInvestSub = /invest|saham|reksa|emas|crypto/i.test(sub.name);
+                            const targetCatId = isInvestSub ? 'cat-investasi' : 'cat-tabungan';
+                            if (availableCategories.some((c) => c.id === targetCatId)) {
+                              setSelectedCategoryId(targetCatId);
+                            }
+                            setNote(sub.name);
+                            setExpenseNature('savings');
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                            isSubActive
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-emerald-400'
+                          }`}
+                        >
+                          <span>{sub.emoji || '🏦'}</span>
+                          <span>{sub.name}</span>
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

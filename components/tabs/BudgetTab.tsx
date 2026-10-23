@@ -1051,38 +1051,21 @@ export function BudgetTab() {
               {formatRupiah(totalIncome, hide)}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold pt-1">
-              <span className="bg-white/10 px-3 py-1 rounded-xl text-gray-300">
-                BERBASIS PERSENTASE
-              </span>
-              <button
-                type="button"
-                onClick={openPeriodModal}
-                className="bg-[#D4F826]/15 hover:bg-[#D4F826]/25 border border-[#D4F826]/40 px-3 py-1 rounded-xl text-[#D4F826] flex items-center gap-1.5 transition-colors cursor-pointer"
-                title="Atur Tanggal Gajian & Siklus Periode Budget"
-              >
-                <CalendarClock size={12} />
-                <span>
-                  {budgetPeriod.paydayDay === 1
-                    ? 'SIKLUS: AWAL BULAN (TGL 1)'
-                    : `GAJIAN TIAP TGL ${budgetPeriod.paydayDay}`}
-                </span>
-                <Pencil size={10} />
-              </button>
-              <button
-                type="button"
-                onClick={openFoodLifestyleModal}
-                className="bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/40 px-3 py-1 rounded-xl text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer"
-                title="Lihat simulasi & konsep kuota harian fleksibel yang otomatis mengikuti sisa uang setelah belanja bulanan"
-              >
-                <span>
-                  {dashboardSummary.monthlyGroceryExpense > 0
-                    ? `🛒 BELANJA BULANAN: -${formatRupiah(dashboardSummary.monthlyGroceryExpense, hide)}`
-                    : '🛒 KUOTA HARIAN IKUT SISA BELANJA'}
-                </span>
-                <HelpCircle size={11} />
-              </button>
-            </div>
+            {dashboardSummary.monthlyGroceryExpense > 0 && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={openFoodLifestyleModal}
+                  className="bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/40 px-3 py-1 rounded-xl text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer text-[10px] font-bold"
+                  title="Lihat simulasi kuota harian fleksibel mengikuti sisa belanja bulanan"
+                >
+                  <span>
+                    🛒 Belanja Bulanan: -{formatRupiah(dashboardSummary.monthlyGroceryExpense, hide)}
+                  </span>
+                  <HelpCircle size={11} />
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Right on Desktop: Quick Allocation Summary */}
@@ -1771,11 +1754,11 @@ export function BudgetTab() {
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
-                    Ubah Kategori
+                    Ubah Alokasi Anggaran
                   </h3>
-                  <span className="text-[10px] font-bold text-[#65A30D] dark:text-[#D4F826] bg-[#D4F826]/20 px-2 py-0.5 rounded-full mt-1 inline-block">
-                    BERBASIS PERSENTASE
-                  </span>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                    Metode 50/30/20 (Total harus 100%)
+                  </p>
                 </div>
                 <button
                   type="button"

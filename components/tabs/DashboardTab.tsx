@@ -396,12 +396,7 @@ export function DashboardTab() {
               </span>
               <span className="text-slate-400 shrink-0">•</span>
               <span className="font-medium text-slate-300 truncate">
-                <span className="sm:hidden">Kuota Harian</span>
-                <span className="hidden sm:inline">
-                  {dashboardSummary.monthlyGroceryExpense > 0
-                    ? 'Kuota Harian (Mengikuti Sisa Uang)'
-                    : 'Kuota Operasional Harian'}
-                </span>
+                Kuota Harian
               </span>
             </div>
             <div className="flex items-center gap-2 sm:gap-3 shrink-0">
@@ -425,66 +420,15 @@ export function DashboardTab() {
               <div className="text-3xl sm:text-5xl lg:text-[54px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
                 {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.dailyBudgetRemaining, false)}
               </div>
-              <p className="text-xs sm:text-sm text-slate-300/90 font-medium mt-2 sm:mt-3 leading-snug">
-                {dashboardSummary.dailyOverbudget
-                  ? `Melebihi kuota harian (${formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari`
-                  : dashboardSummary.dailyBudgetQuota > 0 && dashboardSummary.remainingVariableBudget <= 0
-                  ? `Sisa uang operasional periode ini telah habis terpakai`
-                  : dashboardSummary.monthlyGroceryExpense > 0
-                  ? `Tersedia dari kuota ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari (mengikuti sisa uang setelah Belanja Bulanan)`
-                  : `Tersedia dari kuota harian ${formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari di luar tagihan tetap`}
-              </p>
-              {dashboardSummary.hasMonthlyBudget && (
-                <p className="text-[11px] sm:text-xs font-semibold mt-1">
-                  {dashboardSummary.remainingVariableBudget <= 0 ? (
-                    <span className="text-amber-300">
-                      Sisa kuota s/d {budgetPeriod.endShortLabel} ({budgetPeriod.daysRemainingUntilPayday} hari lagi): Maks Rp0/hari (rem belanja agar tidak defisit)
-                    </span>
-                  ) : (
-                    <span className="text-[#D4F826]">
-                      Jatah aman s/d {budgetPeriod.endShortLabel} ({budgetPeriod.daysRemainingUntilPayday} hari lagi): Maks {formatRupiah(dashboardSummary.safeDailyBudgetUntilPayday, hide)}/hari
-                    </span>
-                  )}
+              {dashboardSummary.dailyOverbudget ? (
+                <p className="text-xs sm:text-sm text-rose-400 font-semibold mt-2.5 sm:mt-3 leading-snug">
+                  Melebihi kuota harian ({formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota {formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
                 </p>
-              )}
-
-              {/* Status Dinamis Sisa Uang Setelah Belanja Bulanan */}
-              {dashboardSummary.hasMonthlyBudget && (
-                <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                  {dashboardSummary.monthlyGroceryExpense > 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => openAddTransaction('expense')}
-                      className="inline-flex flex-wrap items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/35 text-[11px] font-bold text-amber-200 transition-colors cursor-pointer text-left"
-                      title="Kuota harian otomatis berkurang mengikuti sisa uang setiap kali Anda mencatat Belanja Bulanan"
-                    >
-                      <span>
-                        🛒 Belanja Bulanan:{' '}
-                        <strong className="text-amber-300 font-mono">
-                          -{formatRupiah(dashboardSummary.monthlyGroceryExpense, hide)}
-                        </strong>
-                      </span>
-                      <span className="text-amber-400/60">•</span>
-                      <span>
-                        Sisa Uang:{' '}
-                        <strong className="text-white font-mono">
-                          {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
-                        </strong>
-                      </span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => openAddTransaction('expense')}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-[11px] font-semibold text-slate-300 hover:text-white transition-colors cursor-pointer"
-                      title="Catat belanja bulanan/mingguan agar kuota harian otomatis mengikuti sisa uang"
-                    >
-                      <span>🛒 Habis belanja bulanan/masak?</span>
-                      <span className="text-amber-300 font-bold">Catat di sini agar kuota harian mengikuti sisa uang →</span>
-                    </button>
-                  )}
-                </div>
-              )}
+              ) : dashboardSummary.dailyBudgetQuota > 0 && dashboardSummary.remainingVariableBudget <= 0 ? (
+                <p className="text-xs sm:text-sm text-amber-300 font-medium mt-2.5 sm:mt-3 leading-snug">
+                  Sisa uang operasional periode ini telah habis terpakai
+                </p>
+              ) : null}
             </div>
 
             {/* Right: 2 Symmetrical Outlined Box Cards (PEMASUKAN HARI INI & PENGELUARAN HARI INI) */}

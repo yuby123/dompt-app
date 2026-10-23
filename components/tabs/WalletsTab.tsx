@@ -9,10 +9,11 @@ import {
   TrendingUp,
   CreditCard,
   Clock,
-  CheckCircle2,
   Pencil,
   Trash2,
   ShieldCheck,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -29,7 +30,7 @@ export function WalletsTab() {
     openAddWallet,
     openEditWallet,
     deleteWallet,
-    verifyWalletBalance,
+    toggleHideBalance,
   } = useApp();
 
   const [expandedWalletId, setExpandedWalletId] = useState<string | null>(
@@ -105,15 +106,33 @@ export function WalletsTab() {
             Kelola rekening bank, e-wallet, dan dana cadangan.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openAddWallet}
-          className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-1.5 font-extrabold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap shrink-0"
-          title="Tambah Dompet"
-        >
-          <Plus size={16} strokeWidth={2.8} />
-          <span>Tambah Dompet</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={toggleHideBalance}
+            className="h-10 px-3 sm:px-3.5 rounded-full bg-slate-100 dark:bg-white/[0.08] hover:bg-slate-200 dark:hover:bg-white/[0.14] text-slate-700 dark:text-slate-200 flex items-center justify-center gap-1.5 font-bold text-xs border border-slate-200/80 dark:border-white/10 cursor-pointer transition-transform active:scale-95"
+            title={hide ? 'Tampilkan Saldo' : 'Sembunyikan Saldo'}
+            aria-label={hide ? 'Tampilkan Saldo' : 'Sembunyikan Saldo'}
+          >
+            {hide ? (
+              <Eye size={16} className="text-[#84CC16] dark:text-[#D4F826]" />
+            ) : (
+              <EyeOff size={16} />
+            )}
+            <span className="hidden sm:inline font-semibold">
+              {hide ? 'Buka Saldo' : 'Sembunyikan'}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={openAddWallet}
+            className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-1.5 font-extrabold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
+            title="Tambah Dompet"
+          >
+            <Plus size={16} strokeWidth={2.8} />
+            <span>Tambah Dompet</span>
+          </button>
+        </div>
       </div>
 
       {/* Bespoke Deep Indigo & Obsidian Hero Card */}
@@ -137,11 +156,26 @@ export function WalletsTab() {
               <span aria-hidden="true">·</span>
               <span>{walletsWithBalance.length} Dompet Aktif</span>
             </div>
-            <div className="font-display font-mono-num text-3xl sm:text-4xl lg:text-[42px] font-extrabold tracking-tight leading-none">
-              {formatRupiah(totalBalance, hide)}
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="font-display font-mono-num text-3xl sm:text-4xl lg:text-[42px] font-extrabold tracking-tight leading-none">
+                {formatRupiah(totalBalance, hide)}
+              </div>
+              <button
+                type="button"
+                onClick={toggleHideBalance}
+                className="p-1.5 sm:p-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.16] border border-white/10 text-slate-300 hover:text-white transition-all cursor-pointer shadow-xs active:scale-95"
+                title={hide ? 'Tampilkan Saldo' : 'Sembunyikan Saldo'}
+                aria-label={hide ? 'Tampilkan Saldo' : 'Sembunyikan Saldo'}
+              >
+                {hide ? (
+                  <Eye size={18} className="text-[#D4F826]" />
+                ) : (
+                  <EyeOff size={18} />
+                )}
+              </button>
             </div>
             <p className="text-xs text-slate-300/90 max-w-lg leading-relaxed">
-              Klik kartu dompet di bawah untuk memverifikasi saldo aktual atau melihat rincian mutasi.
+              Klik kartu dompet di bawah untuk melihat rincian saldo dan mutasi.
             </p>
           </div>
 
@@ -268,29 +302,6 @@ export function WalletsTab() {
                   animate={{ opacity: 1, height: 'auto' }}
                   className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800 text-xs space-y-3.5"
                 >
-                  {/* Verification Banner */}
-                  <div className="bg-[#D4F826]/15 dark:bg-[#D4F826]/10 border border-[#D4F826]/40 rounded-2xl p-3 flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] font-black text-[#65A30D] dark:text-[#D4F826] uppercase tracking-wider block">
-                        VERIFIKASI HARI INI
-                      </span>
-                      <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
-                        Saldo terverifikasi & akurat
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        verifyWalletBalance(w.id);
-                      }}
-                      className="px-2.5 py-1 text-[11px] font-bold bg-[#D4F826] text-black rounded-xl hover:bg-[#c6ec15] flex items-center gap-1 cursor-pointer"
-                    >
-                      <CheckCircle2 size={12} />
-                      <span>Verifikasi</span>
-                    </button>
-                  </div>
-
                   {/* Account Number */}
                   {w.accountNumber && (
                     <div>

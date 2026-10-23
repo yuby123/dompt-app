@@ -272,7 +272,7 @@ interface AppContextType {
   deleteInvestment: (id: string) => void;
 
   transferFunds: (fromWalletId: string, toWalletId: string, amount: number, note?: string, date?: string) => boolean;
-  updateSettings: (data: Partial<AppSettings>) => void;
+  updateSettings: (data: Partial<AppSettings>, silent?: boolean) => void;
   toggleHideBalance: () => void;
   setThemeMode: (mode: ThemeMode) => void;
   setAccentColor: (accent: AccentColor) => void;
@@ -437,13 +437,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Security / App Lock & Toasts
   const [isLocked, setIsLocked] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const lastToastTimeRef = useRef<{ [key: string]: number }>({});
 
-  const addToast = (title: string, message?: string, type: 'success' | 'error' | 'info' = 'success') => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
-    setToasts((prev) => [...prev, { id, title, message, type }]);
+  const addToast = (
+    title: string,
+    message?: string,
+    type: 'success' | 'error' | 'info' = 'success'
+  ) => {
+    const now = Date.now();
+    const key = `${title}_${type}`;
+    // Debounce duplicate toast notifications within 700ms
+    if (lastToastTimeRef.current[key] && now - lastToastTimeRef.current[key] < 700) {
+      return;
+    }
+    lastToastTimeRef.current[key] = now;
+
+    const id = `toast-${now}-${Math.random().toString(36).substring(2, 6)}`;
+
+    setToasts((prev) => {
+      // Remove any existing toast with the same title to avoid duplicate stacking
+      const filtered = prev.filter((t) => t.title !== title);
+      // Limit to at most 2 concurrent toasts on screen
+      const trimmed = filtered.length >= 2 ? filtered.slice(-1) : filtered;
+      return [...trimmed, { id, title, message, type }];
+    });
+
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3500);
+    }, 2800);
   };
 
   const removeToast = (id: string) => {
@@ -3602,6 +3623,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           saveActiveLocalUser({ ...activeLocal, displayName: cleanName });
         }
       }
+      if (data.avatarUrl !== undefined) {
+        const newPhotoURL = data.avatarUrl || null;
+        setUser((prev) => (prev ? { ...prev, photoURL: newPhotoURL } : prev));
+        updateCloudUserProfile(user.uid, user.email || '', user.displayName || settings.userName || 'User', updated).catch(() => {});
+        if (mirrorUid) {
+          updateCloudUserProfile(mirrorUid, user.email || '', user.displayName || settings.userName || 'User', updated).catch(() => {});
+        }
+        const activeLocal = loadActiveLocalUser();
+        if (activeLocal) {
+          saveActiveLocalUser({ ...activeLocal, photoURL: newPhotoURL });
+        }
+      }
+    } else {
+      if (data.avatarUrl !== undefined) {
+        const newPhotoURL = data.avatarUrl || null;
+        setUser((prev) => (prev ? { ...prev, photoURL: newPhotoURL } : prev));
+        const activeLocal = loadActiveLocalUser();
+        if (activeLocal) {
+          saveActiveLocalUser({ ...activeLocal, photoURL: newPhotoURL });
+        }
+      }
     }
     if (!silent) {
       addToast('Pengaturan Disimpan', 'Preferensi akun berhasil diperbarui.');
@@ -3637,7 +3679,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const setAccentColor = (accent: AccentColor) => {
-    updateSettings({ accentColor: accent });
+    updateSettings({ accentColor: accent }, true);
   };
 
   const deductAiCredit = (_amount = 1): boolean => {

@@ -255,6 +255,7 @@ export function DashboardTab() {
   const remainingBudget = Math.max(0, budgetLimit - budgetSpent);
 
   const menuItems = [
+    { id: 'scan', label: 'Scan SS', icon: Camera, action: () => openScanModal() },
     { id: 'budget', label: 'Budget', icon: PieChart, action: () => setActiveTab('budget') },
     { id: 'goals', label: 'Goals', icon: Target, action: () => setActiveTab('goals') },
     { id: 'aset', label: 'Aset', icon: Landmark, action: () => setActiveTab('assets') },
@@ -476,7 +477,7 @@ export function DashboardTab() {
           </div>
 
           {/* Bottom Action Buttons (Symmetrical 2-col grid on mobile) */}
-          <div className="relative z-10 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-3 mt-4 sm:mt-6">
+          <div className="relative z-10 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3 mt-4 sm:mt-6">
             <button
               type="button"
               onClick={() => openAddTransaction()}
@@ -488,8 +489,18 @@ export function DashboardTab() {
 
             <button
               type="button"
+              onClick={() => openScanModal()}
+              className="h-11 sm:h-12 px-3.5 sm:px-4 rounded-full bg-white/10 hover:bg-white/15 border border-[#D4F826]/30 text-[#D4F826] font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+              title="Ekstrak Otomatis Screenshot E-Wallet"
+            >
+              <Camera size={15} strokeWidth={2.4} className="shrink-0" />
+              <span>Scan SS (Auto)</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('wallets')}
-              className="h-11 sm:h-12 px-4 sm:px-5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/15 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              className="col-span-2 sm:col-span-1 h-11 sm:h-12 px-4 sm:px-5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/15 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-colors cursor-pointer whitespace-nowrap"
             >
               <span>Lihat Saldo Dompet</span>
               <ArrowUpRight size={15} className="text-slate-400 shrink-0" />

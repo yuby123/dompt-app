@@ -175,13 +175,15 @@ export function DesktopSidebar() {
               isOrange ? 'border-[#FF6B00]' : isPink ? 'border-[#FFA4A4]' : 'border-[#D4F826]'
             } overflow-hidden bg-slate-900 text-white font-display font-bold flex items-center justify-center shrink-0 text-xs`}
           >
-            {user?.photoURL ? (
+            {user?.photoURL?.startsWith('http') || user?.photoURL?.startsWith('data:') || settings.avatarUrl?.startsWith('http') || settings.avatarUrl?.startsWith('data:') ? (
               <img
-                src={user.photoURL}
+                src={user?.photoURL || settings.avatarUrl}
                 alt={displayName}
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
               />
+            ) : user?.photoURL || settings.avatarUrl ? (
+              <span className="text-base">{user?.photoURL || settings.avatarUrl}</span>
             ) : (
               <span>{displayName.slice(0, 2).toUpperCase()}</span>
             )}

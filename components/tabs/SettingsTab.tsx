@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Lock,
   Check,
@@ -15,6 +15,8 @@ import {
   AlertTriangle,
   Loader2,
   BookOpen,
+  Upload,
+  X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -94,6 +96,63 @@ export function SettingsTab() {
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
+  // Avatar Modal & Upload state
+  const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
+  const currentAvatar = settings.avatarUrl || user?.photoURL || '👩‍💼';
+  const [avatarPreview, setAvatarPreview] = useState<string>(currentAvatar);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const PRESET_AVATARS = [
+    '👩‍💼', '👨‍💼', '🧑‍💻', '👩‍💻', '🦊', '🦁', '🐱', '🐼',
+    '🐻', '🦄', '🚀', '💎', '👑', '💼', '🕶️', '☕',
+    '🌟', '💰', '🎯', '🏖️', '⚡', '🏆', '🔥', '🛡️',
+  ];
+
+  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      addToast('Format Tidak Didukung', 'Harap pilih file gambar (JPG, PNG, WebP).', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new window.Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const size = 256;
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const minDim = Math.min(img.width, img.height);
+          const sx = (img.width - minDim) / 2;
+          const sy = (img.height - minDim) / 2;
+          ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          setAvatarPreview(dataUrl);
+        }
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveAvatar = () => {
+    updateSettings({ avatarUrl: avatarPreview });
+    setIsAvatarModalOpen(false);
+    addToast('Avatar Diperbarui', 'Foto profil Anda berhasil diubah.');
+  };
+
+  const handleResetAvatar = () => {
+    setAvatarPreview('👩‍💼');
+    updateSettings({ avatarUrl: '👩‍💼' });
+    setIsAvatarModalOpen(false);
+    addToast('Avatar Direset', 'Avatar kembali ke karakter default.');
+  };
+
   const handleSavePreferences = (e: React.FormEvent) => {
     e.preventDefault();
     updateSettings({
@@ -102,8 +161,8 @@ export function SettingsTab() {
       currency: currencyInput,
       language: languageInput,
       showDecimals,
-    });
-    addToast('Perubahan Disimpan', 'Preferensi akun berhasil diperbarui.');
+    }, true);
+    addToast('Pengaturan Disimpan', 'Preferensi akun berhasil diperbarui.');
   };
 
   const handleCreatePin = (e: React.FormEvent) => {
@@ -140,22 +199,25 @@ export function SettingsTab() {
           <div className="bg-white dark:bg-[#16181D] rounded-3xl p-6 shadow-xs border border-gray-100 dark:border-gray-800 text-center space-y-3">
             <div className="relative w-24 h-24 mx-auto">
               <div className={`w-full h-full rounded-full border-4 ${accentBorder} overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center shadow-md transition-colors`}>
-                {user?.photoURL ? (
+                {currentAvatar.startsWith('http') || currentAvatar.startsWith('data:') ? (
                   <img
-                    src={user.photoURL}
+                    src={currentAvatar}
                     alt={userNameInput}
                     referrerPolicy="no-referrer"
                     className="w-full h-full object-cover"
                   />
                 ) : (
-                  <span className="text-4xl">👩‍💼</span>
+                  <span className="text-4xl">{currentAvatar}</span>
                 )}
               </div>
               <button
                 type="button"
-                onClick={() => addToast('Pilih Avatar', 'Pilih foto baru dari galeri Anda.')}
-                className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-black text-white dark:bg-white dark:text-black flex items-center justify-center shadow-xs cursor-pointer hover:scale-105"
-                title="Ganti Avatar"
+                onClick={() => {
+                  setAvatarPreview(currentAvatar);
+                  setIsAvatarModalOpen(true);
+                }}
+                className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-black text-white dark:bg-white dark:text-black flex items-center justify-center shadow-xs cursor-pointer hover:scale-105 active:scale-95 transition-transform"
+                title="Ganti Foto Profil / Avatar"
               >
                 <Camera size={14} />
               </button>
@@ -178,8 +240,11 @@ export function SettingsTab() {
             <div className="flex gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => addToast('Ganti Avatar', 'Fitur ganti foto profil aktif.')}
-                className="flex-1 py-2.5 rounded-2xl bg-gray-100 dark:bg-gray-800 text-xs font-extrabold text-gray-800 dark:text-gray-200 hover:bg-gray-200 cursor-pointer"
+                onClick={() => {
+                  setAvatarPreview(currentAvatar);
+                  setIsAvatarModalOpen(true);
+                }}
+                className="flex-1 py-2.5 rounded-2xl bg-gray-100 dark:bg-gray-800 text-xs font-extrabold text-gray-800 dark:text-gray-200 hover:bg-gray-200 cursor-pointer active:scale-95 transition-transform"
               >
                 Ganti Avatar
               </button>
@@ -230,13 +295,15 @@ export function SettingsTab() {
               <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 space-y-3">
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-full ${accentBg} text-black font-black flex items-center justify-center overflow-hidden shrink-0 transition-colors`}>
-                    {user.photoURL ? (
+                    {currentAvatar.startsWith('http') || currentAvatar.startsWith('data:') ? (
                       <img
-                        src={user.photoURL}
+                        src={currentAvatar}
                         alt={user.displayName || 'User'}
                         referrerPolicy="no-referrer"
                         className="w-full h-full object-cover"
                       />
+                    ) : currentAvatar ? (
+                      <span className="text-lg">{currentAvatar}</span>
                     ) : (
                       (user.displayName || user.email || 'U')[0].toUpperCase()
                     )}
@@ -674,6 +741,138 @@ export function SettingsTab() {
                   className="w-full py-2.5 px-4 rounded-2xl border border-gray-200 dark:border-gray-700 font-bold text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-gray-700 dark:text-gray-300 cursor-pointer disabled:opacity-50"
                 >
                   Batal
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Interactive Avatar Picker & Upload Modal */}
+      <AnimatePresence>
+        {isAvatarModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsAvatarModalOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              className="relative w-full max-w-md bg-white dark:bg-[#16181D] rounded-[28px] p-6 shadow-2xl border border-gray-100 dark:border-gray-800 z-10 overflow-hidden space-y-5"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
+                    Pilih Foto Profil / Avatar
+                  </h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Unggah foto dari galeri atau pilih karakter emoji favorit.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAvatarModalOpen(false)}
+                  className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Big Live Preview */}
+              <div className="flex flex-col items-center justify-center py-2 space-y-2">
+                <div className={`relative w-24 h-24 rounded-full border-4 ${accentBorder} overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center shadow-lg transition-colors`}>
+                  {avatarPreview.startsWith('http') || avatarPreview.startsWith('data:') ? (
+                    <img
+                      src={avatarPreview}
+                      alt="Preview"
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-4xl">{avatarPreview}</span>
+                  )}
+                </div>
+                <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
+                  Pratinjau Avatar
+                </span>
+              </div>
+
+              {/* Upload Photo Button */}
+              <div>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImageFileChange}
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full py-3 px-4 rounded-2xl bg-gray-50 dark:bg-gray-800/80 hover:bg-gray-100 dark:hover:bg-gray-700/80 border border-dashed border-gray-300 dark:border-gray-700 text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  <Upload size={16} />
+                  <span>Unggah Foto dari Galeri / Kamera</span>
+                </button>
+              </div>
+
+              {/* Preset Emojis Grid */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
+                  ATAU PILIH DARI KARAKTER FAVORIT
+                </span>
+                <div className="grid grid-cols-6 gap-2 max-h-44 overflow-y-auto p-1.5 rounded-2xl bg-gray-50/60 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800">
+                  {PRESET_AVATARS.map((emoji) => {
+                    const isSelected = avatarPreview === emoji;
+                    return (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => setAvatarPreview(emoji)}
+                        className={`h-11 rounded-xl text-2xl flex items-center justify-center transition-all cursor-pointer ${
+                          isSelected
+                            ? `${accentBg} scale-105 shadow-xs ring-2 ring-black/10 dark:ring-white/20`
+                            : 'hover:bg-white dark:hover:bg-gray-700/60 hover:scale-105'
+                        }`}
+                      >
+                        {emoji}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Modal Actions */}
+              <div className="flex gap-2.5 pt-2 border-t border-gray-100 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={handleResetAvatar}
+                  className="px-3.5 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-xs font-bold text-gray-600 dark:text-gray-300 flex items-center gap-1.5 cursor-pointer"
+                  title="Kembalikan ke default"
+                >
+                  <RotateCcw size={13} />
+                  <span className="hidden sm:inline">Reset</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsAvatarModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-xs font-bold text-gray-800 dark:text-gray-200 cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveAvatar}
+                  className={`flex-1 py-2.5 rounded-xl ${accentBtn} text-black text-xs font-black shadow-xs cursor-pointer flex items-center justify-center gap-1.5`}
+                >
+                  <Check size={14} strokeWidth={3} />
+                  <span>Terapkan</span>
                 </button>
               </div>
             </motion.div>

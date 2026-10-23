@@ -557,29 +557,65 @@ export function ScanReceiptModal() {
             {/* Upload & Paste Selection Area */}
             {!imagePreview && (
               <div className="space-y-4">
-                {/* Main Dashed Card */}
-                <div className="border-2 border-dashed border-gray-200 dark:border-gray-800 rounded-3xl p-8 text-center space-y-4">
-                  <div className="w-14 h-14 rounded-2xl bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 flex items-center justify-center mx-auto shadow-xs">
-                    <Camera size={26} strokeWidth={2} />
+                {/* Main Action Card */}
+                <div className="border border-gray-200 dark:border-gray-800 rounded-3xl p-5 sm:p-6 text-center space-y-4 bg-gray-50/50 dark:bg-gray-800/20">
+                  <div className="w-13 h-13 rounded-2xl bg-[#D4F826]/20 border border-[#D4F826]/30 text-gray-900 dark:text-[#D4F826] flex items-center justify-center mx-auto shadow-xs">
+                    <Camera size={26} strokeWidth={2.2} />
                   </div>
-                  <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 max-w-xs mx-auto">
-                    Foto struk untuk otomatis buat transaksi.
-                  </p>
-                  <div className="flex gap-2.5 max-w-xs mx-auto pt-2">
-                    <button
-                      type="button"
-                      onClick={() => cameraInputRef.current?.click()}
-                      className="flex-1 py-3 bg-[#D4F826] hover:bg-[#c6ec15] text-black font-black text-xs rounded-2xl shadow-xs transition-colors cursor-pointer"
-                    >
-                      Ambil Foto
-                    </button>
+                  <div>
+                    <h4 className="text-sm font-extrabold text-gray-900 dark:text-white">
+                      Deteksi Transaksi Otomatis (AI)
+                    </h4>
+                    <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 max-w-xs mx-auto mt-1">
+                      Pilih screenshot e-wallet, tempel clipboard, atau ambil foto struk belanja.
+                    </p>
+                  </div>
+
+                  {/* 3 Quick Action Buttons */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 max-w-md mx-auto">
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="flex-1 py-3 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-gray-800 dark:text-gray-200 font-bold text-xs rounded-2xl transition-colors cursor-pointer"
+                      className="py-3 px-3 bg-[#D4F826] hover:bg-[#c6ec15] text-black font-black text-xs rounded-2xl shadow-xs transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
                     >
-                      Unggah Gambar
+                      <FileImage size={15} strokeWidth={2.5} />
+                      <span>Pilih Screenshot</span>
                     </button>
+
+                    <button
+                      type="button"
+                      onClick={handleClipboardPasteButton}
+                      className="py-3 px-3 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 font-bold text-xs rounded-2xl transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Clipboard size={15} strokeWidth={2.5} />
+                      <span>Tempel Clipboard</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="py-3 px-3 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 font-bold text-xs rounded-2xl transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Camera size={15} strokeWidth={2.5} />
+                      <span>Foto Kamera</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* PWA Auto-Detect Tip Banner */}
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-lime-500/10 border border-emerald-500/20 text-xs">
+                  <div className="flex items-start gap-2.5">
+                    <div className="w-6 h-6 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0 font-bold text-[11px] mt-0.5">
+                      💡
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-extrabold text-emerald-900 dark:text-emerald-300">
+                        Tips Auto-Deteksi di HP (PWA)
+                      </p>
+                      <p className="text-[11px] text-gray-600 dark:text-gray-300 leading-relaxed">
+                        Saat selesai transfer di GoPay, OVO, DANA, atau BCA lalu screenshot HP, tekan tombol <strong>Bagikan (Share) ➔ Dompt.</strong> pada popup screenshot HP. Transaksi akan langsung otomatis terbuka dan diekstrak!
+                      </p>
+                    </div>
                   </div>
                 </div>
 

@@ -16,14 +16,16 @@ export function ToastContainer() {
 
   return (
     <>
-      <div className="fixed top-4 inset-x-0 z-[120] flex flex-col items-center pointer-events-none px-4 space-y-2">
-        <AnimatePresence>
-          {toasts.map((toast) => (
+      <div className="fixed top-4 inset-x-0 sm:inset-x-auto sm:right-6 sm:top-6 z-[120] flex flex-col items-center sm:items-end pointer-events-none px-4 sm:px-0 space-y-2">
+        <AnimatePresence mode="popLayout">
+          {toasts.slice(-2).map((toast) => (
             <motion.div
               key={toast.id}
-              initial={{ opacity: 0, y: -20, scale: 0.95 }}
+              layout
+              initial={{ opacity: 0, y: -16, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20, scale: 0.95 }}
+              exit={{ opacity: 0, y: -16, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
               className={`pointer-events-auto flex items-center gap-3 py-3 px-4 rounded-2xl shadow-xl max-w-sm w-full border backdrop-blur-md ${
                 toast.type === 'error'
                   ? 'bg-red-950/95 text-white border-red-700'

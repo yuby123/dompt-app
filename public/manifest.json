@@ -2,7 +2,9 @@
   "name": "Dompt. — Dompet & Keuangan Pribadi",
   "short_name": "Dompt.",
   "description": "Offline-first personal finance tracker. Kelola pemasukan, pengeluaran, dompet, dan anggaran pribadi.",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#121316",
   "theme_color": "#D4F826",
@@ -29,10 +31,34 @@
       "text": "text",
       "files": [
         {
+          "name": "files",
+          "accept": ["image/*", "image/png", "image/jpeg", "image/jpg", "image/webp"]
+        },
+        {
           "name": "screenshot",
-          "accept": ["image/*"]
+          "accept": ["image/*", "image/png", "image/jpeg", "image/jpg", "image/webp"]
+        },
+        {
+          "name": "image",
+          "accept": ["image/*", "image/png", "image/jpeg", "image/jpg", "image/webp"]
         }
       ]
     }
-  }
+  },
+  "shortcuts": [
+    {
+      "name": "Scan Bukti Transaksi (SS)",
+      "short_name": "Scan SS",
+      "description": "Ekstrak otomatis screenshot e-wallet atau struk belanja",
+      "url": "/?scan=auto",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Catat Transaksi Baru",
+      "short_name": "Tambah",
+      "description": "Catat pengeluaran atau pemasukan baru",
+      "url": "/?action=add",
+      "icons": [{ "src": "/favicon.svg", "sizes": "any" }]
+    }
+  ]
 }

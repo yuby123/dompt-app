@@ -82,6 +82,7 @@ import {
   getMonthlyDebtInstallmentAmount,
   getMonthlySubscriptionAmount,
   isDateInBudgetPeriod,
+  isDebtScheduledForBudgetPeriod,
   isFixedExpense,
   parseLocalDay,
 } from '@/lib/budgetUtils';
@@ -1698,6 +1699,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       budgetConfig.subcategories.forEach((sub) => {
         if (sub.dueDateDay && sub.allocatedAmount > 0 && sub.isSubscriptionActive !== false) {
           const cleanName = sub.name.toLowerCase().trim();
+          const matchedDebt = debts.find((d) => {
+            if (d.type !== 'payable') return false;
+            const debtSubId = `sub-debt-${d.id}`;
+            const dClean = d.name.toLowerCase().trim();
+            const dDisplay = d.name.toLowerCase().startsWith('cicilan') ? dClean : `cicilan ${dClean}`;
+            return (
+              sub.id === debtSubId ||
+              sub.subscriptionId === d.id ||
+              cleanName === dDisplay ||
+              cleanName === dClean
+            );
+          });
+          if (matchedDebt && !isDebtScheduledForBudgetPeriod(matchedDebt, budgetPeriod)) {
+            return;
+          }
           if (seenNames.has(cleanName)) return;
           const alreadyPaidSub =
             sub.lastRecordedPeriod === activePeriodKey ||
@@ -1718,10 +1734,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    // Also include any active payable debts not yet captured above
+    // Also include any active payable debts scheduled for this period not yet captured above
     debts.forEach((debt) => {
       if (debt.type !== 'payable' || debt.status !== 'active') return;
       if ((debt.remainingAmount ?? debt.totalAmount) <= 0) return;
+      if (!isDebtScheduledForBudgetPeriod(debt, budgetPeriod)) return;
 
       const cleanDebtName = debt.name.toLowerCase().trim();
       const subDisplayName = debt.name.toLowerCase().startsWith('cicilan')
@@ -1903,7 +1920,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
 
     let nextBudgetConfig = budgetConfig;
-    if (data.type === 'income' && data.amount > 0) {
+    const isLoanDisbursement = Boolean(data.note && /^pencairan utang:/i.test(data.note.trim()));
+    if (data.type === 'income' && data.amount > 0 && !isLoanDisbursement) {
       const currentEst = Math.max(0, Number(budgetConfig.estimatedIncome) || 0);
       const nextEst = currentEst + data.amount;
       nextBudgetConfig = {
@@ -1928,7 +1946,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    if (data.type === 'income' && data.amount > 0) {
+    if (data.type === 'income' && data.amount > 0 && !isLoanDisbursement) {
       addToast(
         'Pemasukan Ditambahkan',
         `${data.note || 'Pemasukan baru'} (+${formatRupiah(data.amount)}) otomatis masuk ke Perkiraan Pemasukan Budget.`
@@ -2360,6 +2378,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : '💳';
 
       const allocated = getMonthlyDebtInstallmentAmount(newDebt);
+      const isScheduledNow = isDebtScheduledForBudgetPeriod(newDebt, budgetPeriod);
 
       let updatedSubs = [...(budgetConfig.subcategories || [])];
       const existingIdx = updatedSubs.findIndex((s) => {
@@ -2377,7 +2396,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           name: subDisplayName,
           allocatedAmount: allocated,
           dueDateDay: dueDay !== undefined ? dueDay : updatedSubs[existingIdx].dueDateDay,
-          isSubscriptionActive: newDebt.status === 'active',
+          isSubscriptionActive: newDebt.status === 'active' && isScheduledNow,
           subscriptionId: id,
         };
       } else {
@@ -2389,7 +2408,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           emoji: debtEmoji,
           dueDateDay: dueDay,
           subscriptionId: id,
-          isSubscriptionActive: newDebt.status === 'active',
+          isSubscriptionActive: newDebt.status === 'active' && isScheduledNow,
         });
       }
 
@@ -2444,14 +2463,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    const isScheduledThisPeriod =
+      newDebt.type === 'payable' ? isDebtScheduledForBudgetPeriod(newDebt, budgetPeriod) : false;
+
     const toastSubText = newDebt.type === 'payable'
-      ? (newDebt.monthlyInstallment && newDebt.monthlyInstallment > 0)
-        ? `${newDebt.name} (${formatRupiah(newDebt.monthlyInstallment)}/bln) otomatis dicatat di Pos Tagihan Bulanan (Fixed).`
-        : `${newDebt.name} (${formatRupiah(newDebt.totalAmount)}) otomatis dicatat di Pos Tagihan Bulanan (Fixed).`
+      ? !isScheduledThisPeriod
+        ? `${newDebt.name} dijadwalkan untuk periode/bulan depan (tidak masuk Pos Tagihan Fixed bulan ini).`
+        : (newDebt.monthlyInstallment && newDebt.monthlyInstallment > 0)
+          ? `${newDebt.name} (${formatRupiah(newDebt.monthlyInstallment)}/bln) otomatis dicatat di Pos Tagihan Bulanan (Fixed).`
+          : `${newDebt.name} (${formatRupiah(newDebt.totalAmount)}) otomatis dicatat di Pos Tagihan Bulanan (Fixed).`
       : `${newDebt.name} sebesar ${formatRupiah(newDebt.totalAmount)} telah disimpan.`;
 
     addToast(
-      newDebt.type === 'payable' ? 'Utang Dicatat & Masuk ke Budget' : 'Piutang Berhasil Dicatat',
+      newDebt.type === 'payable'
+        ? isScheduledThisPeriod
+          ? 'Utang Dicatat & Masuk ke Budget'
+          : 'Utang Dicatat (Mulai Bulan Depan)'
+        : 'Piutang Berhasil Dicatat',
       toastSubText
     );
     return true;
@@ -2494,7 +2522,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       const allocated = getMonthlyDebtInstallmentAmount(itemToSync);
-      const isStillActive = itemToSync.status === 'active' && itemToSync.remainingAmount > 0;
+      const isStillActive =
+        itemToSync.status === 'active' &&
+        itemToSync.remainingAmount > 0 &&
+        isDebtScheduledForBudgetPeriod(itemToSync, budgetPeriod);
 
       let changedSub = false;
       const updatedSubs = (budgetConfig.subcategories || []).map((s) => {

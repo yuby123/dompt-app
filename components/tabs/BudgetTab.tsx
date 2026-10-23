@@ -32,6 +32,7 @@ import {
   getBudgetPeriodInfo,
   getMonthlyDebtInstallmentAmount,
   isDateInBudgetPeriod,
+  isDebtScheduledForBudgetPeriod,
   isGrocerySubcategory,
 } from '@/lib/budgetUtils';
 
@@ -133,7 +134,7 @@ export function BudgetTab() {
   const daysInCurMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
   const curMonthShort = curMonthDate.toLocaleString('id-ID', { month: 'short' });
 
-  // Merge subcategories with all payable debts (including active installments with Rp0 paid)
+  // Merge subcategories with payable debts scheduled for this budget period
   const effectiveSubcategories = useMemo<BudgetSubcategory[]>(() => {
     const base = [...(budgetConfig.subcategories || [])];
     (debts || []).forEach((debt) => {
@@ -147,14 +148,32 @@ export function BudgetTab() {
         return sum;
       }, 0);
 
-      // If debt is paid off and had 0 payments this month, don't inject
-      if (isPaid && paidThisMonth <= 0) return;
-
       const debtSubId = `sub-debt-${debt.id}`;
       const cleanDebtName = debt.name.toLowerCase().trim();
       const subDisplayName = debt.name.toLowerCase().startsWith('cicilan')
         ? debt.name
         : `Cicilan ${debt.name}`;
+
+      const existsIdx = base.findIndex((s) => {
+        const sLower = s.name.toLowerCase().trim();
+        return (
+          s.id === debtSubId ||
+          s.subscriptionId === debt.id ||
+          sLower === subDisplayName.toLowerCase() ||
+          sLower === cleanDebtName
+        );
+      });
+
+      const isScheduledInThisPeriod = isDebtScheduledForBudgetPeriod(debt, budgetPeriod);
+
+      // If debt is paid off (with 0 payments this month) or scheduled to start in a future period (next month),
+      // remove it from this period's active subcategories so it doesn't enter Pos Tagihan Bulanan (Fixed)
+      if ((isPaid && paidThisMonth <= 0) || !isScheduledInThisPeriod) {
+        if (existsIdx >= 0) {
+          base.splice(existsIdx, 1);
+        }
+        return;
+      }
 
       let dueDay: number | undefined = debt.dueDayOfMonth;
       if (dueDay === undefined && debt.dueDate) {
@@ -169,16 +188,6 @@ export function BudgetTab() {
         : /mobil/i.test(debt.name)
         ? '🚗'
         : '💳';
-
-      const existsIdx = base.findIndex((s) => {
-        const sLower = s.name.toLowerCase().trim();
-        return (
-          s.id === debtSubId ||
-          s.subscriptionId === debt.id ||
-          sLower === subDisplayName.toLowerCase() ||
-          sLower === cleanDebtName
-        );
-      });
 
       const monthlyTarget = getMonthlyDebtInstallmentAmount(
         debt,
@@ -208,6 +217,17 @@ export function BudgetTab() {
     });
     return base;
   }, [budgetConfig.subcategories, debts, budgetPeriod]);
+
+  // Payable debts that are active but scheduled for a future period (e.g. next month)
+  const deferredNextPeriodDebts = useMemo(() => {
+    return (debts || []).filter(
+      (d) =>
+        d.type === 'payable' &&
+        d.status === 'active' &&
+        (d.remainingAmount ?? d.totalAmount) > 0 &&
+        !isDebtScheduledForBudgetPeriod(d, budgetPeriod)
+    );
+  }, [debts, budgetPeriod]);
 
   // Filter subcategories
   const needsSubs = effectiveSubcategories.filter((s) => s.group === 'kebutuhan');
@@ -1207,6 +1227,15 @@ export function BudgetTab() {
                           <span className="text-gray-500 italic">Belum ada alokasi tagihan berjadwal</span>
                         )}
                       </div>
+
+                      {deferredNextPeriodDebts.length > 0 && (
+                        <div className="text-[10px] text-amber-300/95 bg-amber-500/10 border border-amber-500/25 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2">
+                          <span className="truncate">
+                            ⏳ {deferredNextPeriodDebts.map((d) => d.name).join(', ')}
+                          </span>
+                          <span className="font-extrabold shrink-0">Mulai periode depan</span>
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 )}

@@ -439,6 +439,85 @@ export function isDateInBudgetPeriod(
 }
 
 /**
+ * Checks whether a payable debt is scheduled to be paid in the given budget period.
+ * Returns false if the debt is scheduled to start or fall due in a future budget period (e.g. next month)
+ * and has no payment recorded in this period, so it will NOT enter Pos Tagihan Bulanan (Fixed)
+ * or reduce the daily budget quota in the current period.
+ */
+export function isDebtScheduledForBudgetPeriod(
+  debt: Debt,
+  periodInfo: BudgetPeriodInfo
+): boolean {
+  const hasPaymentInPeriod = (debt.payments || []).some((p) =>
+    isDateInBudgetPeriod(p.date, periodInfo)
+  );
+  if (hasPaymentInPeriod) return true;
+
+  const isPaid = debt.status === 'paid' && (debt.remainingAmount ?? 0) <= 0;
+  if (isPaid) return false;
+
+  // 1. Explicit firstPaymentDate scheduled in a future period (after periodInfo.endDate)
+  if (debt.firstPaymentDate) {
+    const firstPayDay = parseLocalDay(debt.firstPaymentDate);
+    if (!Number.isNaN(firstPayDay.getTime())) {
+      const firstPayTime = new Date(
+        firstPayDay.getFullYear(),
+        firstPayDay.getMonth(),
+        firstPayDay.getDate(),
+        12,
+        0,
+        0
+      ).getTime();
+      if (firstPayTime > periodInfo.endDate.getTime()) {
+        return false;
+      }
+    }
+  }
+
+  // 2. startDate scheduled in a future period (after periodInfo.endDate)
+  if (debt.startDate) {
+    const startDay = parseLocalDay(debt.startDate);
+    if (!Number.isNaN(startDay.getTime())) {
+      const startTime = new Date(
+        startDay.getFullYear(),
+        startDay.getMonth(),
+        startDay.getDate(),
+        12,
+        0,
+        0
+      ).getTime();
+      if (startTime > periodInfo.endDate.getTime()) {
+        return false;
+      }
+    }
+  }
+
+  // 3. One-time (non-installment) debt whose dueDate is in a future period (after periodInfo.endDate)
+  const isOneTimeDebt =
+    !debt.isInstallment &&
+    (!debt.tenorMonths || debt.tenorMonths <= 1) &&
+    (!debt.monthlyInstallment || debt.monthlyInstallment <= 0);
+  if (isOneTimeDebt && debt.dueDate) {
+    const dueDay = parseLocalDay(debt.dueDate);
+    if (!Number.isNaN(dueDay.getTime())) {
+      const dueTime = new Date(
+        dueDay.getFullYear(),
+        dueDay.getMonth(),
+        dueDay.getDate(),
+        12,
+        0,
+        0
+      ).getTime();
+      if (dueTime > periodInfo.endDate.getTime()) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
  * Returns the target activeDate (YYYY-MM-DD) when navigating to the previous (-1) or next (+1) budget period.
  */
 export function getAdjacentPeriodDateStr(
@@ -540,9 +619,12 @@ export function calculateBudgetBreakdown({
   let periodRecordedIncome = 0;
   transactions.forEach((tx) => {
     if (tx.type === 'income') {
-      const d = parseLocalDay(tx.date);
-      if (isDateInBudgetPeriod(d, periodInfo)) {
-        periodRecordedIncome += tx.amount;
+      const isLoanDisbursement = Boolean(tx.note && /^pencairan utang:/i.test(tx.note.trim()));
+      if (!isLoanDisbursement) {
+        const d = parseLocalDay(tx.date);
+        if (isDateInBudgetPeriod(d, periodInfo)) {
+          periodRecordedIncome += tx.amount;
+        }
       }
     }
   });
@@ -583,8 +665,7 @@ export function calculateBudgetBreakdown({
       });
 
       if (matchedDebt) {
-        const isPaid = matchedDebt.status === 'paid' && (matchedDebt.remainingAmount ?? 0) <= 0;
-        if (isPaid) return;
+        if (!isDebtScheduledForBudgetPeriod(matchedDebt, periodInfo)) return;
       }
 
       const linkedSub = expenseSubscriptions.find(
@@ -638,9 +719,10 @@ export function calculateBudgetBreakdown({
       ? budgetConfig.mealsOutPerDay
       : 1;
 
-  // 2b. Auto-include active payable debts (cicilan utang) into fixed obligations using monthly installment cost
+  // 2b. Auto-include active payable debts (cicilan utang) scheduled in this period into fixed obligations
   payableDebts.forEach((debt) => {
     if (debt.status !== 'active') return;
+    if (!isDebtScheduledForBudgetPeriod(debt, periodInfo)) return;
     const debtSubId = `sub-debt-${debt.id}`;
     const cleanDebtName = debt.name.toLowerCase().trim();
     const alreadyIncluded = activeFixedSubs.some((s) => {

@@ -154,6 +154,7 @@ export interface Debt {
   remainingAmount: number;
   dueDate: string; // YYYY-MM-DD
   startDate?: string;
+  firstPaymentDate?: string; // YYYY-MM-DD: Tanggal/periode mulai masuk tagihan budget (misal bulan depan)
   walletId?: string;
   category?: string;
   interestRate?: number;

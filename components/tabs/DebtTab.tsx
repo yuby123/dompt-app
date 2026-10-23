@@ -33,8 +33,21 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatRupiah, formatNominalInput, parseNominalInput, formatFullDateIndo } from '@/lib/formatters';
-import { getMonthlyDebtInstallmentAmount } from '@/lib/budgetUtils';
+import { getMonthlyDebtInstallmentAmount, isDebtScheduledForBudgetPeriod } from '@/lib/budgetUtils';
 import { Debt, DebtPayment } from '@/lib/types';
+
+function formatIsoDateLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getClampedMonthDate(year: number, monthIndex: number, dayOfMonth: number): Date {
+  const maxDay = new Date(year, monthIndex + 1, 0).getDate();
+  const actualDay = Math.max(1, Math.min(dayOfMonth, maxDay));
+  return new Date(year, monthIndex, actualDay, 0, 0, 0, 0);
+}
 
 function computeInstallmentDueDate(startDateStr: string, tenorMonths: number, dueDayOfMonth: number): string {
   if (!startDateStr || !tenorMonths || tenorMonths <= 0) return '';
@@ -50,7 +63,7 @@ function computeInstallmentDueDate(startDateStr: string, tenorMonths: number, du
   const actualDay = Math.min(clampedDay, maxDays);
 
   const finalObj = new Date(targetDateObj.getFullYear(), targetDateObj.getMonth(), actualDay);
-  return finalObj.toISOString().slice(0, 10);
+  return formatIsoDateLocal(finalObj);
 }
 
 export function DebtTab() {
@@ -65,6 +78,7 @@ export function DebtTab() {
     walletsWithBalance,
     wallets,
     settings,
+    budgetPeriod,
   } = useApp();
 
   const hide = settings.hideBalance;
@@ -129,6 +143,7 @@ export function DebtTab() {
   const [formTenorMonths, setFormTenorMonths] = useState('6');
   const [formMonthlyInstallment, setFormMonthlyInstallment] = useState('');
   const [formDueDayOfMonth, setFormDueDayOfMonth] = useState('10');
+  const [formStartBillingMode, setFormStartBillingMode] = useState<'current_period' | 'next_period'>('current_period');
   const [formNote, setFormNote] = useState('');
   const [formDisburseCashflow, setFormDisburseCashflow] = useState(false);
   const [formDisburseWalletId, setFormDisburseWalletId] = useState('');
@@ -178,14 +193,105 @@ export function DebtTab() {
     }
   };
 
-  // Filtered debts list
+  // Compute effective next payment due date & days remaining (handles both monthly installments and one-off due dates)
+  const getEffectiveDueInfo = React.useCallback(
+    (item: Debt) => {
+      const isPaid = item.status === 'paid' || item.remainingAmount <= 0;
+      if (isPaid) {
+        return {
+          effectiveDueDate: item.dueDate || '',
+          daysLeft: null as number | null,
+          sortTime: Number.MAX_SAFE_INTEGER,
+        };
+      }
+
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+
+      const isDeferred =
+        item.type === 'payable' && !isDebtScheduledForBudgetPeriod(item, budgetPeriod);
+
+      if (item.dueDayOfMonth && item.dueDayOfMonth > 0) {
+        const day = Math.max(1, Math.min(31, item.dueDayOfMonth));
+
+        if (isDeferred) {
+          const baseDate = item.firstPaymentDate
+            ? new Date(`${item.firstPaymentDate}T00:00:00`)
+            : new Date(now.getFullYear(), now.getMonth() + 1, 1);
+          const safeBase = isNaN(baseDate.getTime())
+            ? new Date(now.getFullYear(), now.getMonth() + 1, 1)
+            : baseDate;
+          let candidate = getClampedMonthDate(safeBase.getFullYear(), safeBase.getMonth(), day);
+          if (candidate.getTime() < safeBase.getTime()) {
+            candidate = getClampedMonthDate(safeBase.getFullYear(), safeBase.getMonth() + 1, day);
+          }
+          const diff = Math.round((candidate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          return {
+            effectiveDueDate: formatIsoDateLocal(candidate),
+            daysLeft: diff,
+            sortTime: candidate.getTime(),
+          };
+        }
+
+        const paidThisMonth = (item.payments || []).some((p) => {
+          const pd = new Date(p.date);
+          return pd.getFullYear() === now.getFullYear() && pd.getMonth() === now.getMonth();
+        });
+
+        const thisMonthCandidate = getClampedMonthDate(now.getFullYear(), now.getMonth(), day);
+        const nextMonthCandidate = getClampedMonthDate(now.getFullYear(), now.getMonth() + 1, day);
+
+        let candidate =
+          !paidThisMonth && thisMonthCandidate.getTime() >= now.getTime()
+            ? thisMonthCandidate
+            : nextMonthCandidate;
+
+        if (item.dueDate) {
+          const finalDue = new Date(`${item.dueDate}T00:00:00`);
+          if (!isNaN(finalDue.getTime())) {
+            if (
+              (finalDue.getTime() < candidate.getTime() && finalDue.getTime() >= now.getTime()) ||
+              finalDue.getTime() < now.getTime()
+            ) {
+              candidate = finalDue;
+            }
+          }
+        }
+
+        const diff = Math.round((candidate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        return {
+          effectiveDueDate: formatIsoDateLocal(candidate),
+          daysLeft: diff,
+          sortTime: candidate.getTime(),
+        };
+      }
+
+      if (item.dueDate) {
+        const dueObj = new Date(`${item.dueDate}T00:00:00`);
+        if (!isNaN(dueObj.getTime())) {
+          const diff = Math.round((dueObj.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          return {
+            effectiveDueDate: item.dueDate,
+            daysLeft: diff,
+            sortTime: dueObj.getTime(),
+          };
+        }
+      }
+
+      return {
+        effectiveDueDate: '',
+        daysLeft: null as number | null,
+        sortTime: Number.MAX_SAFE_INTEGER - 1,
+      };
+    },
+    [budgetPeriod]
+  );
+
+  // Filtered & sorted debts list (sorted by nearest due date first)
   const filteredDebts = useMemo(() => {
-    return debts.filter((d) => {
-      // Type filter
+    const filtered = debts.filter((d) => {
       if (activeTypeFilter !== 'all' && d.type !== activeTypeFilter) return false;
-      // Status filter
       if (activeStatusFilter !== 'all' && d.status !== activeStatusFilter) return false;
-      // Search
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchName = d.name.toLowerCase().includes(q);
@@ -195,7 +301,25 @@ export function DebtTab() {
       }
       return true;
     });
-  }, [debts, activeTypeFilter, activeStatusFilter, searchQuery]);
+
+    return [...filtered].sort((a, b) => {
+      const aPaid = a.status === 'paid' || a.remainingAmount <= 0;
+      const bPaid = b.status === 'paid' || b.remainingAmount <= 0;
+      if (aPaid !== bPaid) return aPaid ? 1 : -1;
+
+      const aInfo = getEffectiveDueInfo(a);
+      const bInfo = getEffectiveDueInfo(b);
+      if (aInfo.sortTime !== bInfo.sortTime) {
+        return aInfo.sortTime - bInfo.sortTime;
+      }
+
+      const aFinal = a.dueDate ? new Date(`${a.dueDate}T00:00:00`).getTime() : Infinity;
+      const bFinal = b.dueDate ? new Date(`${b.dueDate}T00:00:00`).getTime() : Infinity;
+      if (aFinal !== bFinal) return aFinal - bFinal;
+
+      return (b.remainingAmount || 0) - (a.remainingAmount || 0);
+    });
+  }, [debts, activeTypeFilter, activeStatusFilter, searchQuery, getEffectiveDueInfo]);
 
   // Aggregate stats
   const activePayables = useMemo(
@@ -230,27 +354,17 @@ export function DebtTab() {
       ? Math.round((totalPayableRemaining / liquidAssets) * 100)
       : 100;
 
-  // Closest upcoming due date
+  // Closest upcoming due date across active payables
   const nextDueItem = useMemo(() => {
     const listWithDue = activePayables
-      .filter((d) => d.dueDate)
       .map((d) => {
-        const time = new Date(d.dueDate).getTime();
-        return { ...d, time: isNaN(time) ? Infinity : time };
+        const info = getEffectiveDueInfo(d);
+        return { ...d, effectiveDueDate: info.effectiveDueDate, daysLeft: info.daysLeft, time: info.sortTime };
       })
+      .filter((d) => d.effectiveDueDate)
       .sort((a, b) => a.time - b.time);
     return listWithDue[0] || null;
-  }, [activePayables]);
-
-  const getDaysUntilDue = (dueDateStr?: string) => {
-    if (!dueDateStr) return null;
-    const dueTime = new Date(dueDateStr).getTime();
-    if (isNaN(dueTime)) return null;
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    const diff = Math.ceil((dueTime - now.getTime()) / (1000 * 60 * 60 * 24));
-    return diff;
-  };
+  }, [activePayables, getEffectiveDueInfo]);
 
   // Open Add Modal
   const handleOpenAdd = (type: 'payable' | 'receivable' = 'payable') => {
@@ -266,6 +380,7 @@ export function DebtTab() {
     setFormTenorMonths('6');
     setFormMonthlyInstallment('');
     setFormDueDayOfMonth('10');
+    setFormStartBillingMode('current_period');
     const autoDue = computeInstallmentDueDate(today, 6, 10);
     setFormDueDate(autoDue);
     setFormNote('');
@@ -296,6 +411,9 @@ export function DebtTab() {
       ? String(new Date(debt.dueDate).getDate())
       : '10';
     setFormDueDayOfMonth(defaultDay);
+    const isDeferredNextPeriod =
+      debt.type === 'payable' && !isDebtScheduledForBudgetPeriod(debt, budgetPeriod);
+    setFormStartBillingMode(isDeferredNextPeriod ? 'next_period' : 'current_period');
     setFormNote(debt.note || '');
     setFormDisburseCashflow(false);
     setIsAddModalOpen(true);
@@ -319,6 +437,24 @@ export function DebtTab() {
       finalDueDate = computeInstallmentDueDate(formStartDate, tenorNum, dueDayNum);
     }
 
+    // Determine firstPaymentDate when user schedules payment starting next month/period
+    let finalFirstPaymentDate: string | undefined = undefined;
+    if (formType === 'payable' && formStartBillingMode === 'next_period') {
+      finalFirstPaymentDate = budgetPeriod.nextPaydayIso;
+      // If it's a one-time debt (not installment) and finalDueDate is still in the current period,
+      // automatically move finalDueDate to next period so it aligns with next month
+      if (!formIsInstallment) {
+        const curDueTime = finalDueDate ? new Date(finalDueDate).getTime() : 0;
+        if (!curDueTime || curDueTime <= budgetPeriod.endDate.getTime()) {
+          finalDueDate = computeInstallmentDueDate(
+            formStartDate || new Date().toISOString().slice(0, 10),
+            1,
+            parseInt(formDueDayOfMonth, 10) || 10
+          );
+        }
+      }
+    }
+
     if (editingDebt) {
       // Update
       const parsedRem = formRemainingAmount.trim() !== '' ? parseNominalInput(formRemainingAmount) : undefined;
@@ -339,6 +475,7 @@ export function DebtTab() {
         status: newRem > 0 ? 'active' : 'paid',
         dueDate: finalDueDate,
         startDate: formStartDate,
+        firstPaymentDate: finalFirstPaymentDate,
         category: formCategory,
         isInstallment: formIsInstallment,
         tenorMonths: tenorNum,
@@ -357,6 +494,7 @@ export function DebtTab() {
           remainingAmount: val,
           dueDate: finalDueDate,
           startDate: formStartDate,
+          firstPaymentDate: finalFirstPaymentDate,
           category: formCategory,
           isInstallment: formIsInstallment,
           tenorMonths: tenorNum,
@@ -550,16 +688,19 @@ export function DebtTab() {
                   <Clock size={16} className="text-[#D4F826] shrink-0" />
                   <div className="min-w-0">
                     <p className="text-[11px] font-bold text-gray-200 truncate">
-                      Jatuh Tempo: {nextDueItem.name}
+                      Terdekat: {nextDueItem.name}
                     </p>
                     <p className="text-[10px] text-gray-400 truncate">
-                      {nextDueItem.dueDate} ({formatRupiah(getMonthlyDebtInstallmentAmount(nextDueItem), hide)}/bln)
+                      {nextDueItem.dueDayOfMonth
+                        ? `Tgl ${nextDueItem.dueDayOfMonth} (${nextDueItem.effectiveDueDate})`
+                        : nextDueItem.effectiveDueDate}{' '}
+                      · {formatRupiah(getMonthlyDebtInstallmentAmount(nextDueItem), hide)}/bln
                     </p>
                   </div>
                 </div>
                 {(() => {
-                  const days = getDaysUntilDue(nextDueItem.dueDate);
-                  if (days === null) return null;
+                  const days = nextDueItem.daysLeft;
+                  if (days === null || days === undefined) return null;
                   const isLate = days < 0;
                   return (
                     <span
@@ -571,7 +712,11 @@ export function DebtTab() {
                           : 'bg-white/10 text-gray-200'
                       }`}
                     >
-                      {isLate ? `Lewat ${Math.abs(days)} hari` : `${days} hari lagi`}
+                      {isLate
+                        ? `Lewat ${Math.abs(days)} hari`
+                        : days === 0
+                        ? 'Hari ini!'
+                        : `${days} hari lagi`}
                     </span>
                   );
                 })()}
@@ -582,7 +727,7 @@ export function DebtTab() {
       </div>
 
       {/* Filter Tabs & Search */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-[#16181D] p-3 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-white dark:bg-[#16181D] p-2.5 sm:p-3 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-xs">
         {/* Type Filter */}
         <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
           <button
@@ -660,7 +805,7 @@ export function DebtTab() {
             </button>
           </div>
 
-          <div className="relative min-w-[140px] sm:min-w-[180px]">
+          <div className="relative min-w-[130px] sm:min-w-[170px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
@@ -673,8 +818,8 @@ export function DebtTab() {
         </div>
       </div>
 
-      {/* Debts List */}
-      <div className="space-y-3">
+      {/* Debts List (Sorted by Nearest Due Date) */}
+      <div className="space-y-2.5">
         {filteredDebts.length === 0 ? (
           <div className="text-center py-12 bg-white dark:bg-[#16181D] rounded-3xl p-6 border border-gray-100 dark:border-gray-800 space-y-2">
             <span className="text-4xl">🎉</span>
@@ -703,151 +848,171 @@ export function DebtTab() {
             const paidAmount = Math.max(0, item.totalAmount - item.remainingAmount);
             const progressPct =
               item.totalAmount > 0 ? Math.min(100, Math.round((paidAmount / item.totalAmount) * 100)) : 100;
-            const daysLeft = getDaysUntilDue(item.dueDate);
+            const dueInfo = getEffectiveDueInfo(item);
+            const daysLeft = dueInfo.daysLeft;
             const isLate = !isPaid && daysLeft !== null && daysLeft < 0;
+            const isDeferredNextMonth =
+              isPayable && !isPaid && !isDebtScheduledForBudgetPeriod(item, budgetPeriod);
+            const monthlyAmt =
+              item.monthlyInstallment ||
+              (item.tenorMonths && item.tenorMonths > 0
+                ? Math.round(item.totalAmount / item.tenorMonths)
+                : 0);
+            const remainingInstallments =
+              !isPaid && monthlyAmt > 0 ? Math.max(1, Math.ceil(item.remainingAmount / monthlyAmt)) : 0;
 
             return (
               <div
                 key={item.id}
-                className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700 transition-all space-y-4"
+                className="bg-white dark:bg-[#16181D] rounded-2xl p-4 sm:p-4.5 border border-gray-200/80 dark:border-gray-800/90 hover:border-gray-300 dark:hover:border-gray-700 transition-all space-y-3"
               >
-                {/* Top Row: Badges, Title, Amount */}
-                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
-                  <div className="space-y-1.5 min-w-0">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {/* Type Badge */}
-                      <span
-                        className={`inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full ${
-                          isPayable
-                            ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50'
-                            : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/50'
-                        }`}
-                      >
-                        {isPayable ? <TrendingDown size={11} /> : <TrendingUp size={11} />}
-                        <span>{isPayable ? 'Utang Saya' : 'Piutang Saya'}</span>
-                      </span>
-
-                      {/* Status Badge */}
+                {/* Row 1: Compact Header (Icon + Title + Subtitle on Left, Remaining Amount on Right) */}
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                        isPaid
+                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
+                          : isPayable
+                          ? 'bg-rose-500/10 border-rose-500/20 text-rose-500'
+                          : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
+                      }`}
+                    >
                       {isPaid ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500 text-black">
-                          <CheckCircle2 size={11} strokeWidth={3} />
-                          <span>Lunas</span>
-                        </span>
-                      ) : isLate ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-500 text-white animate-pulse">
-                          <AlertCircle size={11} />
-                          <span>Lewat Tempo</span>
-                        </span>
-                      ) : daysLeft !== null && daysLeft <= 3 ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-500 text-black">
-                          <Clock size={11} />
-                          <span>{daysLeft === 0 ? 'Hari ini!' : `${daysLeft} hari lagi`}</span>
-                        </span>
-                      ) : null}
-
-                      {/* Category Badge */}
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 capitalize">
-                        {item.category || 'Cicilan'}
-                      </span>
+                        <CheckCircle2 size={18} />
+                      ) : isPayable ? (
+                        <TrendingDown size={18} />
+                      ) : (
+                        <TrendingUp size={18} />
+                      )}
                     </div>
 
-                    <h3 className="text-base sm:text-lg font-extrabold text-gray-900 dark:text-white truncate">
-                      {item.name}
-                    </h3>
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <h3 className="text-sm sm:text-base font-extrabold text-gray-900 dark:text-white truncate">
+                          {item.name}
+                        </h3>
 
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400 font-medium">
-                      <div className="flex items-center gap-1">
-                        <User size={13} className="text-gray-400" />
-                        <span>
-                          {isPayable ? 'Kepada: ' : 'Peminjam: '}
-                          <strong className="text-gray-700 dark:text-gray-200">
-                            {item.contactName || 'Pihak Terkait'}
-                          </strong>
-                        </span>
+                        {/* Due Countdown / Status Tag */}
+                        {isPaid ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-500 text-black">
+                            <CheckCircle2 size={10} strokeWidth={3} />
+                            <span>Lunas</span>
+                          </span>
+                        ) : isDeferredNextMonth ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30">
+                            <Clock size={10} />
+                            <span>Mulai Bulan Depan</span>
+                          </span>
+                        ) : isLate ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-md bg-rose-500 text-white">
+                            <AlertCircle size={10} />
+                            <span>Lewat {Math.abs(daysLeft)} hr</span>
+                          </span>
+                        ) : daysLeft !== null ? (
+                          <span
+                            className={`inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-md ${
+                              daysLeft <= 3
+                                ? 'bg-amber-500 text-black font-black'
+                                : daysLeft <= 7
+                                ? 'bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30'
+                                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300'
+                            }`}
+                          >
+                            <Clock size={10} />
+                            <span>{daysLeft === 0 ? 'Hari ini!' : `${daysLeft} hari lagi`}</span>
+                          </span>
+                        ) : null}
                       </div>
-                      {item.dueDayOfMonth ? (
-                        <div className="flex items-center gap-1 font-semibold text-lime-700 dark:text-[#D4F826]">
-                          <CalendarDays size={13} className="shrink-0" />
-                          <span>Bayar tiap tgl: <strong>{item.dueDayOfMonth}</strong></span>
-                        </div>
-                      ) : null}
-                      {item.dueDate && (
-                        <div className="flex items-center gap-1">
-                          <Calendar size={13} className="text-gray-400 shrink-0" />
-                          <span>{item.dueDayOfMonth ? `Target lunas: ${item.dueDate}` : `Jatuh tempo: ${item.dueDate}`}</span>
-                        </div>
-                      )}
+
+                      {/* Single Clean Metadata Line */}
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        <span className="font-semibold text-gray-700 dark:text-gray-300">
+                          {item.contactName || (isPayable ? 'Pemberi Pinjaman' : 'Peminjam')}
+                        </span>
+                        <span>·</span>
+                        <span className="capitalize">{item.category || 'Cicilan'}</span>
+                        {item.note && (
+                          <>
+                            <span>·</span>
+                            <span className="italic text-gray-400 truncate max-w-[180px] sm:max-w-[260px]">
+                              &ldquo;{item.note}&rdquo;
+                            </span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Amounts */}
-                  <div className="sm:text-right shrink-0 pt-1 sm:pt-0">
-                    <div className="text-xs font-bold text-gray-400">
-                      {isPaid ? 'Total Transaksi' : 'Sisa Kewajiban'}
-                    </div>
+                  {/* Right Side: Remaining Amount */}
+                  <div className="text-right shrink-0">
                     <div
-                      className={`text-xl sm:text-2xl font-black tabular-nums tracking-tight ${
+                      className={`text-base sm:text-xl font-black tabular-nums tracking-tight ${
                         isPaid
                           ? 'text-gray-400 line-through'
                           : isPayable
-                          ? 'text-rose-600 dark:text-rose-400'
-                          : 'text-emerald-600 dark:text-emerald-400'
+                          ? 'text-rose-500 dark:text-rose-400'
+                          : 'text-emerald-500 dark:text-emerald-400'
                       }`}
                     >
                       {formatRupiah(item.remainingAmount, hide)}
                     </div>
-                    <div className="text-[11px] font-semibold text-gray-500 dark:text-gray-400">
-                      dari total {formatRupiah(item.totalAmount, hide)}
+                    <div className="text-[11px] font-medium text-gray-400 tabular-nums">
+                      dari {formatRupiah(item.totalAmount, hide)}
                     </div>
                   </div>
                 </div>
 
-                {/* Installment Scheme Highlights */}
-                {(item.isInstallment || item.monthlyInstallment || item.tenorMonths || item.dueDayOfMonth) && (
-                  <div className="p-3 rounded-2xl bg-gray-50/90 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 flex flex-wrap items-center justify-between gap-2.5 text-xs">
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-                      {(item.monthlyInstallment || (item.tenorMonths && item.tenorMonths > 0)) && (
-                        <div className="flex items-center gap-1.5 font-bold text-gray-800 dark:text-gray-200">
-                          <CreditCard size={14} className="text-lime-600 dark:text-[#D4F826] shrink-0" />
-                          <span>
-                            Cicilan: <strong className="text-gray-950 dark:text-white">{formatRupiah(item.monthlyInstallment || Math.round(item.totalAmount / (item.tenorMonths || 1)), hide)}</strong>/bln
-                          </span>
-                        </div>
-                      )}
-                      {item.tenorMonths && (
-                        <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400 font-medium">
-                          <Clock size={13} className="text-gray-400 shrink-0" />
-                          <span>Tenor: <strong className="text-gray-700 dark:text-gray-300">{item.tenorMonths} Bulan</strong></span>
-                        </div>
-                      )}
-                      {item.dueDayOfMonth && (
-                        <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400 font-medium">
-                          <CalendarDays size={13} className="text-lime-600 dark:text-[#D4F826] shrink-0" />
-                          <span>Jatuh tempo: <strong className="text-lime-700 dark:text-[#D4F826]">Tiap tgl {item.dueDayOfMonth}</strong></span>
-                        </div>
-                      )}
+                {/* Row 2: Unified Compact Metrics Strip + Thin Progress Bar */}
+                <div className="rounded-xl bg-gray-50/90 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800/80 p-3 space-y-2.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                    {/* Col 1: Cicilan Bulanan */}
+                    <div>
+                      <span className="text-[10px] font-semibold text-gray-400 block">
+                        {isPayable ? 'Cicilan / Bulan' : 'Angsuran / Bulan'}
+                      </span>
+                      <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
+                        {monthlyAmt > 0 ? `${formatRupiah(monthlyAmt, hide)}` : 'Sekali Bayar'}
+                      </span>
                     </div>
 
-                    {!isPaid && (item.monthlyInstallment || (item.tenorMonths && item.tenorMonths > 0)) && (
-                      <div className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
-                        Estimasi sisa: <strong className="text-gray-800 dark:text-gray-200">~{Math.max(1, Math.ceil(item.remainingAmount / (item.monthlyInstallment || Math.round(item.totalAmount / (item.tenorMonths || 1)))))}x cicilan</strong>
-                      </div>
-                    )}
-                  </div>
-                )}
+                    {/* Col 2: Jatuh Tempo */}
+                    <div>
+                      <span className="text-[10px] font-semibold text-gray-400 block">
+                        Jatuh Tempo
+                      </span>
+                      <span className={`font-extrabold ${brandAccentText} tabular-nums`}>
+                        {item.dueDayOfMonth
+                          ? `Tiap Tgl ${item.dueDayOfMonth}`
+                          : item.dueDate || '-'}
+                      </span>
+                    </div>
 
-                {/* Progress Bar & Repayment stats */}
-                <div className="space-y-1.5 pt-1">
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className="text-gray-500 dark:text-gray-400">
-                      Progres Pelunasan ({progressPct}%)
-                    </span>
-                    <span className="text-gray-700 dark:text-gray-300 tabular-nums">
-                      Terbayar: {formatRupiah(paidAmount, hide)}
-                    </span>
+                    {/* Col 3: Tenor & Sisa Angsuran */}
+                    <div>
+                      <span className="text-[10px] font-semibold text-gray-400 block">
+                        Tenor & Target
+                      </span>
+                      <span className="font-bold text-gray-700 dark:text-gray-300 tabular-nums">
+                        {item.tenorMonths ? `${item.tenorMonths} bln` : 'Non-cicilan'}
+                        {remainingInstallments > 0 ? ` (sisa ~${remainingInstallments}x)` : ''}
+                        {item.dueDayOfMonth && item.dueDate ? ` · ${item.dueDate}` : ''}
+                      </span>
+                    </div>
+
+                    {/* Col 4: Terbayar & Progres */}
+                    <div className="sm:text-right">
+                      <span className="text-[10px] font-semibold text-gray-400 block">
+                        Progres ({progressPct}%)
+                      </span>
+                      <span className="font-bold text-gray-700 dark:text-gray-300 tabular-nums">
+                        {formatRupiah(paidAmount, hide)}
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                  {/* Thin Progress Bar */}
+                  <div className="w-full h-1.5 rounded-full bg-gray-200/80 dark:bg-gray-700/70 overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${
                         isPaid
@@ -861,37 +1026,30 @@ export function DebtTab() {
                   </div>
                 </div>
 
-                {/* Note if present */}
-                {item.note && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 italic bg-gray-50 dark:bg-gray-800/40 p-2.5 rounded-xl border border-gray-100 dark:border-gray-800">
-                    &ldquo;{item.note}&rdquo;
-                  </p>
-                )}
-
-                {/* Action Buttons */}
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-                  <div className="flex flex-wrap items-center gap-2">
-                    {/* View history detail */}
+                {/* Row 3: Compact Action Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <button
                       type="button"
                       onClick={() => setDetailDebt(item)}
-                      className="px-3 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                      className="px-2.5 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                       title="Lihat & kelola riwayat pembayaran"
                     >
-                      <History size={14} />
+                      <History size={13} />
                       <span>Riwayat ({item.payments?.length || 0})</span>
                     </button>
 
-                    {/* Quick Cancel / Undo Payment button when any payment or paid progress exists */}
-                    {((item.payments && item.payments.length > 0) || item.remainingAmount < item.totalAmount || isPaid) && (
+                    {((item.payments && item.payments.length > 0) ||
+                      item.remainingAmount < item.totalAmount ||
+                      isPaid) && (
                       <button
                         type="button"
                         onClick={() => cancelDebtPayment(item.id)}
-                        className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                        className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
                         title="Batalkan pencatatan pembayaran cicilan terakhir & kembalikan saldo"
                       >
-                        <RotateCcw size={13} />
-                        <span>{isPaid ? 'Batalkan Pelunasan' : 'Batal Bayar'}</span>
+                        <RotateCcw size={12} />
+                        <span>{isPaid ? 'Batal Lunas' : 'Batal Bayar'}</span>
                       </button>
                     )}
 
@@ -901,7 +1059,7 @@ export function DebtTab() {
                       className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg transition-colors cursor-pointer"
                       title="Edit catatan"
                     >
-                      <Edit2 size={15} />
+                      <Edit2 size={14} />
                     </button>
 
                     <button
@@ -910,25 +1068,25 @@ export function DebtTab() {
                       className="p-1.5 text-gray-400 hover:text-rose-500 rounded-lg transition-colors cursor-pointer"
                       title="Hapus catatan"
                     >
-                      <Trash2 size={15} />
+                      <Trash2 size={14} />
                     </button>
                   </div>
 
                   {!isPaid && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       <button
                         type="button"
                         onClick={() => handleOpenPay(item)}
-                        className={`px-3.5 py-1.5 rounded-xl ${brandAccentBg} text-xs font-black shadow-xs cursor-pointer transition-transform active:scale-95 flex items-center gap-1.5`}
+                        className={`px-3 py-1.5 rounded-xl ${brandAccentBg} text-xs font-black shadow-xs cursor-pointer transition-transform active:scale-95 flex items-center gap-1`}
                       >
-                        <DollarSign size={14} />
+                        <DollarSign size={13} />
                         <span>{isPayable ? 'Bayar Cicilan' : 'Terima Cicilan'}</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={() => settleDebt(item.id)}
-                        className="px-3 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs font-bold cursor-pointer transition-colors"
+                        className="px-2.5 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-bold cursor-pointer transition-colors"
                       >
                         Lunasi Penuh
                       </button>
@@ -941,122 +1099,154 @@ export function DebtTab() {
         )}
       </div>
 
-      {/* Modal: Add or Edit Debt */}
+      {/* Modal: Add or Edit Debt (Compact, Clean, Easy to Scan) */}
       <AnimatePresence>
         {isAddModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs">
             <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
+              initial={{ scale: 0.96, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white dark:bg-[#16181D] rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800 max-h-[90vh] overflow-y-auto"
+              exit={{ scale: 0.96, opacity: 0 }}
+              className="bg-white dark:bg-[#16181D] rounded-3xl p-5 sm:p-6 max-w-lg w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800 max-h-[90vh] overflow-y-auto"
             >
-              <div className="flex items-center justify-between">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between pb-1 border-b border-gray-100 dark:border-gray-800/80">
                 <div>
-                  <h3 className="text-lg font-extrabold text-gray-900 dark:text-white">
-                    {editingDebt ? 'Edit Catatan Kewajiban' : 'Catat Utang / Piutang Baru'}
+                  <h3 className="text-base sm:text-lg font-extrabold text-gray-900 dark:text-white">
+                    {editingDebt ? 'Edit Catatan Utang / Piutang' : 'Catat Utang / Piutang Baru'}
                   </h3>
-                  <p className="text-xs text-gray-400">
-                    Masukkan detail pinjaman atau cicilan dengan teliti.
+                  <p className="text-[11px] text-gray-400">
+                    Isi rincian kewajiban atau piutang secara ringkas.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsAddModalOpen(false)}
-                  className="p-1 text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"
+                  className="p-1.5 rounded-xl text-gray-400 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
                 >
                   <X size={18} />
                 </button>
               </div>
 
               <form onSubmit={handleSubmitForm} className="space-y-3.5">
-                {/* Type Selection */}
-                <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1.5">
-                    Jenis Transaksi
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setFormType('payable')}
-                      className={`p-2.5 rounded-2xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                {/* 1. Segmented Type Switcher */}
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-gray-100 dark:bg-gray-800/90">
+                  <button
+                    type="button"
+                    onClick={() => setFormType('payable')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      formType === 'payable'
+                        ? 'bg-white dark:bg-[#16181D] text-rose-600 dark:text-rose-400 shadow-xs font-black'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <TrendingDown size={14} />
+                    <span>Utang Saya</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormType('receivable')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      formType === 'receivable'
+                        ? 'bg-white dark:bg-[#16181D] text-emerald-600 dark:text-emerald-400 shadow-xs font-black'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <TrendingUp size={14} />
+                    <span>Piutang Saya</span>
+                  </button>
+                </div>
+
+                {/* 2. Name & Contact (2 Columns on sm+) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-500 block mb-1">
+                      Nama Utang / Cicilan *
+                    </label>
+                    <input
+                      type="text"
+                      value={formName}
+                      onChange={(e) => setFormName(e.target.value)}
+                      placeholder={
                         formType === 'payable'
-                          ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 font-black'
-                          : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300'
-                      }`}
-                    >
-                      <TrendingDown size={16} />
-                      <span>Utang Saya (Hutang)</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setFormType('receivable')}
-                      className={`p-2.5 rounded-2xl border text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-all ${
-                        formType === 'receivable'
-                          ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 font-black'
-                          : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300'
-                      }`}
-                    >
-                      <TrendingUp size={16} />
-                      <span>Piutang (Orang Berutang)</span>
-                    </button>
+                          ? 'Misal: Cicilan AC, Shopee'
+                          : 'Misal: Pinjaman Budi'
+                      }
+                      required
+                      className="w-full px-3 py-2.5 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-500 block mb-1">
+                      {formType === 'payable' ? 'Pemberi Pinjaman / Bank' : 'Nama Peminjam'}
+                    </label>
+                    <input
+                      type="text"
+                      value={formContactName}
+                      onChange={(e) => setFormContactName(e.target.value)}
+                      placeholder={
+                        formType === 'payable'
+                          ? 'Misal: Kredivo, BCA, SeaBank'
+                          : 'Misal: Ahmad, Teman Kantor'
+                      }
+                      className="w-full px-3 py-2.5 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                    />
                   </div>
                 </div>
 
-                {/* Name */}
-                <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">
-                    Nama Utang / Cicilan
-                  </label>
-                  <input
-                    type="text"
-                    value={formName}
-                    onChange={(e) => setFormName(e.target.value)}
-                    placeholder={
-                      formType === 'payable'
-                        ? 'Contoh: Cicilan Laptop, KPR Rumah, Pinjaman Bank'
-                        : 'Contoh: Talangan Tiket Budi, Pinjaman Teman'
-                    }
-                    required
-                    className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
-                  />
-                </div>
+                {/* 3. Total Amount & Category (2 Columns on sm+) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-500 block mb-1">
+                      Total Pinjaman Pokok (Rp) *
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={formTotalAmount}
+                      onChange={(e) => handleTotalAmountChange(e.target.value)}
+                      placeholder="Contoh: 3.000.000"
+                      required
+                      className="w-full px-3 py-2.5 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white tabular-nums focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                    />
+                  </div>
 
-                {/* Contact Name */}
-                <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">
-                    {formType === 'payable' ? 'Pemberi Pinjaman / Bank / Kontak' : 'Nama Peminjam / Kontak'}
-                  </label>
-                  <input
-                    type="text"
-                    value={formContactName}
-                    onChange={(e) => setFormContactName(e.target.value)}
-                    placeholder="Contoh: BCA, Tokopedia Paylater, Ahmad, Bank Mandiri"
-                    className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
-                  />
-                </div>
-
-                {/* Total Amount */}
-                <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">
-                    Total Nominal Pokok Pinjaman (Rp)
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={formTotalAmount}
-                    onChange={(e) => handleTotalAmountChange(e.target.value)}
-                    placeholder="Contoh: 6.000.000"
-                    required
-                    className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
-                  />
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-500 block mb-1">
+                      Kategori
+                    </label>
+                    <select
+                      value={formCategory}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFormCategory(val);
+                        if (val === 'cicilan') {
+                          setFormIsInstallment(true);
+                          const tot = parseNominalInput(formTotalAmount);
+                          const t = parseInt(formTenorMonths, 10) || 6;
+                          if (tot > 0 && (!formMonthlyInstallment || formMonthlyInstallment === '0')) {
+                            setFormMonthlyInstallment(formatNominalInput(String(Math.round(tot / t))));
+                          }
+                        }
+                      }}
+                      className="w-full px-3 py-2.5 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                    >
+                      <option value="cicilan">Cicilan & Paylater</option>
+                      <option value="bank">Perbankan / Pinjaman Resmi</option>
+                      <option value="personal">Personal / Teman & Keluarga</option>
+                      <option value="modal">Modal Usaha</option>
+                      <option value="kartu_kredit">Kartu Kredit</option>
+                      <option value="lainnya">Lainnya</option>
+                    </select>
+                  </div>
                 </div>
 
                 {/* Remaining Amount (Visible when editing) */}
                 {editingDebt && (
-                  <div>
+                  <div className="p-3 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-bold text-gray-500">
+                      <label className="text-[11px] font-bold text-gray-500">
                         Sisa Kewajiban Saat Ini (Rp)
                       </label>
                       <button
@@ -1065,7 +1255,7 @@ export function DebtTab() {
                         className="text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer flex items-center gap-1"
                       >
                         <RotateCcw size={11} />
-                        <span>Reset ke Total Pinjaman</span>
+                        <span>Reset ke Total</span>
                       </button>
                     </div>
                     <input
@@ -1074,59 +1264,19 @@ export function DebtTab() {
                       value={formRemainingAmount}
                       onChange={(e) => setFormRemainingAmount(formatNominalInput(e.target.value))}
                       placeholder="Contoh: 3.343.330"
-                      className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                      className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white tabular-nums focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
                   </div>
                 )}
 
-                {/* Category */}
-                <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">Kategori</label>
-                  <select
-                    value={formCategory}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setFormCategory(val);
-                      if (val === 'cicilan') {
-                        setFormIsInstallment(true);
-                        const tot = parseNominalInput(formTotalAmount);
-                        const t = parseInt(formTenorMonths, 10) || 6;
-                        if (tot > 0 && (!formMonthlyInstallment || formMonthlyInstallment === '0')) {
-                          setFormMonthlyInstallment(formatNominalInput(String(Math.round(tot / t))));
-                        }
-                      }
-                    }}
-                    className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
-                  >
-                    <option value="cicilan">Cicilan & Paylater</option>
-                    <option value="bank">Perbankan / Pinjaman Resmi</option>
-                    <option value="personal">Personal / Teman & Keluarga</option>
-                    <option value="modal">Modal Usaha</option>
-                    <option value="kartu_kredit">Kartu Kredit</option>
-                    <option value="lainnya">Lainnya</option>
-                  </select>
-                </div>
-
-                {/* Skema Cicilan Bulanan & Tanggal Bayar */}
-                <div className="p-4 rounded-3xl bg-lime-500/5 dark:bg-[#D4F826]/5 border-2 border-lime-500/30 dark:border-[#D4F826]/30 space-y-3.5">
+                {/* 4. Compact Installment Section */}
+                <div className="p-3.5 rounded-2xl bg-gray-50/80 dark:bg-gray-800/40 border border-gray-200/90 dark:border-gray-700/80 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-xl bg-lime-500/20 dark:bg-[#D4F826]/20 flex items-center justify-center text-lime-700 dark:text-[#D4F826] shrink-0">
-                        <CalendarDays size={18} />
-                      </div>
-                      <div>
-                        <div className="text-xs font-black text-gray-900 dark:text-white flex items-center gap-1.5">
-                          <span>Skema Cicilan & Tempo Bulanan</span>
-                          {formIsInstallment && (
-                            <span className="text-[10px] px-1.5 py-0.5 bg-lime-500 text-black font-extrabold rounded-md leading-none">
-                              Aktif
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                          Atur tempo bulan, cicilan per bulan, dan tanggal pembayaran
-                        </p>
-                      </div>
+                      <CalendarDays size={16} className={brandAccentText} />
+                      <span className="text-xs font-extrabold text-gray-900 dark:text-white">
+                        Skema Cicilan Bulanan
+                      </span>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
                       <input
@@ -1145,60 +1295,94 @@ export function DebtTab() {
                         }}
                         className="sr-only peer"
                       />
-                      <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-lime-500 dark:peer-checked:bg-[#D4F826]"></div>
+                      <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-lime-500 dark:peer-checked:bg-[#D4F826]"></div>
                     </label>
                   </div>
 
                   {formIsInstallment && (
-                    <div className="space-y-3.5 pt-1 border-t border-lime-500/15 dark:border-[#D4F826]/15">
-                      {/* 1. Tenor / Durasi Bulan */}
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-xs font-bold text-gray-700 dark:text-gray-300">
-                            Tempo / Durasi Cicilan (Bulan)
+                    <div className="space-y-3 pt-2 border-t border-gray-200/70 dark:border-gray-700/60">
+                      {/* Tenor & Due Day side-by-side */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Tenor */}
+                        <div>
+                          <label className="text-[11px] font-bold text-gray-600 dark:text-gray-300 block mb-1">
+                            Tenor / Durasi (Bulan)
                           </label>
-                          <span className="text-[11px] font-black text-lime-700 dark:text-[#D4F826]">
-                            {formTenorMonths || '0'} Bulan
-                          </span>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="1"
+                              max="120"
+                              value={formTenorMonths}
+                              onChange={(e) => handleTenorChange(e.target.value)}
+                              placeholder="6"
+                              className="w-full px-3 py-2 pr-12 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white tabular-nums focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-gray-400">
+                              Bln
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {['3', '6', '12', '24', '36'].map((t) => (
+                              <button
+                                key={t}
+                                type="button"
+                                onClick={() => handleTenorChange(t)}
+                                className={`px-2 py-0.5 rounded-lg text-[10px] font-extrabold cursor-pointer transition-all ${
+                                  formTenorMonths === t
+                                    ? `${brandAccentBg}`
+                                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
+                                }`}
+                              >
+                                {t}x
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            min="1"
-                            max="120"
-                            value={formTenorMonths}
-                            onChange={(e) => handleTenorChange(e.target.value)}
-                            placeholder="Contoh: 6"
-                            className="w-full p-3 pr-16 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
-                          />
-                          <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">
-                            Bulan
-                          </span>
-                        </div>
-                        {/* Quick Tenor Chips */}
-                        <div className="flex flex-wrap gap-1.5 mt-2">
-                          {['3', '6', '12', '24', '36'].map((t) => (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={() => handleTenorChange(t)}
-                              className={`px-2.5 py-1 rounded-xl text-[11px] font-black cursor-pointer transition-all ${
-                                formTenorMonths === t
-                                  ? 'bg-lime-500 text-black shadow-xs scale-102'
-                                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-lime-500'
-                              }`}
-                            >
-                              {t} bln
-                            </button>
-                          ))}
+
+                        {/* Tanggal Jatuh Tempo Bulanan */}
+                        <div>
+                          <label className="text-[11px] font-bold text-gray-600 dark:text-gray-300 block mb-1">
+                            Jatuh Tempo Tiap Tanggal
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="1"
+                              max="31"
+                              value={formDueDayOfMonth}
+                              onChange={(e) => handleDueDayChange(e.target.value)}
+                              placeholder="10"
+                              className="w-full px-3 py-2 pr-16 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white tabular-nums focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-gray-400">
+                               / bln
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {['1', '5', '10', '15', '25'].map((d) => (
+                              <button
+                                key={d}
+                                type="button"
+                                onClick={() => handleDueDayChange(d)}
+                                className={`px-2 py-0.5 rounded-lg text-[10px] font-extrabold cursor-pointer transition-all ${
+                                  formDueDayOfMonth === d
+                                    ? `${brandAccentBg}`
+                                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700'
+                                }`}
+                              >
+                                Tgl {d}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
 
-                      {/* 2. Nominal Cicilan Tiap Bulan */}
+                      {/* Nominal Cicilan per Bulan */}
                       <div>
                         <div className="flex items-center justify-between mb-1">
-                          <label className="text-xs font-bold text-gray-700 dark:text-gray-300">
-                            Besaran Cicilan Tiap Bulan (Rp)
+                          <label className="text-[11px] font-bold text-gray-600 dark:text-gray-300">
+                            Cicilan per Bulan (Rp)
                           </label>
                           {parseNominalInput(formTotalAmount) > 0 && parseInt(formTenorMonths, 10) > 0 && (
                             <button
@@ -1208,10 +1392,12 @@ export function DebtTab() {
                                 const t = parseInt(formTenorMonths, 10);
                                 setFormMonthlyInstallment(formatNominalInput(String(Math.round(tot / t))));
                               }}
-                              className="text-[11px] font-bold text-lime-700 dark:text-[#D4F826] hover:underline cursor-pointer flex items-center gap-1"
+                              className={`text-[10px] font-bold ${brandAccentText} hover:underline cursor-pointer flex items-center gap-1`}
                             >
-                              <Sparkles size={11} />
-                              <span>Hitung Rata ({formatRupiah(Math.round(parseNominalInput(formTotalAmount) / parseInt(formTenorMonths, 10)))})</span>
+                              <Sparkles size={10} />
+                              <span>
+                                Bagi Rata ({formatRupiah(Math.round(parseNominalInput(formTotalAmount) / parseInt(formTenorMonths, 10)))})
+                              </span>
                             </button>
                           )}
                         </div>
@@ -1220,91 +1406,44 @@ export function DebtTab() {
                           inputMode="numeric"
                           value={formMonthlyInstallment}
                           onChange={(e) => setFormMonthlyInstallment(formatNominalInput(e.target.value))}
-                          placeholder="Contoh: 1.000.000"
-                          className="w-full p-3 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                          placeholder="Contoh: 500.000"
+                          className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white tabular-nums focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                         />
-                        {/* Summary calculation */}
                         {parseNominalInput(formMonthlyInstallment) > 0 && parseInt(formTenorMonths, 10) > 0 && (
-                          <div className="flex items-center justify-between text-[11px] font-semibold text-gray-500 dark:text-gray-400 mt-1 px-1">
+                          <div className="flex items-center justify-between text-[10px] font-semibold text-gray-500 dark:text-gray-400 mt-1 px-0.5 tabular-nums">
                             <span>
-                              Estimasi total: {formatRupiah(parseNominalInput(formMonthlyInstallment))} × {formTenorMonths} bln
+                              {formatRupiah(parseNominalInput(formMonthlyInstallment))} × {formTenorMonths} bln
                             </span>
-                            <span className="font-extrabold text-gray-800 dark:text-gray-200">
-                              = {formatRupiah(parseNominalInput(formMonthlyInstallment) * parseInt(formTenorMonths, 10))}
+                            <span className="font-bold text-gray-700 dark:text-gray-300">
+                              Total: {formatRupiah(parseNominalInput(formMonthlyInstallment) * parseInt(formTenorMonths, 10))}
                             </span>
                           </div>
                         )}
-                      </div>
-
-                      {/* 3. Tanggal Jatuh Tempo Tiap Bulan */}
-                      <div>
-                        <div className="flex items-center justify-between mb-1">
-                          <label className="text-xs font-bold text-gray-700 dark:text-gray-300">
-                            Tanggal Pembayaran Tiap Bulan (Jatuh Tempo)
-                          </label>
-                          <span className="text-[11px] font-black text-lime-700 dark:text-[#D4F826]">
-                            Tiap Tanggal {formDueDayOfMonth || '10'}
-                          </span>
-                        </div>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            min="1"
-                            max="31"
-                            value={formDueDayOfMonth}
-                            onChange={(e) => handleDueDayChange(e.target.value)}
-                            placeholder="Contoh: 10"
-                            className="w-full p-3 pr-28 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
-                          />
-                          <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">
-                            Tiap Bulan
-                          </span>
-                        </div>
-                        {/* Quick Date Chips */}
-                        <div className="flex flex-wrap gap-1.5 mt-2">
-                          {['1', '5', '10', '15', '20', '25', '28'].map((d) => (
-                            <button
-                              key={d}
-                              type="button"
-                              onClick={() => handleDueDayChange(d)}
-                              className={`px-2.5 py-1 rounded-xl text-[11px] font-black cursor-pointer transition-all ${
-                                formDueDayOfMonth === d
-                                  ? 'bg-lime-500 text-black shadow-xs scale-102'
-                                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-lime-500'
-                              }`}
-                            >
-                              Tgl {d}
-                            </button>
-                          ))}
-                        </div>
-                        <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1.5 px-0.5">
-                          Pengingat pembayaran cicilan akan berulang setiap tanggal ini setiap bulannya.
-                        </p>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Dates: Start & Due */}
-                <div className="grid grid-cols-2 gap-2">
+                {/* 5. Dates: Start & Target Lunas */}
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs font-bold text-gray-500 block mb-1">
+                    <label className="text-[11px] font-bold text-gray-500 block mb-1">
                       Tanggal Pinjam
                     </label>
                     <input
                       type="date"
                       value={formStartDate}
                       onChange={(e) => handleStartDateChange(e.target.value)}
-                      className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                      className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-bold text-gray-500">
-                        Jatuh Tempo (Target)
+                      <label className="text-[11px] font-bold text-gray-500">
+                        {formIsInstallment ? 'Target Lunas' : 'Jatuh Tempo'}
                       </label>
                       {formIsInstallment && formTenorMonths && (
-                        <span className="text-[10px] text-lime-600 dark:text-[#D4F826] font-semibold">
+                        <span className={`text-[10px] ${brandAccentText} font-bold`}>
                           Auto {formTenorMonths} bln
                         </span>
                       )}
@@ -1313,37 +1452,96 @@ export function DebtTab() {
                       type="date"
                       value={formDueDate}
                       onChange={(e) => setFormDueDate(e.target.value)}
-                      className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                      className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
                   </div>
                 </div>
 
-                {/* Cashflow Sync Option (Only on new additions) */}
+                {/* 6. Jadwal Mulai Pembayaran di Budget (Compact Segmented Toggle + 1-line status) */}
+                {formType === 'payable' && (
+                  <div className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200/80 dark:border-gray-700/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold text-gray-700 dark:text-gray-200">
+                        Jadwal Tagihan di Menu Budget
+                      </span>
+                      <span className="text-[10px] font-semibold text-gray-400">
+                        Pos Tagihan Fixed
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setFormStartBillingMode('current_period')}
+                        className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex items-center justify-between cursor-pointer transition-all ${
+                          formStartBillingMode === 'current_period'
+                            ? 'border-lime-500 dark:border-[#D4F826] bg-lime-500/10 dark:bg-[#D4F826]/10 text-gray-900 dark:text-white font-black'
+                            : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400'
+                        }`}
+                      >
+                        <span>Bulan Ini</span>
+                        {formStartBillingMode === 'current_period' && (
+                          <Check size={13} className="text-lime-600 dark:text-[#D4F826]" />
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormStartBillingMode('next_period');
+                          if (!formIsInstallment) {
+                            const nextDue = computeInstallmentDueDate(
+                              formStartDate || new Date().toISOString().slice(0, 10),
+                              1,
+                              parseInt(formDueDayOfMonth, 10) || 10
+                            );
+                            if (nextDue) setFormDueDate(nextDue);
+                          }
+                        }}
+                        className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex items-center justify-between cursor-pointer transition-all ${
+                          formStartBillingMode === 'next_period'
+                            ? 'border-amber-500 bg-amber-500/10 text-gray-900 dark:text-white font-black'
+                            : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400'
+                        }`}
+                      >
+                        <span>Mulai Bulan Depan</span>
+                        {formStartBillingMode === 'next_period' && (
+                          <Check size={13} className="text-amber-500" />
+                        )}
+                      </button>
+                    </div>
+
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-snug">
+                      {formStartBillingMode === 'next_period'
+                        ? `⏳ Tidak memotong kuota & Pos Tagihan Fixed bulan ini (aktif mulai ${budgetPeriod.nextPaydayIso}).`
+                        : '⚡ Langsung masuk Pos Tagihan Bulanan (Fixed) pada periode budget saat ini.'}
+                    </p>
+                  </div>
+                )}
+
+                {/* 7. Cashflow Sync Option (Only on new additions) & Notes */}
                 {!editingDebt && (
-                  <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 space-y-2.5">
-                    <label className="flex items-start gap-2.5 cursor-pointer">
+                  <div className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200/80 dark:border-gray-700/80 space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={formDisburseCashflow}
                         onChange={(e) => setFormDisburseCashflow(e.target.checked)}
-                        className="mt-0.5 rounded text-lime-500 focus:ring-0 cursor-pointer"
+                        className="rounded text-lime-500 focus:ring-0 cursor-pointer"
                       />
                       <span className="text-xs font-bold text-gray-800 dark:text-gray-200">
                         {formType === 'payable'
-                          ? 'Catat uang pinjaman masuk ke dompet saya sekarang?'
-                          : 'Catat pengeluaran uang pinjaman dari dompet saya sekarang?'}
+                          ? 'Catat dana pinjaman masuk ke saldo dompet?'
+                          : 'Potong dana pinjaman dari saldo dompet sekarang?'}
                       </span>
                     </label>
 
                     {formDisburseCashflow && (
-                      <div className="pl-6 space-y-2">
-                        <label className="text-[11px] font-bold text-gray-500 block">
-                          {formType === 'payable' ? 'Pilih Dompet Penerima:' : 'Pilih Dompet Sumber Uang:'}
-                        </label>
+                      <div className="pl-5 space-y-1.5">
                         <select
                           value={formDisburseWalletId}
                           onChange={(e) => setFormDisburseWalletId(e.target.value)}
-                          className="w-full p-2.5 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white"
+                          className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white"
                         >
                           {walletsWithBalance.map((w) => (
                             <option key={w.id} value={w.id}>
@@ -1356,12 +1554,11 @@ export function DebtTab() {
                           const totalVal = parseNominalInput(formTotalAmount);
                           if (formType === 'receivable' && selectedW && totalVal > selectedW.balance) {
                             return (
-                              <div className="p-2.5 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 text-[11px] text-red-700 dark:text-red-300 flex items-start gap-2">
-                                <AlertCircle size={15} className="text-red-500 shrink-0 mt-0.5" />
+                              <div className="p-2 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 text-[11px] text-red-700 dark:text-red-300 flex items-start gap-1.5">
+                                <AlertCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
                                 <div>
-                                  <span className="font-extrabold">Uang di {selectedW.name} Tidak Cukup!</span>{' '}
-                                  Saldo tersedia {formatRupiah(selectedW.balance, hide)}, kurang{' '}
-                                  <strong>{formatRupiah(totalVal - selectedW.balance, hide)}</strong>.
+                                  <span className="font-extrabold">Saldo {selectedW.name} kurang!</span>{' '}
+                                  Tersedia {formatRupiah(selectedW.balance, hide)}.
                                 </div>
                               </div>
                             );
@@ -1373,54 +1570,32 @@ export function DebtTab() {
                   </div>
                 )}
 
-                {/* Auto-sync info banner for Utang Saya */}
-                {formType === 'payable' && (
-                  <div className="flex items-start gap-2.5 p-3 rounded-2xl bg-lime-500/10 dark:bg-[#D4F826]/10 border border-lime-500/20 dark:border-[#D4F826]/30 text-gray-800 dark:text-gray-200 text-xs">
-                    <span className="text-base shrink-0 leading-none mt-0.5">⚡</span>
-                    <div className="space-y-0.5">
-                      <div className="font-extrabold text-lime-700 dark:text-[#D4F826]">
-                        Sinkronisasi Otomatis ke Budget
-                      </div>
-                      <div className="text-[11px] text-gray-600 dark:text-gray-400 font-medium">
-                        {formIsInstallment && (parseNominalInput(formMonthlyInstallment) > 0 || (parseNominalInput(formTotalAmount) > 0 && parseInt(formTenorMonths, 10) > 0)) ? (
-                          <>
-                            Cicilan sebesar <strong>{formatRupiah(parseNominalInput(formMonthlyInstallment) || Math.round(parseNominalInput(formTotalAmount) / (parseInt(formTenorMonths, 10) || 1)))}/bulan</strong> otomatis tercatat di <strong>Menu Budget (Kebutuhan &gt; Pos Tagihan Bulanan / Fixed)</strong> setiap <strong>tanggal {formDueDayOfMonth || '10'}</strong>.
-                          </>
-                        ) : (
-                          <>
-                            Utang ini otomatis tercatat di <strong>Menu Budget (Kebutuhan)</strong> dan dihitung di <strong>Pos Tagihan Bulanan (Fixed)</strong> dengan target jatuh tempo.
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 {/* Notes */}
                 <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">
+                  <label className="text-[11px] font-bold text-gray-500 block mb-1">
                     Catatan Tambahan (Opsional)
                   </label>
                   <input
                     type="text"
                     value={formNote}
                     onChange={(e) => setFormNote(e.target.value)}
-                    placeholder="e.g. Bunga 0% tenor 12 bulan, nomor kontrak 123456"
-                    className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                    placeholder="Contoh: Bunga 0%, kontrak #12345"
+                    className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
                 </div>
 
-                <div className="flex gap-2 pt-2">
+                {/* Action Buttons */}
+                <div className="flex gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => setIsAddModalOpen(false)}
-                    className="flex-1 py-3 rounded-2xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer"
+                    className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer"
                   >
                     Batal
                   </button>
                   <button
                     type="submit"
-                    className={`flex-1 py-3 rounded-2xl ${brandAccentBg} text-xs font-black shadow-xs cursor-pointer`}
+                    className={`flex-1 py-2.5 rounded-xl ${brandAccentBg} text-xs font-black shadow-xs cursor-pointer`}
                   >
                     {editingDebt ? 'Simpan Perubahan' : 'Simpan Catatan'}
                   </button>

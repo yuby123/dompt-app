@@ -9,12 +9,17 @@ export function Navigation() {
 
   const isPink = settings.accentColor === 'pink';
   const isOrange = settings.accentColor === 'orange';
-  const activeBg = isOrange
+  const isPlum = settings.accentColor === 'plum';
+  const activeBg = isPlum
+    ? 'bg-[#71325A] text-white shadow-xs font-bold scale-105 shadow-[#71325A]/40'
+    : isOrange
     ? 'bg-[#FF6B00] text-white shadow-xs font-bold scale-105 shadow-[#FF6B00]/30'
     : isPink
     ? 'bg-[#FFA4A4] text-black shadow-xs font-bold scale-105'
     : 'bg-[#D4F826] text-black shadow-xs font-bold scale-105';
-  const centerBtnBg = isOrange
+  const centerBtnBg = isPlum
+    ? 'bg-[#71325A] hover:bg-[#5E274A] text-white shadow-[#71325A]/40'
+    : isOrange
     ? 'bg-[#FF6B00] hover:bg-[#ea5e00] text-white shadow-[#FF6B00]/40'
     : isPink
     ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] text-black shadow-[#FFA4A4]/40'

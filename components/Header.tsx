@@ -30,7 +30,10 @@ export function Header() {
 
   const isPink = settings.accentColor === 'pink';
   const isOrange = settings.accentColor === 'orange';
-  const badgeClass = isOrange
+  const isPlum = settings.accentColor === 'plum';
+  const badgeClass = isPlum
+    ? 'bg-[#71325A] text-white'
+    : isOrange
     ? 'bg-[#FF6B00] text-white'
     : isPink
     ? 'bg-[#FFA4A4] text-black'

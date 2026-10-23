@@ -65,22 +65,31 @@ export function SettingsTab() {
   const accentChoice = settings.accentColor || 'lime';
   const isPink = accentChoice === 'pink';
   const isOrange = accentChoice === 'orange';
-  const accentBg = isOrange
+  const isPlum = accentChoice === 'plum';
+  const accentBg = isPlum
+    ? 'bg-[#71325A] text-white'
+    : isOrange
     ? 'bg-[#FF6B00] text-white'
     : isPink
     ? 'bg-[#FFA4A4] text-black'
     : 'bg-[#D4F826] text-black';
-  const accentBtn = isOrange
+  const accentBtn = isPlum
+    ? 'bg-[#71325A] hover:bg-[#5E274A] text-white'
+    : isOrange
     ? 'bg-[#FF6B00] hover:bg-[#ea5e00] text-white'
     : isPink
     ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] text-black'
     : 'bg-[#D4F826] hover:bg-[#c6ec15] text-black';
-  const accentBorder = isOrange
+  const accentBorder = isPlum
+    ? 'border-[#71325A]'
+    : isOrange
     ? 'border-[#FF6B00]'
     : isPink
     ? 'border-[#FFA4A4]'
     : 'border-[#D4F826]';
-  const accentFocusRing = isOrange
+  const accentFocusRing = isPlum
+    ? 'focus:ring-[#71325A]'
+    : isOrange
     ? 'focus:ring-[#FF6B00]'
     : isPink
     ? 'focus:ring-[#FFA4A4]'
@@ -611,6 +620,17 @@ export function SettingsTab() {
                         : 'border-transparent'
                     }`}
                     title="Sunset Orange"
+                  />
+                  <button
+                    type="button"
+                    data-swatch="plum"
+                    onClick={() => setAccentColor('plum')}
+                    className={`w-8 h-8 rounded-full bg-[#71325A] border-2 cursor-pointer transition-transform ${
+                      accentChoice === 'plum'
+                        ? 'scale-110 border-black dark:border-white shadow-xs ring-2 ring-[#71325A]/40'
+                        : 'border-transparent'
+                    }`}
+                    title="Deep Plum (#71325A)"
                   />
                 </div>
               </div>

@@ -54,6 +54,7 @@ export function DesktopSidebar() {
 
   const isPink = settings.accentColor === 'pink';
   const isOrange = settings.accentColor === 'orange';
+  const isPlum = settings.accentColor === 'plum';
 
   const navItems: {
     id: TabType;
@@ -137,7 +138,9 @@ export function DesktopSidebar() {
                 onClick={() => setActiveTab(item.id)}
                 className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-xs transition-all cursor-pointer whitespace-nowrap ${
                   isActive
-                    ? isOrange
+                    ? isPlum
+                      ? 'bg-[#71325A] text-white font-extrabold shadow-xs shadow-[#71325A]/30'
+                      : isOrange
                       ? 'bg-[#FF6B00] text-white font-extrabold shadow-xs shadow-[#FF6B00]/25'
                       : isPink
                       ? 'bg-[#FFA4A4] text-black font-extrabold shadow-xs'

@@ -3,7 +3,7 @@ export type TransactionType = 'expense' | 'income' | 'transfer';
 export type WalletType = 'bank' | 'ewallet' | 'cash' | 'credit' | 'paylater' | 'investment' | 'savings' | 'other';
 export type ThemeMode = 'system' | 'light' | 'dark';
 
-export type AccentColor = 'lime' | 'pink' | 'orange';
+export type AccentColor = 'lime' | 'pink' | 'orange' | 'plum';
 
 export type BudgetStatus = 'safe' | 'warning' | 'exceeded';
 

@@ -221,4 +221,107 @@
   color: #ffffff !important;
 }
 
+/* Global Deep Plum (#71325A) Accent Theme Overrides */
+[data-accent="plum"] .bg-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]) {
+  background-color: #71325A !important;
+}
+[data-accent="plum"] .hover\:bg-\[\#c6ec15\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]):hover,
+[data-accent="plum"] .hover\:bg-\[\#cbf11e\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]):hover,
+[data-accent="plum"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]):hover,
+[data-accent="plum"] .hover\:bg-\[\#c8ed1d\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]):hover,
+[data-accent="plum"] .hover\:bg-\[\#b8dc12\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]):hover {
+  background-color: #5E274A !important;
+}
+[data-accent="plum"] .bg-\[\#EEF9B4\] {
+  background-color: #F7EDF3 !important;
+}
+[data-accent="plum"] .bg-\[\#ECFCCB\],
+[data-accent="plum"] .hover\:bg-\[\#ECFCCB\]:hover {
+  background-color: #F7EDF3 !important;
+}
+[data-accent="plum"] .bg-\[\#F4FDE1\] {
+  background-color: #FAF4F8 !important;
+}
+[data-accent="plum"] .bg-\[\#1C2417\] {
+  background-color: #240F1D !important;
+}
+[data-accent="plum"] .bg-\[\#D4F826\]\/30 {
+  background-color: rgba(113, 50, 90, 0.3) !important;
+}
+[data-accent="plum"] .bg-\[\#D4F826\]\/25,
+[data-accent="plum"] .dark .dark\:bg-\[\#D4F826\]\/25,
+.dark[data-accent="plum"] .dark\:bg-\[\#D4F826\]\/25 {
+  background-color: rgba(113, 50, 90, 0.25) !important;
+}
+[data-accent="plum"] .bg-\[\#D4F826\]\/20,
+[data-accent="plum"] .hover\:bg-\[\#D4F826\]\/20:hover,
+[data-accent="plum"] .dark .dark\:bg-\[\#EEF9B4\]\/20,
+.dark[data-accent="plum"] .dark\:bg-\[\#EEF9B4\]\/20 {
+  background-color: rgba(113, 50, 90, 0.2) !important;
+}
+[data-accent="plum"] .bg-\[\#D4F826\]\/15,
+[data-accent="plum"] .dark .dark\:hover\:bg-\[\#D4F826\]\/15:hover,
+.dark[data-accent="plum"] .dark\:hover\:bg-\[\#D4F826\]\/15:hover {
+  background-color: rgba(113, 50, 90, 0.15) !important;
+}
+[data-accent="plum"] .bg-\[\#D4F826\]\/10,
+[data-accent="plum"] .dark .dark\:bg-\[\#D4F826\]\/10,
+.dark[data-accent="plum"] .dark\:bg-\[\#D4F826\]\/10 {
+  background-color: rgba(113, 50, 90, 0.12) !important;
+}
+
+/* Text color overrides for Plum theme */
+[data-accent="plum"] .text-\[\#D4F826\],
+[data-accent="plum"] .dark .dark\:text-\[\#D4F826\],
+.dark[data-accent="plum"] .dark\:text-\[\#D4F826\] {
+  color: #C0689F !important;
+}
+[data-accent="plum"] .text-\[\#84CC16\] {
+  color: #A24D83 !important;
+}
+[data-accent="plum"] .text-\[\#65A30D\],
+[data-accent="plum"] .text-\[\#658500\] {
+  color: #71325A !important;
+}
+
+/* Border & Ring overrides for Plum theme */
+[data-accent="plum"] .border-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]),
+[data-accent="plum"] .hover\:border-\[\#D4F826\]:hover,
+[data-accent="plum"] .focus\:border-\[\#D4F826\]:focus,
+[data-accent="plum"] .dark .dark\:border-\[\#D4F826\],
+.dark[data-accent="plum"] .dark\:border-\[\#D4F826\] {
+  border-color: #71325A !important;
+}
+[data-accent="plum"] .border-\[\#D4F826\]\/40,
+[data-accent="plum"] .hover\:border-\[\#D4F826\]\/60:hover,
+[data-accent="plum"] .hover\:border-\[\#D4F826\]\/50:hover {
+  border-color: rgba(113, 50, 90, 0.45) !important;
+}
+[data-accent="plum"] .border-\[\#84CC16\] {
+  border-color: #8C3E70 !important;
+}
+[data-accent="plum"] .border-\[\#2D3F1D\] {
+  border-color: #3B162E !important;
+}
+[data-accent="plum"] .ring-\[\#D4F826\],
+[data-accent="plum"] .focus\:ring-\[\#D4F826\]:focus {
+  --tw-ring-color: #71325A !important;
+}
+
+/* Button text & icon contrast for Plum theme (#71325A requires white text for AAA contrast) */
+[data-accent="plum"] button.bg-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]),
+[data-accent="plum"] a.bg-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]) {
+  color: #ffffff !important;
+}
+[data-accent="plum"] button.bg-\[\#D4F826\] svg,
+[data-accent="plum"] a.bg-\[\#D4F826\] svg {
+  color: #ffffff !important;
+}
+
+[data-accent="plum"] ::selection {
+  background-color: #71325A !important;
+  color: #ffffff !important;
+}
+
+
 

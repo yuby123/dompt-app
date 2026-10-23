@@ -1795,7 +1795,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
     const baselineMonthlyExpense = actualOrBudgetedExpense > 0 ? actualOrBudgetedExpense : 3000000;
     const runwayMonths = liquidTotal > 0 ? Number((liquidTotal / baselineMonthlyExpense).toFixed(1)) : 0;
-    const estIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
+    const estIncome = Math.max(
+      typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0,
+      totalIncome
+    );
 
     return {
       totalBalance,
@@ -1899,6 +1902,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return updated;
     });
 
+    let nextBudgetConfig = budgetConfig;
+    if (data.type === 'income' && data.amount > 0) {
+      const currentEst = Math.max(0, Number(budgetConfig.estimatedIncome) || 0);
+      const nextEst = currentEst + data.amount;
+      nextBudgetConfig = {
+        ...budgetConfig,
+        estimatedIncome: nextEst,
+        updatedAt: now,
+      };
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
+    }
+
     if (isCloudUser && user?.uid) {
       saveUserTransaction(user.uid, newTx).catch((err) =>
         console.warn('Error saving transaction to Firestore:', err)
@@ -1906,10 +1923,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (mirrorUid) {
         saveUserTransaction(mirrorUid, newTx).catch(() => {});
       }
-      persistExtendedBudgetToCloud(user.uid, mirrorUid);
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+      });
     }
 
-    addToast('Transaksi Ditambahkan', `${data.note || 'Transaksi baru'} berhasil dicatat.`);
+    if (data.type === 'income' && data.amount > 0) {
+      addToast(
+        'Pemasukan Ditambahkan',
+        `${data.note || 'Pemasukan baru'} (+${formatRupiah(data.amount)}) otomatis masuk ke Perkiraan Pemasukan Budget.`
+      );
+    } else {
+      addToast('Transaksi Ditambahkan', `${data.note || 'Transaksi baru'} berhasil dicatat.`);
+    }
     return generatedId;
   };
 
@@ -1949,6 +1975,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return updated;
     });
 
+    const oldIncAmt = existingTx?.type === 'income' ? Number(existingTx.amount) || 0 : 0;
+    const newIncAmt = nextType === 'income' ? Number(nextAmount) || 0 : 0;
+    const incDelta = newIncAmt - oldIncAmt;
+    let nextBudgetConfig = budgetConfig;
+    if (incDelta !== 0) {
+      const currentEst = Math.max(0, Number(budgetConfig.estimatedIncome) || 0);
+      const nextEst = Math.max(0, currentEst + incDelta);
+      nextBudgetConfig = {
+        ...budgetConfig,
+        estimatedIncome: nextEst,
+        updatedAt: now,
+      };
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
+    }
+
     if (isCloudUser && user?.uid && targetTx) {
       saveUserTransaction(user.uid, targetTx).catch((err) =>
         console.warn('Error updating transaction in Firestore:', err)
@@ -1956,7 +1999,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (mirrorUid) {
         saveUserTransaction(mirrorUid, targetTx).catch(() => {});
       }
-      persistExtendedBudgetToCloud(user.uid, mirrorUid);
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+      });
     }
 
     addToast('Transaksi Diperbarui', 'Perubahan transaksi berhasil disimpan.');
@@ -1965,6 +2010,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const deleteTransaction = (id: string) => {
     markLocalMutation();
+    const deletedTx = transactions.find((t) => t.id === id);
     const nextDeleted = recordDeletedId(id);
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
     if (mirrorUid) {
@@ -1996,6 +2042,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
 
     let nextBudgetConfig = budgetConfig;
+    let budgetChanged = false;
+
+    if (deletedTx && deletedTx.type === 'income' && deletedTx.amount > 0) {
+      const currentEst = Math.max(0, Number(nextBudgetConfig.estimatedIncome) || 0);
+      nextBudgetConfig = {
+        ...nextBudgetConfig,
+        estimatedIncome: Math.max(0, currentEst - deletedTx.amount),
+        deletedIds: nextDeleted,
+        updatedAt: new Date().toISOString(),
+      };
+      budgetChanged = true;
+    }
+
     if (affectedDebt) {
       setDebts(updatedDebts);
       saveStoredDebts(updatedDebts, localScopeUid);
@@ -2010,7 +2069,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const subDisplayName = `Cicilan ${affectedDebt.name}`;
         const cleanDebtName = affectedDebt.name.toLowerCase().trim();
         const monthlyTarget = getMonthlyDebtInstallmentAmount(affectedDebt);
-        const updatedSubs = (budgetConfig.subcategories || []).map((s) => {
+        const updatedSubs = (nextBudgetConfig.subcategories || []).map((s) => {
           const sLower = s.name.toLowerCase().trim();
           if (
             s.id === debtSubId ||
@@ -2026,15 +2085,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return s;
         });
         nextBudgetConfig = {
-          ...budgetConfig,
+          ...nextBudgetConfig,
           subcategories: updatedSubs,
           deletedIds: nextDeleted,
           updatedAt: new Date().toISOString(),
         };
-        setBudgetConfig(nextBudgetConfig);
-        saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
-        if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
+        budgetChanged = true;
       }
+    }
+
+    if (budgetChanged) {
+      setBudgetConfig(nextBudgetConfig);
+      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+      if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
     }
 
     if (isCloudUser && user?.uid) {
@@ -3549,6 +3612,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
     const nextBudgetConfig: BudgetConfig = {
       ...budgetConfig,
+      estimatedIncome:
+        item.type === 'income'
+          ? Math.max(0, (Number(budgetConfig.estimatedIncome) || 0) + item.amount)
+          : budgetConfig.estimatedIncome,
       subcategories: updatedSubcategories,
       subscriptions: nextSubs,
       updatedAt: now,

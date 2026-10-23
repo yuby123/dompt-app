@@ -536,7 +536,19 @@ export function calculateBudgetBreakdown({
   const rawPayday = budgetConfig?.paydayDay || budgetConfig?.settings?.paydayDay || 1;
   const periodInfo = getBudgetPeriodInfo(activeYear, activeMonth, activeDay, rawPayday);
   const daysInMonth = periodInfo.totalDays;
-  const estIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
+
+  let periodRecordedIncome = 0;
+  transactions.forEach((tx) => {
+    if (tx.type === 'income') {
+      const d = parseLocalDay(tx.date);
+      if (isDateInBudgetPeriod(d, periodInfo)) {
+        periodRecordedIncome += tx.amount;
+      }
+    }
+  });
+
+  const rawEstIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
+  const estIncome = Math.max(rawEstIncome, periodRecordedIncome);
 
   // 1. Total spending limit: Needs + Wants (supports 0% for any group)
   const needsPct = typeof budgetConfig?.needsPercent === 'number' ? budgetConfig.needsPercent : 50;

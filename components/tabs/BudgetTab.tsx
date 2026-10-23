@@ -121,8 +121,10 @@ export function BudgetTab() {
     return ['💰', '🪙', '🏦', '📈', '🏅', '🎯', '💵', '🔒', '💎', '🏡', '🥇', '📊', '🧾', '🏧'];
   }, [targetGroup]);
 
-  // Group limits
-  const totalIncome = budgetConfig.estimatedIncome ?? 0;
+  // Group limits (automatically includes recorded income if higher than manual estimate)
+  const rawEstimatedIncome = budgetConfig.estimatedIncome ?? 0;
+  const recordedPeriodIncome = dashboardSummary.monthlyIncome ?? 0;
+  const totalIncome = Math.max(rawEstimatedIncome, recordedPeriodIncome);
   const needsLimit = Math.round((totalIncome * budgetConfig.needsPercent) / 100);
   const wantsLimit = Math.round((totalIncome * budgetConfig.wantsPercent) / 100);
   const savingsLimit = Math.round((totalIncome * budgetConfig.savingsPercent) / 100);
@@ -1056,6 +1058,26 @@ export function BudgetTab() {
               {formatRupiah(totalIncome, hide)}
             </div>
 
+            {recordedPeriodIncome > 0 && (
+              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                <span className="bg-emerald-500/15 border border-emerald-400/30 px-2.5 py-1 rounded-xl text-emerald-300 text-[10px] font-bold flex items-center gap-1.5 tabular-nums">
+                  <span>💰 Pemasukan Tercatat Periode Ini: {formatRupiah(recordedPeriodIncome, hide)}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const merged = rawEstimatedIncome + recordedPeriodIncome;
+                    updateBudgetConfig({ estimatedIncome: merged });
+                  }}
+                  className="bg-white/10 hover:bg-white/20 border border-white/15 px-2.5 py-1 rounded-xl text-[#D4F826] text-[10px] font-extrabold flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Tambahkan pemasukan tercatat yang belum masuk ke angka Perkiraan Pemasukan"
+                >
+                  <Plus size={11} strokeWidth={2.8} />
+                  <span>Gabungkan (+{formatRupiah(recordedPeriodIncome, hide)})</span>
+                </button>
+              </div>
+            )}
+
             {dashboardSummary.monthlyGroceryExpense > 0 && (
               <div className="pt-1">
                 <button
@@ -1103,7 +1125,7 @@ export function BudgetTab() {
         </div>
 
         {/* Pos Anggaran: Tagihan Bulanan (Fixed) vs Harian & Belanja Bulanan (Fleksibel) — Collapsed by default, expand on click */}
-        {budgetConfig.estimatedIncome > 0 && (
+        {totalIncome > 0 && (
           <div className="pt-3.5 border-t border-white/10 grid grid-cols-1 lg:grid-cols-2 gap-2.5 text-xs items-start">
             {/* 1. Menu Pos Tagihan Bulanan (Fixed) */}
             <div className="h-full flex flex-col bg-white/[0.04] hover:bg-white/[0.07] rounded-2xl border border-white/10 transition-colors overflow-hidden">
@@ -1510,7 +1532,42 @@ export function BudgetTab() {
                     placeholder="Contoh: 5.000.000"
                     className="w-full p-3.5 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-2xl text-base font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
+                  <p className="text-[11px] text-gray-400 mt-1.5">
+                    Setiap kali Anda mencatat transaksi Pemasukan baru, nominalnya otomatis ditambahkan ke Perkiraan Pemasukan ini.
+                  </p>
                 </div>
+
+                {recordedPeriodIncome > 0 && (
+                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-bold text-emerald-700 dark:text-emerald-300">
+                        Total Pemasukan Tercatat:
+                      </span>
+                      <span className="font-black text-emerald-700 dark:text-emerald-300 tabular-nums">
+                        {formatRupiah(recordedPeriodIncome)}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setTempIncomeInput(formatNominalInput(recordedPeriodIncome))}
+                        className="py-1.5 px-2 rounded-xl bg-white dark:bg-gray-800 border border-emerald-500/30 text-[10px] font-extrabold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+                      >
+                        Samakan Nominal
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const cur = parseNominalInput(tempIncomeInput);
+                          setTempIncomeInput(formatNominalInput(cur + recordedPeriodIncome));
+                        }}
+                        className="py-1.5 px-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-[10px] font-extrabold text-white transition-colors cursor-pointer"
+                      >
+                        + Tambahkan
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex gap-2">
                   <button

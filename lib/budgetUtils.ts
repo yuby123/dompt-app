@@ -42,6 +42,57 @@ export function getMonthlySubscriptionAmount(
 }
 
 /**
+ * Computes the monthly installment obligation for a payable debt.
+ * Always prioritizes the monthly installment cost (monthlyInstallment or totalAmount / tenorMonths)
+ * rather than the total multi-month debt principal so Pos Tagihan Bulanan and Daily Quota stay accurate.
+ */
+export function getMonthlyDebtInstallmentAmount(
+  debt: Debt,
+  fallbackSubAllocated?: number
+): number {
+  const remaining = Math.max(0, Number(debt.remainingAmount ?? debt.totalAmount) || 0);
+  const total = Math.max(remaining, Number(debt.totalAmount) || 0);
+  if (remaining <= 0 && debt.status === 'paid') return 0;
+
+  // 1. Explicit monthlyInstallment on the debt record
+  if (debt.monthlyInstallment && debt.monthlyInstallment > 0) {
+    return remaining > 0 ? Math.min(debt.monthlyInstallment, remaining) : debt.monthlyInstallment;
+  }
+
+  // 2. Calculate from tenorMonths if available
+  if (debt.tenorMonths && debt.tenorMonths > 0 && total > 0) {
+    const calcMonthly = Math.round(total / debt.tenorMonths);
+    return remaining > 0 ? Math.min(calcMonthly, remaining) : calcMonthly;
+  }
+
+  // 3. Calculate from startDate -> dueDate month span if >= 2 months
+  if (debt.startDate && debt.dueDate) {
+    const start = new Date(debt.startDate);
+    const due = new Date(debt.dueDate);
+    if (!isNaN(start.getTime()) && !isNaN(due.getTime()) && due.getTime() > start.getTime()) {
+      const monthsDiff =
+        (due.getFullYear() - start.getFullYear()) * 12 + (due.getMonth() - start.getMonth());
+      if (monthsDiff >= 2 && total > 0) {
+        const calcMonthly = Math.round(total / monthsDiff);
+        return remaining > 0 ? Math.min(calcMonthly, remaining) : calcMonthly;
+      }
+    }
+  }
+
+  // 4. If user set a smaller monthly allocation on the linked subcategory, respect it
+  if (
+    fallbackSubAllocated &&
+    fallbackSubAllocated > 0 &&
+    remaining > 0 &&
+    fallbackSubAllocated < remaining
+  ) {
+    return fallbackSubAllocated;
+  }
+
+  return remaining || total;
+}
+
+/**
  * Determines whether a transaction is a Savings / Investment Allocation (Alokasi Tabungan).
  */
 export function isSavingsExpense(
@@ -487,13 +538,14 @@ export function calculateBudgetBreakdown({
   const daysInMonth = periodInfo.totalDays;
   const estIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
 
-  // 1. Total spending limit: Needs (50%) + Wants (30%)
-  const monthlySpendingLimit = Math.round(
-    (estIncome * ((budgetConfig?.needsPercent || 50) + (budgetConfig?.wantsPercent || 30))) / 100
-  );
+  // 1. Total spending limit: Needs + Wants (supports 0% for any group)
+  const needsPct = typeof budgetConfig?.needsPercent === 'number' ? budgetConfig.needsPercent : 50;
+  const wantsPct = typeof budgetConfig?.wantsPercent === 'number' ? budgetConfig.wantsPercent : 30;
+  const monthlySpendingLimit = Math.round((estIncome * (needsPct + wantsPct)) / 100);
 
-  // Build lookup of expense subscriptions
+  // Build lookup of expense subscriptions & payable debts
   const expenseSubscriptions = subscriptions.filter((s) => s.type === 'expense');
+  const payableDebts = (debts || []).filter((d) => d.type === 'payable');
 
   // 2. Identify active fixed subcategories and grocery/cooking stock subcategories from Needs & Wants
   const activeFixedSubs: { id: string; name: string; allocatedAmount: number }[] = [];
@@ -504,6 +556,25 @@ export function calculateBudgetBreakdown({
       if (sub.group === 'tabungan') return;
 
       const subNameLower = sub.name.toLowerCase().trim();
+      const matchedDebt = payableDebts.find((d) => {
+        const debtSubId = `sub-debt-${d.id}`;
+        const cleanDebtName = d.name.toLowerCase().trim();
+        const subDisplayName = d.name.toLowerCase().startsWith('cicilan')
+          ? cleanDebtName
+          : `cicilan ${cleanDebtName}`;
+        return (
+          sub.id === debtSubId ||
+          sub.subscriptionId === d.id ||
+          subNameLower === subDisplayName ||
+          subNameLower === cleanDebtName
+        );
+      });
+
+      if (matchedDebt) {
+        const isPaid = matchedDebt.status === 'paid' && (matchedDebt.remainingAmount ?? 0) <= 0;
+        if (isPaid) return;
+      }
+
       const linkedSub = expenseSubscriptions.find(
         (rec) =>
           rec.id === sub.subscriptionId ||
@@ -513,11 +584,12 @@ export function calculateBudgetBreakdown({
 
       if (linkedSub) {
         if (!linkedSub.isActive) return;
-      } else if (sub.isSubscriptionActive === false) {
+      } else if (sub.isSubscriptionActive === false && !matchedDebt) {
         return;
       }
 
       const isSubFixed =
+        Boolean(matchedDebt) ||
         Boolean(sub.dueDateDay) ||
         Boolean(sub.subscriptionId) ||
         Boolean(linkedSub) ||
@@ -526,10 +598,14 @@ export function calculateBudgetBreakdown({
         FIXED_EXPENSE_KEYWORDS_REGEX.test(sub.name);
 
       if (isSubFixed) {
+        const resolvedAllocated = matchedDebt
+          ? getMonthlyDebtInstallmentAmount(matchedDebt, Number(sub.allocatedAmount) || 0)
+          : Number(sub.allocatedAmount) || 0;
+
         activeFixedSubs.push({
           id: sub.id,
           name: sub.name,
-          allocatedAmount: Number(sub.allocatedAmount) || 0,
+          allocatedAmount: resolvedAllocated,
         });
       } else if (isGrocerySubcategory(sub)) {
         activeGrocerySubs.push({
@@ -550,9 +626,9 @@ export function calculateBudgetBreakdown({
       ? budgetConfig.mealsOutPerDay
       : 1;
 
-  // 2b. Auto-include active payable debts (cicilan utang) into fixed obligations
-  (debts || []).forEach((debt) => {
-    if (debt.type !== 'payable' || debt.status !== 'active') return;
+  // 2b. Auto-include active payable debts (cicilan utang) into fixed obligations using monthly installment cost
+  payableDebts.forEach((debt) => {
+    if (debt.status !== 'active') return;
     const debtSubId = `sub-debt-${debt.id}`;
     const cleanDebtName = debt.name.toLowerCase().trim();
     const alreadyIncluded = activeFixedSubs.some((s) => {
@@ -567,7 +643,7 @@ export function calculateBudgetBreakdown({
       activeFixedSubs.push({
         id: debtSubId,
         name: debt.name.toLowerCase().startsWith('cicilan') ? debt.name : `Cicilan ${debt.name}`,
-        allocatedAmount: Number(debt.remainingAmount ?? debt.totalAmount) || 0,
+        allocatedAmount: getMonthlyDebtInstallmentAmount(debt),
       });
     }
   });

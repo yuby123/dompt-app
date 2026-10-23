@@ -2,8 +2,54 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, X, ArrowRight, Camera, Image as ImageIcon, Zap, CheckCircle2 } from 'lucide-react';
+import { Sparkles, X, ArrowRight, Camera, Zap } from 'lucide-react';
 import { useApp } from './AppContext';
+
+export async function readLatestImageFromClipboard(): Promise<{
+  base64: string;
+  mimeType: string;
+} | null> {
+  if (typeof navigator === 'undefined' || !navigator.clipboard?.read) {
+    return null;
+  }
+
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      // 1. Check direct image/* MIME types first
+      const imageType = item.types.find((t) => t.startsWith('image/'));
+      if (imageType) {
+        const blob = await item.getType(imageType);
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve((reader.result as string) || '');
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+        if (base64) {
+          return { base64, mimeType: imageType };
+        }
+      }
+
+      // 2. Fallback: check if clipboard item has text/html with embedded data:image/*
+      if (item.types.includes('text/html')) {
+        const htmlBlob = await item.getType('text/html');
+        const htmlText = await htmlBlob.text();
+        const match = htmlText.match(/src=["'](data:image\/([a-zA-Z0-9+.-]+);base64,[^"']+)["']/i);
+        if (match && match[1]) {
+          return {
+            base64: match[1],
+            mimeType: `image/${match[2] || 'png'}`,
+          };
+        }
+      }
+    }
+  } catch {
+    // Clipboard read requires user gesture or permission on some mobile browsers
+  }
+
+  return null;
+}
 
 export function ClipboardScreenshotDetector() {
   const { openScanModal, isScanModalOpen, addToast } = useApp();
@@ -15,14 +61,13 @@ export function ClipboardScreenshotDetector() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   const lastProcessedRef = useRef<string>('');
-  const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
   const blurTimestampRef = useRef<number>(0);
   const autoDismissTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // 1. Immediately consume any screenshot shared via PWA Web Share Target or ?scan=auto
   useEffect(() => {
     const processSharedScreenshot = () => {
-      if (typeof window === 'undefined') return;
+      if (typeof window === 'undefined') return false;
 
       try {
         const sharedImage =
@@ -34,7 +79,6 @@ export function ClipboardScreenshotDetector() {
           'image/jpeg';
 
         if (sharedImage) {
-          // Clear flags immediately to avoid re-triggering
           sessionStorage.removeItem('dompt_shared_image');
           sessionStorage.removeItem('dompt_shared_mime');
           localStorage.removeItem('dompt_pending_screenshot');
@@ -46,15 +90,15 @@ export function ClipboardScreenshotDetector() {
           }
 
           lastProcessedRef.current = sharedImage;
-          openScanModal(sharedImage, sharedMime);
+          openScanModal(sharedImage, sharedMime, true);
           return true;
         }
 
-        // Also check URL search params for ?scan=auto or ?scan=open
+        // Check URL search params for ?scan=auto or ?scan=open
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('scan') === 'auto' || urlParams.get('scan') === 'open') {
           window.history.replaceState({}, document.title, window.location.pathname);
-          openScanModal();
+          openScanModal(undefined, undefined, true);
           return true;
         }
       } catch (err) {
@@ -63,11 +107,9 @@ export function ClipboardScreenshotDetector() {
       return false;
     };
 
-    // Run on initial mount
     const handled = processSharedScreenshot();
     if (handled) return;
 
-    // Also listen to pageshow and focus
     const handleWindowFocusOrShow = () => {
       processSharedScreenshot();
     };
@@ -81,59 +123,53 @@ export function ClipboardScreenshotDetector() {
     };
   }, [openScanModal]);
 
-  // 2. Passive check clipboard for images (works on desktop and when permission was already granted)
-  const tryPassiveClipboardRead = useCallback(async () => {
-    if (isScanModalOpen || typeof navigator === 'undefined' || !navigator.clipboard?.read) return;
-
-    try {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        const imageType = item.types.find((t) => t.startsWith('image/'));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            const base64 = e.target?.result as string;
-            if (base64 && base64 !== lastProcessedRef.current) {
-              setDetectedClipboardImage({ base64, mimeType: imageType });
-            }
-          };
-          reader.readAsDataURL(blob);
-          return;
+  // 2. Passive check clipboard for images and auto-trigger scan if user just returned from taking a screenshot
+  const tryPassiveClipboardRead = useCallback(
+    async (autoOpenIfFound = false) => {
+      if (isScanModalOpen) return false;
+      const clipImg = await readLatestImageFromClipboard();
+      if (clipImg && clipImg.base64 !== lastProcessedRef.current) {
+        if (autoOpenIfFound) {
+          lastProcessedRef.current = clipImg.base64;
+          setDetectedClipboardImage(null);
+          setShowRecentReturnBanner(false);
+          openScanModal(clipImg.base64, clipImg.mimeType, true);
+          return true;
         }
+        setDetectedClipboardImage(clipImg);
+        return true;
       }
-    } catch {
-      // Permission required or user gesture needed on mobile browsers — handled gracefully via the Return Banner
-    }
-  }, [isScanModalOpen]);
+      return false;
+    },
+    [isScanModalOpen, openScanModal]
+  );
 
-  // 3. Monitor app switching (e.g. user went to GoPay/BCA, took a screenshot, then returned to Dompt PWA)
+  // 3. Monitor app switching (e.g. user went to GoPay/BCA/DANA, took a screenshot, then returned to Dompt PWA)
   useEffect(() => {
-    const handleVisibilityChange = () => {
+    const handleVisibilityChange = async () => {
       if (document.visibilityState === 'hidden') {
         blurTimestampRef.current = Date.now();
       } else if (document.visibilityState === 'visible') {
         const timeAway = Date.now() - blurTimestampRef.current;
-        // If user was away for > 1.5 seconds, they might have just taken a screenshot in an e-wallet
-        if (blurTimestampRef.current > 0 && timeAway > 1500 && !isScanModalOpen) {
-          // Attempt passive clipboard read first
-          tryPassiveClipboardRead();
-
-          // Also trigger the smart return banner on mobile
-          setShowRecentReturnBanner(true);
-
-          if (autoDismissTimerRef.current) {
-            clearTimeout(autoDismissTimerRef.current);
+        if (blurTimestampRef.current > 0 && timeAway > 1200 && !isScanModalOpen) {
+          // Immediately try to read clipboard and auto-record without asking to upload!
+          const autoOpened = await tryPassiveClipboardRead(true);
+          if (!autoOpened) {
+            // If mobile browser requires a single tap gesture to unlock clipboard.read(), show 1-tap banner
+            setShowRecentReturnBanner(true);
+            if (autoDismissTimerRef.current) {
+              clearTimeout(autoDismissTimerRef.current);
+            }
+            autoDismissTimerRef.current = setTimeout(() => {
+              setShowRecentReturnBanner(false);
+            }, 15000);
           }
-          autoDismissTimerRef.current = setTimeout(() => {
-            setShowRecentReturnBanner(false);
-          }, 14000);
         }
       }
     };
 
     const handleFocus = () => {
-      tryPassiveClipboardRead();
+      tryPassiveClipboardRead(false);
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -146,9 +182,9 @@ export function ClipboardScreenshotDetector() {
         clearTimeout(autoDismissTimerRef.current);
       }
     };
-  }, [isScanModalOpen]);
+  }, [isScanModalOpen, tryPassiveClipboardRead]);
 
-  // 4. Global window paste listener (Ctrl+V on desktop or paste on mobile inputs)
+  // 4. Global window paste listener (Ctrl+V on desktop or paste on mobile)
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       if (isScanModalOpen) return;
@@ -164,7 +200,7 @@ export function ClipboardScreenshotDetector() {
               const base64 = event.target?.result as string;
               if (base64) {
                 lastProcessedRef.current = base64;
-                openScanModal(base64, blob.type);
+                openScanModal(base64, blob.type, true);
                 setDetectedClipboardImage(null);
                 setShowRecentReturnBanner(false);
               }
@@ -180,85 +216,48 @@ export function ClipboardScreenshotDetector() {
     return () => window.removeEventListener('paste', handlePaste);
   }, [isScanModalOpen, openScanModal]);
 
-  // Handle hidden file input selection
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      addToast('Format Tidak Didukung', 'Pilih file gambar screenshot (PNG/JPG)', 'error');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const base64 = ev.target?.result as string;
-      if (base64) {
-        lastProcessedRef.current = base64;
-        openScanModal(base64, file.type);
-        setDetectedClipboardImage(null);
-        setShowRecentReturnBanner(false);
-      }
-    };
-    reader.readAsDataURL(file);
-    // Reset file input value so same file can be reselected if needed
-    e.target.value = '';
-  };
-
-  // 1-Tap Auto Detect Action (invoked directly from user tap/click gesture)
+  // 1-Tap Auto Detect Action from Clipboard (never forces file upload dialog)
   const handleAutoDetectClick = async () => {
     setIsProcessing(true);
 
-    // 1. Try reading directly from clipboard with this active user gesture
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.read) {
-      try {
-        const clipboardItems = await navigator.clipboard.read();
-        for (const item of clipboardItems) {
-          const imgType = item.types.find((t) => t.startsWith('image/'));
-          if (imgType) {
-            const blob = await item.getType(imgType);
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-              const base64 = ev.target?.result as string;
-              if (base64) {
-                lastProcessedRef.current = base64;
-                openScanModal(base64, imgType);
-                setDetectedClipboardImage(null);
-                setShowRecentReturnBanner(false);
-                setIsProcessing(false);
-              }
-            };
-            reader.readAsDataURL(blob);
-            return;
-          }
-        }
-      } catch {
-        // Clipboard read was not permitted or contained no image
-      }
+    // 1. If passive check already cached the clipboard image, use it immediately
+    if (detectedClipboardImage?.base64) {
+      lastProcessedRef.current = detectedClipboardImage.base64;
+      const { base64, mimeType } = detectedClipboardImage;
+      setDetectedClipboardImage(null);
+      setShowRecentReturnBanner(false);
+      setIsProcessing(false);
+      openScanModal(base64, mimeType, true);
+      return;
     }
 
-    // 2. If no image found in clipboard, immediately open the mobile photo selector
-    // On Android and iOS, this instantly opens the "Recent Screenshots" gallery
+    // 2. Read directly from clipboard using this active user tap gesture
+    const clipImg = await readLatestImageFromClipboard();
+    if (clipImg?.base64) {
+      lastProcessedRef.current = clipImg.base64;
+      setDetectedClipboardImage(null);
+      setShowRecentReturnBanner(false);
+      setIsProcessing(false);
+      openScanModal(clipImg.base64, clipImg.mimeType, true);
+      return;
+    }
+
+    // 3. If clipboard had no image or browser blocked clipboard, open ScanModal (which also listens for paste)
     setIsProcessing(false);
     setShowRecentReturnBanner(false);
-    if (hiddenFileInputRef.current) {
-      hiddenFileInputRef.current.click();
-    }
-  };
-
-  const handleOpenGallery = () => {
-    setShowRecentReturnBanner(false);
-    setDetectedClipboardImage(null);
-    if (hiddenFileInputRef.current) {
-      hiddenFileInputRef.current.click();
-    }
+    addToast(
+      'Membuka Pendeteksi Clipboard',
+      'Pastikan screenshot sudah tersalin di clipboard HP Anda.',
+      'info'
+    );
+    openScanModal(undefined, undefined, true);
   };
 
   // Accept detected clipboard image
   const handleAcceptClipboard = () => {
     if (!detectedClipboardImage) return;
     lastProcessedRef.current = detectedClipboardImage.base64;
-    openScanModal(detectedClipboardImage.base64, detectedClipboardImage.mimeType);
+    openScanModal(detectedClipboardImage.base64, detectedClipboardImage.mimeType, true);
     setDetectedClipboardImage(null);
     setShowRecentReturnBanner(false);
   };
@@ -267,15 +266,6 @@ export function ClipboardScreenshotDetector() {
 
   return (
     <>
-      {/* Hidden file input for mobile screenshot selection */}
-      <input
-        ref={hiddenFileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleFileInputChange}
-      />
-
       {/* Case A: Concrete Image detected in Clipboard */}
       <AnimatePresence>
         {detectedClipboardImage && (
@@ -300,7 +290,7 @@ export function ClipboardScreenshotDetector() {
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-300 truncate mt-0.5">
-                  Ekstrak nominal & kategori otomatis?
+                  Ketuk untuk langsung catat nominal otomatis
                 </p>
               </div>
 
@@ -310,7 +300,7 @@ export function ClipboardScreenshotDetector() {
                   onClick={handleAcceptClipboard}
                   className="px-3.5 py-1.5 bg-[#D4F826] text-black text-xs font-extrabold rounded-xl shadow-xs hover:bg-[#c6ec15] active:scale-95 transition-all flex items-center gap-1 cursor-pointer"
                 >
-                  <span>Ekstrak</span>
+                  <span>Catat Otomatis</span>
                   <ArrowRight size={13} strokeWidth={2.6} />
                 </button>
                 <button
@@ -344,14 +334,14 @@ export function ClipboardScreenshotDetector() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-extrabold uppercase tracking-wider bg-[#D4F826]/20 text-[#D4F826] px-1.5 py-0.5 rounded-md">
-                    Deteksi SS
+                    Auto Clipboard
                   </span>
                   <span className="text-xs font-bold text-white truncate">
-                    Baru Screenshot E-Wallet?
+                    Baru Screenshot Transaksi?
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-300 truncate mt-0.5">
-                  Ketuk untuk deteksi otomatis transaksi Anda
+                  Ketuk untuk baca clipboard & langsung catat nominalnya
                 </p>
               </div>
 
@@ -364,15 +354,6 @@ export function ClipboardScreenshotDetector() {
                 >
                   <Sparkles size={13} strokeWidth={2.4} />
                   <span>{isProcessing ? 'Membaca...' : 'Deteksi'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleOpenGallery}
-                  className="p-1.5 text-slate-300 hover:text-white bg-white/10 hover:bg-white/20 rounded-xl transition-all cursor-pointer"
-                  title="Pilih dari Galeri"
-                >
-                  <ImageIcon size={15} />
                 </button>
 
                 <button

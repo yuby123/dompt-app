@@ -4,7 +4,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Camera,
-  Upload,
   Clipboard,
   X,
   Sparkles,
@@ -14,21 +13,18 @@ import {
   Receipt,
   FileImage,
   RefreshCw,
-  HelpCircle,
   Share2,
-  Check,
-  Building2,
-  CreditCard,
-  Calendar,
   Clock,
   Tag,
   Wallet as WalletIcon,
+  Trash2,
 } from 'lucide-react';
 import { useApp } from './AppContext';
 import { formatRupiah } from '@/lib/formatters';
 import { TransactionType } from '@/lib/types';
 import { compressImageForOcr } from '@/lib/imageUtils';
 import { detectExpenseNature } from '@/lib/budgetUtils';
+import { readLatestImageFromClipboard } from './ClipboardScreenshotDetector';
 
 interface ExtractedData {
   amount: number;
@@ -42,7 +38,6 @@ interface ExtractedData {
   notes?: string;
 }
 
-// Generate realistic simulated screenshots for instant testing / demo
 const SAMPLE_RECEIPTS = [
   {
     name: 'QRIS DANA (Kopi Kenangan)',
@@ -56,28 +51,6 @@ const SAMPLE_RECEIPTS = [
     notes: 'Pembayaran QRIS Kopi Kenangan Mall',
     date: new Date().toISOString().slice(0, 10),
     time: '14:25',
-    svgData: (
-      <svg width="400" height="480" viewBox="0 0 400 480" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect width="400" height="480" rx="24" fill="#118EEA" />
-        <rect y="100" width="400" height="380" rx="24" fill="#FFFFFF" />
-        <circle cx="200" cy="100" r="32" fill="#118EEA" stroke="#FFFFFF" strokeWidth="4" />
-        <path d="M190 100L197 107L212 92" stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-        <text x="200" y="55" fill="#FFFFFF" fontSize="18" fontWeight="bold" textAnchor="middle">DANA - Pembayaran Berhasil</text>
-        <text x="200" y="155" fill="#888888" fontSize="13" textAnchor="middle">Total Pembayaran</text>
-        <text x="200" y="195" fill="#118EEA" fontSize="28" fontWeight="900" textAnchor="middle">Rp 42.500</text>
-        <text x="200" y="235" fill="#222222" fontSize="16" fontWeight="bold" textAnchor="middle">Kopi Kenangan Mall Grand</text>
-        <text x="200" y="255" fill="#666666" fontSize="12" textAnchor="middle">Metode: Saldo DANA via QRIS</text>
-        <line x1="40" y1="280" x2="360" y2="280" stroke="#EEEEEE" strokeWidth="2" strokeDasharray="6 6" />
-        <text x="50" y="315" fill="#777777" fontSize="12">ID Transaksi</text>
-        <text x="350" y="315" fill="#222222" fontSize="12" fontWeight="bold" textAnchor="end">DANA-20261007-8892</text>
-        <text x="50" y="345" fill="#777777" fontSize="12">Waktu Transaksi</text>
-        <text x="350" y="345" fill="#222222" fontSize="12" fontWeight="bold" textAnchor="end">Hari ini, 14:25 WIB</text>
-        <text x="50" y="375" fill="#777777" fontSize="12">Status</text>
-        <text x="350" y="375" fill="#16A34A" fontSize="12" fontWeight="bold" textAnchor="end">BERHASIL</text>
-        <rect x="50" y="410" width="300" height="40" rx="12" fill="#EBF5FF" />
-        <text x="200" y="435" fill="#118EEA" fontSize="12" fontWeight="bold" textAnchor="middle">Simpan Bukti Pembayaran</text>
-      </svg>
-    ),
   },
   {
     name: 'm-BCA (Transfer ke Budi)',
@@ -91,25 +64,6 @@ const SAMPLE_RECEIPTS = [
     notes: 'Transfer m-BCA ke 5270192837 Budi Santoso',
     date: new Date().toISOString().slice(0, 10),
     time: '11:15',
-    svgData: (
-      <svg width="400" height="480" viewBox="0 0 400 480" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect width="400" height="480" rx="24" fill="#003D79" />
-        <rect y="90" width="400" height="390" rx="24" fill="#F8FAFC" />
-        <circle cx="200" cy="90" r="30" fill="#003D79" stroke="#FFFFFF" strokeWidth="4" />
-        <path d="M192 90L198 96L210 84" stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-        <text x="200" y="50" fill="#FFFFFF" fontSize="18" fontWeight="bold" textAnchor="middle">m-Transfer BERHASIL</text>
-        <text x="200" y="145" fill="#64748B" fontSize="13" textAnchor="middle">JUMLAH TRANSFER</text>
-        <text x="200" y="185" fill="#003D79" fontSize="28" fontWeight="900" textAnchor="middle">Rp 175.000,00</text>
-        <rect x="35" y="215" width="330" height="180" rx="16" fill="#FFFFFF" stroke="#E2E8F0" />
-        <text x="55" y="245" fill="#64748B" fontSize="12">DARI REKENING</text>
-        <text x="55" y="265" fill="#0F172A" fontSize="13" fontWeight="bold">5270-XXXX-XX (FADD)</text>
-        <text x="55" y="295" fill="#64748B" fontSize="12">KE REKENING</text>
-        <text x="55" y="315" fill="#0F172A" fontSize="13" fontWeight="bold">8291-0192-38 (BUDI SANTOSO)</text>
-        <text x="55" y="345" fill="#64748B" fontSize="12">BERITA / CATATAN</text>
-        <text x="55" y="365" fill="#0F172A" fontSize="13" fontWeight="bold">Makan Siang Bersama</text>
-        <text x="200" y="425" fill="#64748B" fontSize="11" textAnchor="middle">BCA Mobile • Layanan Transaksi Finansial</text>
-      </svg>
-    ),
   },
   {
     name: 'Struk Indomaret Kasir',
@@ -123,33 +77,6 @@ const SAMPLE_RECEIPTS = [
     notes: 'Struk Belanja Indomaret Point Kemang',
     date: new Date().toISOString().slice(0, 10),
     time: '19:40',
-    svgData: (
-      <svg width="400" height="480" viewBox="0 0 400 480" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect width="400" height="480" rx="20" fill="#FFFDF9" stroke="#E5E7EB" strokeWidth="2" />
-        <text x="200" y="45" fill="#E11D48" fontSize="20" fontWeight="900" textAnchor="middle">INDOMARET</text>
-        <text x="200" y="68" fill="#4B5563" fontSize="11" textAnchor="middle">PT. INDOMARCO PRISMATAMA</text>
-        <text x="200" y="86" fill="#6B7280" fontSize="10" textAnchor="middle">JL. KEMANG RAYA NO. 12 JAKARTA</text>
-        <line x1="30" y1="102" x2="370" y2="102" stroke="#9CA3AF" strokeWidth="1" strokeDasharray="4 4" />
-        <text x="40" y="130" fill="#111827" fontSize="12" fontWeight="bold">MINYAK GORENG 2L</text>
-        <text x="360" y="130" fill="#111827" fontSize="12" textAnchor="end">34.500</text>
-        <text x="40" y="155" fill="#111827" fontSize="12" fontWeight="bold">TELUR AYAM NEGERI 10S</text>
-        <text x="360" y="155" fill="#111827" fontSize="12" textAnchor="end">28.000</text>
-        <text x="40" y="180" fill="#111827" fontSize="12" fontWeight="bold">ROTI TAWAR GANDUM</text>
-        <text x="360" y="180" fill="#111827" fontSize="12" textAnchor="end">16.500</text>
-        <text x="40" y="205" fill="#111827" fontSize="12" fontWeight="bold">AIR MINERAL 1500ML</text>
-        <text x="360" y="205" fill="#111827" fontSize="12" textAnchor="end">10.200</text>
-        <line x1="30" y1="230" x2="370" y2="230" stroke="#9CA3AF" strokeWidth="1" strokeDasharray="4 4" />
-        <text x="40" y="260" fill="#111827" fontSize="14" fontWeight="bold">TOTAL BELANJA</text>
-        <text x="360" y="260" fill="#E11D48" fontSize="18" fontWeight="900" textAnchor="end">Rp 89.200</text>
-        <text x="40" y="290" fill="#6B7280" fontSize="11">TUNAI / CASH</text>
-        <text x="360" y="290" fill="#111827" fontSize="11" textAnchor="end">100.000</text>
-        <text x="40" y="315" fill="#6B7280" fontSize="11">KEMBALIAN</text>
-        <text x="360" y="315" fill="#111827" fontSize="11" textAnchor="end">10.800</text>
-        <line x1="30" y1="340" x2="370" y2="340" stroke="#9CA3AF" strokeWidth="1" strokeDasharray="4 4" />
-        <text x="200" y="375" fill="#4B5563" fontSize="11" textAnchor="middle">TERIMA KASIH ATAS KUNJUNGAN ANDA</text>
-        <text x="200" y="395" fill="#9CA3AF" fontSize="10" textAnchor="middle">Layanan Konsumen: 1500-280</text>
-      </svg>
-    ),
   },
 ];
 
@@ -163,6 +90,8 @@ export function ScanReceiptModal() {
     walletsWithBalance,
     categories,
     addTransaction,
+    updateTransaction,
+    deleteTransaction,
     transferFunds,
     addToast: showToast,
   } = useApp();
@@ -170,12 +99,13 @@ export function ScanReceiptModal() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [mimeType, setMimeType] = useState<string>('image/jpeg');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [loadingStep, setLoadingStep] = useState<string>('Memproses gambar screenshot...');
+  const [loadingStep, setLoadingStep] = useState<string>('Membaca gambar dari clipboard...');
   const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
+  const [autoSavedTxId, setAutoSavedTxId] = useState<string | null>(null);
 
-  // Form override inputs for user confirmation
+  // Form override inputs for user confirmation / quick edit
   const [selectedWalletId, setSelectedWalletId] = useState<string>('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
   const [customNote, setCustomNote] = useState<string>('');
@@ -185,22 +115,132 @@ export function ScanReceiptModal() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Analyze image with AI endpoint with step progression and timeout protection
-  const analyzeImage = async (base64: string, type: string) => {
+  // Resolve best wallet & category from extracted receipt data
+  const resolveWalletAndCategory = (data: ExtractedData) => {
+    const query = `${data.suggestedWallet || ''} ${data.sourceApp || ''}`.toLowerCase();
+    const matchedByName = walletsWithBalance.find((w) => {
+      if (!query.trim()) return false;
+      const wName = w.name.toLowerCase();
+      return (
+        wName.includes(query) ||
+        query.includes(wName) ||
+        (query.includes('seabank') && (wName.includes('rekening') || w.type === 'bank')) ||
+        (query.includes('bca') && (wName.includes('bca') || w.type === 'bank')) ||
+        (query.includes('mandiri') && (wName.includes('mandiri') || w.type === 'bank')) ||
+        (query.includes('bri') && (wName.includes('bri') || w.type === 'bank')) ||
+        (query.includes('bank') && w.type === 'bank') ||
+        (query.includes('shopee') && (wName.includes('shopee') || wName.includes('ewallet') || w.type === 'ewallet')) ||
+        (query.includes('dana') && (wName.includes('dana') || wName.includes('ewallet') || w.type === 'ewallet')) ||
+        (query.includes('gopay') && (wName.includes('gopay') || wName.includes('ewallet') || w.type === 'ewallet')) ||
+        (query.includes('ovo') && (wName.includes('ovo') || wName.includes('ewallet') || w.type === 'ewallet'))
+      );
+    });
+
+    const isOutflow = data.type === 'expense' || data.type === 'transfer';
+    let bestWallet = matchedByName;
+    if (isOutflow && (!bestWallet || bestWallet.balance < data.amount)) {
+      const fundedMatch = walletsWithBalance.find(
+        (w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance >= data.amount
+      );
+      if (fundedMatch) bestWallet = fundedMatch;
+    }
+    const resolvedWalletId = bestWallet?.id || walletsWithBalance[0]?.id || wallets[0]?.id || '';
+
+    const targetCatType = data.type === 'income' ? 'income' : 'expense';
+    const availableCats = categories.filter((c) => c.type === targetCatType);
+    const matchCategory = availableCats.find((c) => {
+      if (!data.suggestedCategory) return false;
+      const s = data.suggestedCategory.toLowerCase();
+      return c.name.toLowerCase().includes(s) || s.includes(c.name.toLowerCase());
+    });
+    const resolvedCategoryId = matchCategory ? matchCategory.id : availableCats[0]?.id || '';
+
+    return { resolvedWalletId, resolvedCategoryId };
+  };
+
+  // Automatically save extracted transaction immediately after AI detection
+  const autoSaveExtractedData = (
+    data: ExtractedData,
+    walletIdToUse: string,
+    categoryIdToUse: string,
+    noteToUse: string
+  ) => {
+    if (!data.amount || data.amount <= 0) return;
+
+    const dateToUse = data.date ? new Date(data.date).toISOString() : new Date().toISOString();
+
+    if (data.type === 'transfer') {
+      const targetW = walletsWithBalance.find((w) => w.id !== walletIdToUse);
+      const ok = transferFunds(
+        walletIdToUse,
+        targetW?.id || walletsWithBalance[1]?.id || wallets[1]?.id || '',
+        data.amount,
+        noteToUse.trim() || 'Transfer otomatis dari screenshot',
+        dateToUse
+      );
+      if (ok) {
+        setAutoSavedTxId('transfer-saved');
+        showToast(
+          'Otomatis Tercatat!',
+          `${formatRupiah(data.amount)} (${data.sourceApp || 'Screenshot'}) langsung dicatat.`,
+          'success'
+        );
+      }
+      return;
+    }
+
+    const chosenCat = categories.find((c) => c.id === categoryIdToUse);
+    const catMap = new Map(categories.map((c) => [c.id, c]));
+    const detectedNature =
+      data.type === 'expense'
+        ? detectExpenseNature(categoryIdToUse, noteToUse, catMap)
+        : undefined;
+    const effectiveBudgetGroup =
+      data.type === 'expense'
+        ? detectedNature === 'savings'
+          ? 'tabungan'
+          : chosenCat?.budgetGroup
+        : undefined;
+
+    const createdId = addTransaction({
+      type: data.type,
+      amount: data.amount,
+      walletId: walletIdToUse,
+      categoryId: categoryIdToUse || null,
+      budgetGroup: effectiveBudgetGroup,
+      expenseNature: detectedNature,
+      transferWalletId: null,
+      date: dateToUse,
+      note: noteToUse.trim() || data.title || 'Transaksi dari screenshot',
+    });
+
+    if (createdId) {
+      setAutoSavedTxId(createdId);
+      showToast(
+        'Nominal Otomatis Tercatat!',
+        `${formatRupiah(data.amount)} • ${noteToUse.trim() || data.title || 'Screenshot'} berhasil masuk ke transaksi.`,
+        'success'
+      );
+    }
+  };
+
+  // Analyze image with AI endpoint and immediately auto-record the transaction
+  const analyzeImage = async (base64: string, type: string, shouldAutoSave = true) => {
     setIsAnalyzing(true);
     setErrorMsg(null);
-    setLoadingStep('AI Gemini sedang membaca teks bukti transfer...');
+    setAutoSavedTxId(null);
+    setLoadingStep('AI sedang mendeteksi nominal & detail transaksi...');
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 20000);
 
     const step1 = setTimeout(() => {
-      setLoadingStep('Mengekstrak nominal Rupiah & bank pengirim...');
-    }, 1500);
+      setLoadingStep('Mengekstrak nominal Rupiah & aplikasi pembayaran...');
+    }, 1400);
 
     const step2 = setTimeout(() => {
-      setLoadingStep('Mencocokkan dompet & kategori transaksi...');
-    }, 3500);
+      setLoadingStep('Mencatat otomatis ke dompet & kategori...');
+    }, 3200);
 
     try {
       const res = await fetch('/api/scan-receipt', {
@@ -228,37 +268,20 @@ export function ScanReceiptModal() {
       }
 
       const data: ExtractedData = json.data;
+      const noteStr = data.notes || data.title || '';
+      const { resolvedWalletId, resolvedCategoryId } = resolveWalletAndCategory(data);
+
       setExtractedData(data);
       setCustomAmount(data.amount);
       setCustomType(data.type);
-      setCustomNote(data.notes || data.title || '');
+      setCustomNote(noteStr);
+      setSelectedWalletId(resolvedWalletId);
+      setSelectedCategoryId(resolvedCategoryId);
 
-      // Best match wallet from available user wallets (supporting SeaBank, BCA, Mandiri, BRI, DANA, dll)
-      const matchWallet = wallets.find((w) => {
-        const query = `${data.suggestedWallet || ''} ${data.sourceApp || ''}`.toLowerCase();
-        if (!query.trim()) return false;
-        const wName = w.name.toLowerCase();
-        return (
-          wName.includes(query) ||
-          query.includes(wName) ||
-          (query.includes('seabank') && (wName.includes('rekening') || w.type === 'bank')) ||
-          (query.includes('bank') && w.type === 'bank') ||
-          (query.includes('shopee') && wName.includes('ewallet')) ||
-          (query.includes('dana') && wName.includes('ewallet')) ||
-          (query.includes('gopay') && wName.includes('ewallet'))
-        );
-      });
-      setSelectedWalletId(matchWallet ? matchWallet.id : wallets[0]?.id || '');
-
-      // Best match category
-      const targetCatType = data.type === 'income' ? 'income' : 'expense';
-      const availableCats = categories.filter((c) => c.type === targetCatType);
-      const matchCategory = availableCats.find((c) => {
-        if (!data.suggestedCategory) return false;
-        const s = data.suggestedCategory.toLowerCase();
-        return c.name.toLowerCase().includes(s) || s.includes(c.name.toLowerCase());
-      });
-      setSelectedCategoryId(matchCategory ? matchCategory.id : availableCats[0]?.id || '');
+      // Automatically record the transaction right away as requested by user!
+      if (shouldAutoSave && data.amount > 0) {
+        autoSaveExtractedData(data, resolvedWalletId, resolvedCategoryId, noteStr);
+      }
     } catch (err: any) {
       clearTimeout(step1);
       clearTimeout(step2);
@@ -274,7 +297,27 @@ export function ScanReceiptModal() {
     }
   };
 
-  // Handle file from picker or camera with auto-compression
+  // Process a raw base64 screenshot and trigger AI + auto-save
+  const processBase64Screenshot = async (rawBase64: string, rawMime: string, shouldAutoSave = true) => {
+    setErrorMsg(null);
+    setExtractedData(null);
+    setAutoSavedTxId(null);
+    setIsAnalyzing(true);
+    setLoadingStep('Membaca screenshot terakhir dari clipboard...');
+
+    try {
+      const compressed = await compressImageForOcr(rawBase64, 1200, 0.82);
+      setImagePreview(compressed.base64);
+      setMimeType(compressed.mimeType);
+      await analyzeImage(compressed.base64, compressed.mimeType, shouldAutoSave);
+    } catch {
+      setImagePreview(rawBase64);
+      setMimeType(rawMime);
+      await analyzeImage(rawBase64, rawMime, shouldAutoSave);
+    }
+  };
+
+  // Handle file from picker or camera with auto-compression & auto-save
   const handleFile = async (file: File) => {
     if (!file.type.startsWith('image/')) {
       setErrorMsg('Harap pilih file gambar (PNG, JPG, WEBP)');
@@ -283,49 +326,55 @@ export function ScanReceiptModal() {
 
     setErrorMsg(null);
     setExtractedData(null);
+    setAutoSavedTxId(null);
     setIsAnalyzing(true);
     setLoadingStep('Mengoptimalkan & membaca screenshot...');
 
     try {
-      // Compress multi-MB smartphone screenshots to ~150KB for rapid upload
       const compressed = await compressImageForOcr(file, 1200, 0.82);
       setImagePreview(compressed.base64);
       setMimeType(compressed.mimeType);
-      analyzeImage(compressed.base64, compressed.mimeType);
-    } catch (err) {
-      console.error(err);
+      await analyzeImage(compressed.base64, compressed.mimeType, true);
+    } catch {
       const reader = new FileReader();
       reader.onload = (e) => {
         const base64 = e.target?.result as string;
         setImagePreview(base64);
         setMimeType(file.type);
-        analyzeImage(base64, file.type);
+        analyzeImage(base64, file.type, true);
       };
       reader.readAsDataURL(file);
     }
   };
 
-  // Handle when modal opens with initial image (e.g. from clipboard or Android Share Target)
+  // When modal opens:
+  // 1) If scanInitialImage was passed (from ClipboardScreenshotDetector or Share Target), process it immediately.
+  // 2) Otherwise, automatically read the latest image from navigator.clipboard right away without asking user to upload!
   useEffect(() => {
-    if (!isScanModalOpen || !scanInitialImage?.base64) return;
-    const initial = scanInitialImage;
-    const timer = setTimeout(async () => {
-      try {
-        setIsAnalyzing(true);
-        setLoadingStep('Mengoptimalkan screenshot...');
-        const compressed = await compressImageForOcr(initial.base64, 1200, 0.82);
-        setImagePreview(compressed.base64);
-        setMimeType(compressed.mimeType);
+    if (!isScanModalOpen) return;
+
+    let cancelled = false;
+    const runInitialDetection = async () => {
+      if (scanInitialImage?.base64) {
+        const initial = scanInitialImage;
         setScanInitialImage(null);
-        analyzeImage(compressed.base64, compressed.mimeType);
-      } catch {
-        setImagePreview(initial.base64);
-        setMimeType(initial.mimeType);
-        setScanInitialImage(null);
-        analyzeImage(initial.base64, initial.mimeType);
+        await processBase64Screenshot(initial.base64, initial.mimeType, initial.autoSave !== false);
+        return;
       }
-    }, 0);
-    return () => clearTimeout(timer);
+
+      // If no initial image was passed and no preview is active, automatically check clipboard!
+      if (!imagePreview && !extractedData && !isAnalyzing) {
+        const clipImg = await readLatestImageFromClipboard();
+        if (!cancelled && clipImg?.base64) {
+          await processBase64Screenshot(clipImg.base64, clipImg.mimeType, true);
+        }
+      }
+    };
+
+    runInitialDetection();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isScanModalOpen, scanInitialImage]);
 
@@ -355,59 +404,32 @@ export function ScanReceiptModal() {
 
   // Direct clipboard button handler
   const handleClipboardPasteButton = async () => {
-    try {
-      if (!navigator.clipboard?.read) {
-        showToast('Info', 'Gunakan upload file atau tekan tombol Ctrl+V', 'info');
-        return;
-      }
-      const clipboardItems = await navigator.clipboard.read();
-      for (const item of clipboardItems) {
-        const imageType = item.types.find((t) => t.startsWith('image/'));
-        if (imageType) {
-          const blob = await item.getType(imageType);
-          const file = new File([blob], 'screenshot.png', { type: imageType });
-          handleFile(file);
-          return;
-        }
-      }
-      showToast('Clipboard Kosong', 'Tidak ada gambar screenshot di clipboard Anda', 'info');
-    } catch {
-      showToast('Akses Clipboard', 'Silakan gunakan tombol upload atau tekan Ctrl+V pada keyboard', 'info');
+    const clipImg = await readLatestImageFromClipboard();
+    if (clipImg?.base64) {
+      await processBase64Screenshot(clipImg.base64, clipImg.mimeType, true);
+      return;
     }
+    showToast(
+      'Clipboard Kosong / Perlu Izin',
+      'Salin screenshot terlebih dahulu atau tempel (Paste) gambar di sini.',
+      'info'
+    );
   };
 
-  // Handle test sample click
+  // Handle test sample click (also auto-records immediately)
   const handleSelectSample = (sample: (typeof SAMPLE_RECEIPTS)[0]) => {
     setErrorMsg(null);
+    const { resolvedWalletId, resolvedCategoryId } = resolveWalletAndCategory(sample);
     setExtractedData(sample);
     setCustomAmount(sample.amount);
     setCustomType(sample.type);
     setCustomNote(sample.notes);
-
-    // Render sample SVG as image
-    const svgString = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="480">${
-      // Extract inner content from sample.svgData
-      ''
-    }</svg>`;
-    setImagePreview(`data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`);
-
-    // Match wallet
-    const matchWallet = wallets.find((w) =>
-      w.name.toLowerCase().includes(sample.suggestedWallet.toLowerCase().split(' ')[0])
-    );
-    setSelectedWalletId(matchWallet ? matchWallet.id : wallets[0]?.id || '');
-
-    // Match category
-    const availableCats = categories.filter((c) => c.type === sample.type);
-    const matchCat = availableCats.find((c) =>
-      c.name.toLowerCase().includes(sample.suggestedCategory.toLowerCase())
-    );
-    setSelectedCategoryId(matchCat ? matchCat.id : availableCats[0]?.id || '');
-
-    showToast('Contoh Dimuat', `Mengekstrak: ${sample.name}`, 'info');
+    setSelectedWalletId(resolvedWalletId);
+    setSelectedCategoryId(resolvedCategoryId);
+    autoSaveExtractedData(sample, resolvedWalletId, resolvedCategoryId, sample.notes);
   };
 
-  // Save extracted transaction to app state
+  // Save or update extracted transaction
   const handleSaveTransaction = () => {
     const finalAmount = customAmount || extractedData?.amount || 0;
     if (finalAmount <= 0) return;
@@ -415,6 +437,39 @@ export function ScanReceiptModal() {
     const dateToUse = extractedData?.date
       ? new Date(extractedData.date).toISOString()
       : new Date().toISOString();
+
+    const chosenCat = categories.find((c) => c.id === selectedCategoryId);
+    const catMap = new Map(categories.map((c) => [c.id, c]));
+    const detectedNature =
+      customType === 'expense'
+        ? detectExpenseNature(selectedCategoryId, customNote, catMap)
+        : undefined;
+    const effectiveBudgetGroup =
+      customType === 'expense'
+        ? detectedNature === 'savings'
+          ? 'tabungan'
+          : chosenCat?.budgetGroup
+        : undefined;
+
+    // If already auto-saved, update the existing transaction if edited, and close
+    if (autoSavedTxId && autoSavedTxId !== 'transfer-saved') {
+      updateTransaction(autoSavedTxId, {
+        type: customType,
+        amount: finalAmount,
+        walletId: selectedWalletId || walletsWithBalance[0]?.id || wallets[0]?.id || '',
+        categoryId: selectedCategoryId || null,
+        budgetGroup: effectiveBudgetGroup,
+        expenseNature: detectedNature,
+        note: customNote.trim() || undefined,
+      });
+      handleClose();
+      return;
+    }
+
+    if (autoSavedTxId === 'transfer-saved') {
+      handleClose();
+      return;
+    }
 
     if (customType === 'transfer') {
       const targetW = walletsWithBalance.find((w) => w.id !== selectedWalletId);
@@ -427,19 +482,6 @@ export function ScanReceiptModal() {
       );
       if (!ok) return;
     } else {
-      const chosenCat = categories.find((c) => c.id === selectedCategoryId);
-      const catMap = new Map(categories.map((c) => [c.id, c]));
-      const detectedNature =
-        customType === 'expense'
-          ? detectExpenseNature(selectedCategoryId, customNote, catMap)
-          : undefined;
-      const effectiveBudgetGroup =
-        customType === 'expense'
-          ? detectedNature === 'savings'
-            ? 'tabungan'
-            : chosenCat?.budgetGroup
-          : undefined;
-
       const createdId = addTransaction({
         type: customType,
         amount: finalAmount,
@@ -462,12 +504,23 @@ export function ScanReceiptModal() {
     handleClose();
   };
 
+  const handleUndoAutoSave = () => {
+    if (autoSavedTxId && autoSavedTxId !== 'transfer-saved') {
+      deleteTransaction(autoSavedTxId);
+    }
+    setAutoSavedTxId(null);
+    setImagePreview(null);
+    setExtractedData(null);
+    handleClose();
+  };
+
   const handleClose = () => {
     setIsScanModalOpen(false);
     setImagePreview(null);
     setExtractedData(null);
     setErrorMsg(null);
     setShowGuide(false);
+    setAutoSavedTxId(null);
   };
 
   if (!isScanModalOpen) return null;
@@ -484,15 +537,19 @@ export function ScanReceiptModal() {
         >
           {/* Header */}
           <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-gray-100 dark:border-gray-800">
-            <h2 className="text-base font-black text-gray-900 dark:text-gray-100">
-              Scan Struk
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-black text-gray-900 dark:text-gray-100">
+                Auto-Deteksi Screenshot
+              </h2>
+              {autoSavedTxId && (
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-black flex items-center gap-1">
+                  <CheckCircle2 size={11} />
+                  <span>Tercatat Otomatis</span>
+                </span>
+              )}
+            </div>
 
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-xs font-black text-gray-700 dark:text-gray-200">
-                <Sparkles size={13} className="text-[#84CC16]" />
-                <span>1173</span>
-              </div>
               <button
                 type="button"
                 onClick={handleClose}
@@ -515,7 +572,7 @@ export function ScanReceiptModal() {
                 <div className="flex items-center justify-between">
                   <h4 className="font-extrabold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
                     <Share2 size={15} />
-                    <span>3 Cara Otomatis di HP Anda</span>
+                    <span>Cara Kerja Auto-Deteksi & Catat Otomatis</span>
                   </h4>
                   <button
                     type="button"
@@ -526,95 +583,61 @@ export function ScanReceiptModal() {
                   </button>
                 </div>
                 <div className="space-y-2 text-[11px] leading-relaxed">
-                  <div className="flex items-start gap-2">
-                    <span className="w-5 h-5 rounded-full bg-teal-600 text-white font-bold flex items-center justify-center shrink-0 text-[10px]">
-                      1
-                    </span>
-                    <p>
-                      <strong>Screenshot & Bagikan (Share):</strong> Saat ambil screenshot di HP, tekan tombol <em>Bagikan (Share)</em> pada popup screenshot lalu pilih <strong>Dompt.</strong>.
-                    </p>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="w-5 h-5 rounded-full bg-teal-600 text-white font-bold flex items-center justify-center shrink-0 text-[10px]">
-                      2
-                    </span>
-                    <p>
-                      <strong>Salin & Buka App:</strong> Screenshot bukti transfer, salin gambar, lalu buka Dompt. Banner <em>Terdeteksi SS</em> akan otomatis muncul di atas layar!
-                    </p>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <span className="w-5 h-5 rounded-full bg-teal-600 text-white font-bold flex items-center justify-center shrink-0 text-[10px]">
-                      3
-                    </span>
-                    <p>
-                      <strong>Upload atau Foto Struk:</strong> Pilih langsung dari galeri HP atau gunakan kamera langsung untuk struk kasir Indomaret/Alfamart/SPBU.
-                    </p>
-                  </div>
+                  <p>
+                    1. <strong>Dari Clipboard Terakhir:</strong> Begitu Anda screenshot bukti pembayaran dan kembali ke aplikasi, gambar di clipboard otomatis dibaca dan nominalnya langsung dicatat ke transaksi.
+                  </p>
+                  <p>
+                    2. <strong>Bagikan (Share) ke Dompt:</strong> Dari popup hasil screenshot HP, pilih <strong>Bagikan ➔ Dompt.</strong> untuk langsung mencatat nominal tanpa buka galeri.
+                  </p>
                 </div>
               </motion.div>
             )}
 
-            {/* Upload & Paste Selection Area */}
-            {!imagePreview && (
+            {/* Upload & Paste Selection Area (only shown if clipboard was empty) */}
+            {!imagePreview && !isAnalyzing && !extractedData && (
               <div className="space-y-4">
-                {/* Main Action Card */}
                 <div className="border border-gray-200 dark:border-gray-800 rounded-3xl p-5 sm:p-6 text-center space-y-4 bg-gray-50/50 dark:bg-gray-800/20">
                   <div className="w-13 h-13 rounded-2xl bg-[#D4F826]/20 border border-[#D4F826]/30 text-gray-900 dark:text-[#D4F826] flex items-center justify-center mx-auto shadow-xs">
-                    <Camera size={26} strokeWidth={2.2} />
+                    <Clipboard size={26} strokeWidth={2.2} />
                   </div>
                   <div>
                     <h4 className="text-sm font-extrabold text-gray-900 dark:text-white">
-                      Deteksi Transaksi Otomatis (AI)
+                      Deteksi dari Clipboard Gambar Terakhir
                     </h4>
                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 max-w-xs mx-auto mt-1">
-                      Pilih screenshot e-wallet, tempel clipboard, atau ambil foto struk belanja.
+                      Ketuk tombol di bawah untuk langsung membaca screenshot terakhir dari clipboard HP Anda & mencatat nominalnya otomatis.
                     </p>
                   </div>
 
-                  {/* 3 Quick Action Buttons */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 max-w-md mx-auto">
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="py-3 px-3 bg-[#D4F826] hover:bg-[#c6ec15] text-black font-black text-xs rounded-2xl shadow-xs transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
-                    >
-                      <FileImage size={15} strokeWidth={2.5} />
-                      <span>Pilih Screenshot</span>
-                    </button>
-
+                  {/* Primary Action: Read Clipboard Directly */}
+                  <div className="space-y-2 max-w-md mx-auto">
                     <button
                       type="button"
                       onClick={handleClipboardPasteButton}
-                      className="py-3 px-3 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 font-bold text-xs rounded-2xl transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                      className="w-full py-3.5 px-4 bg-[#D4F826] hover:bg-[#c6ec15] text-black font-black text-xs rounded-2xl shadow-sm transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <Clipboard size={15} strokeWidth={2.5} />
-                      <span>Tempel Clipboard</span>
+                      <Clipboard size={16} strokeWidth={2.5} />
+                      <span>Deteksi dari Clipboard Sekarang</span>
                     </button>
 
-                    <button
-                      type="button"
-                      onClick={() => cameraInputRef.current?.click()}
-                      className="py-3 px-3 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 font-bold text-xs rounded-2xl transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
-                    >
-                      <Camera size={15} strokeWidth={2.5} />
-                      <span>Foto Kamera</span>
-                    </button>
-                  </div>
-                </div>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="py-2.5 px-3 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 font-bold text-xs rounded-2xl transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <FileImage size={14} strokeWidth={2.3} />
+                        <span>Dari Galeri</span>
+                      </button>
 
-                {/* PWA Auto-Detect Tip Banner */}
-                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-lime-500/10 border border-emerald-500/20 text-xs">
-                  <div className="flex items-start gap-2.5">
-                    <div className="w-6 h-6 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0 font-bold text-[11px] mt-0.5">
-                      💡
-                    </div>
-                    <div className="space-y-1">
-                      <p className="font-extrabold text-emerald-900 dark:text-emerald-300">
-                        Tips Auto-Deteksi di HP (PWA)
-                      </p>
-                      <p className="text-[11px] text-gray-600 dark:text-gray-300 leading-relaxed">
-                        Saat selesai transfer di GoPay, OVO, DANA, atau BCA lalu screenshot HP, tekan tombol <strong>Bagikan (Share) ➔ Dompt.</strong> pada popup screenshot HP. Transaksi akan langsung otomatis terbuka dan diekstrak!
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() => cameraInputRef.current?.click()}
+                        className="py-2.5 px-3 bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200 font-bold text-xs rounded-2xl transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Camera size={14} strokeWidth={2.3} />
+                        <span>Foto Struk</span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -644,12 +667,12 @@ export function ScanReceiptModal() {
                 />
 
                 {/* Instant Demo Samples */}
-                <div className="pt-2">
+                <div className="pt-1">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">
-                      Atau Coba Contoh Nyata Langsung:
+                      Atau Tes Auto-Catat Langsung:
                     </span>
-                    <span className="text-[10px] text-teal-600 font-semibold">1-Klik Ekstrak</span>
+                    <span className="text-[10px] text-teal-600 font-semibold">Auto-Simpan</span>
                   </div>
                   <div className="grid grid-cols-1 gap-2">
                     {SAMPLE_RECEIPTS.map((s, idx) => (
@@ -671,7 +694,7 @@ export function ScanReceiptModal() {
                           </div>
                         </div>
                         <span className="text-[11px] font-bold text-teal-600 dark:text-teal-400 shrink-0 flex items-center gap-0.5">
-                          <span>Tes</span>
+                          <span>Catat</span>
                           <ArrowRight size={12} />
                         </span>
                       </button>
@@ -683,15 +706,14 @@ export function ScanReceiptModal() {
 
             {/* Image Preview & Scanning Laser Animation */}
             {imagePreview && (
-              <div className="relative rounded-2xl overflow-hidden bg-gray-900 max-h-56 flex items-center justify-center border border-gray-200 dark:border-gray-800">
+              <div className="relative rounded-2xl overflow-hidden bg-gray-900 max-h-48 flex items-center justify-center border border-gray-200 dark:border-gray-800">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={imagePreview}
                   alt="Bukti transaksi"
-                  className="max-h-56 w-auto object-contain"
+                  className="max-h-48 w-auto object-contain"
                 />
 
-                {/* Laser scan line overlay during analysis */}
                 {isAnalyzing && (
                   <div className="absolute inset-0 pointer-events-none overflow-hidden">
                     <motion.div
@@ -720,7 +742,7 @@ export function ScanReceiptModal() {
                     {loadingStep}
                   </h3>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-xs mx-auto">
-                    Mengenali nominal Rupiah, bank pengirim, merchant penerima, tanggal, dan kategori...
+                    Nominal transaksi akan langsung dicatat otomatis begitu selesai dibaca.
                   </p>
                 </div>
               </div>
@@ -744,14 +766,18 @@ export function ScanReceiptModal() {
               </div>
             )}
 
-            {/* Result Extracted Hero & Editable Confirmation */}
+            {/* Result Extracted Hero & Auto-Saved Confirmation */}
             {extractedData && (
               <div className="space-y-4">
-                {/* Extracted Amount Hero */}
-                <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/40 p-4 rounded-3xl text-center">
-                  <div className="flex items-center justify-center gap-2 mb-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/50 px-2 py-0.5 rounded-full">
-                      {extractedData.sourceApp || 'Terdeteksi Otomatis'}
+                <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/40 p-4 rounded-3xl text-center space-y-1.5">
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-white bg-emerald-600 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                      <CheckCircle2 size={11} />
+                      <span>
+                        {autoSavedTxId
+                          ? 'Nominal Langsung Tercatat!'
+                          : extractedData.sourceApp || 'Terdeteksi Otomatis'}
+                      </span>
                     </span>
                     {extractedData.time && (
                       <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-0.5">
@@ -761,11 +787,11 @@ export function ScanReceiptModal() {
                     )}
                   </div>
 
-                  <div className="text-3xl font-black text-emerald-800 dark:text-emerald-300 tabular-nums">
+                  <div className="text-3xl font-black text-emerald-800 dark:text-emerald-300 tabular-nums pt-0.5">
                     {formatRupiah(customAmount || extractedData.amount)}
                   </div>
 
-                  <div className="flex items-center justify-center gap-2 mt-2">
+                  <div className="flex items-center justify-center gap-2">
                     <span
                       className={`text-xs font-bold px-2.5 py-0.5 rounded-full capitalize ${
                         customType === 'expense'
@@ -789,9 +815,8 @@ export function ScanReceiptModal() {
                   </div>
                 </div>
 
-                {/* Form Matching Details */}
+                {/* Form Matching Details (User can optionally adjust wallet/category) */}
                 <div className="space-y-3 bg-gray-50 dark:bg-gray-800/40 p-4 rounded-2xl border border-gray-100 dark:border-gray-800 text-xs">
-                  {/* Dompet Selector */}
                   <div>
                     <label className="font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 mb-1">
                       <WalletIcon size={14} className="text-teal-600" />
@@ -808,32 +833,8 @@ export function ScanReceiptModal() {
                         </option>
                       ))}
                     </select>
-                    {(() => {
-                      const activeW =
-                        walletsWithBalance.find((w) => w.id === selectedWalletId) ||
-                        walletsWithBalance[0];
-                      const activeAmt = customAmount || extractedData.amount || 0;
-                      if (
-                        (customType === 'expense' || customType === 'transfer') &&
-                        activeW &&
-                        activeAmt > activeW.balance
-                      ) {
-                        return (
-                          <div className="mt-2 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 text-[11px] text-red-700 dark:text-red-300 flex items-start gap-2">
-                            <AlertCircle size={15} className="text-red-500 shrink-0 mt-0.5" />
-                            <div>
-                              <span className="font-extrabold">Uang di {activeW.name} Tidak Cukup!</span>{' '}
-                              Saldo saat ini {formatRupiah(activeW.balance)}, kurang{' '}
-                              <strong>{formatRupiah(activeAmt - activeW.balance)}</strong>.
-                            </div>
-                          </div>
-                        );
-                      }
-                      return null;
-                    })()}
                   </div>
 
-                  {/* Kategori Selector */}
                   {customType !== 'transfer' && (
                     <div>
                       <label className="font-bold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 mb-1">
@@ -856,7 +857,6 @@ export function ScanReceiptModal() {
                     </div>
                   )}
 
-                  {/* Catatan */}
                   <div>
                     <label className="font-bold text-gray-700 dark:text-gray-300 block mb-1">
                       Keterangan / Catatan:
@@ -873,26 +873,51 @@ export function ScanReceiptModal() {
 
                 {/* Bottom Action Buttons */}
                 <div className="flex gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setImagePreview(null);
-                      setExtractedData(null);
-                    }}
-                    className="p-3 text-xs font-semibold rounded-2xl bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <RefreshCw size={14} />
-                    <span>Scan Lain</span>
-                  </button>
+                  {autoSavedTxId ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleUndoAutoSave}
+                        className="px-3.5 py-3 text-xs font-bold rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 hover:bg-rose-100 flex items-center justify-center gap-1.5 cursor-pointer"
+                        title="Batalkan catatan otomatis ini"
+                      >
+                        <Trash2 size={14} />
+                        <span>Batalkan</span>
+                      </button>
 
-                  <button
-                    type="button"
-                    onClick={handleSaveTransaction}
-                    className="flex-1 py-3 text-xs font-black rounded-2xl bg-[#0F766E] hover:bg-teal-700 text-white shadow-md active:scale-98 transition-transform flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <CheckCircle2 size={16} />
-                    <span>Simpan ke Transaksi Sekarang</span>
-                  </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveTransaction}
+                        className="flex-1 py-3 text-xs font-black rounded-2xl bg-[#0F766E] hover:bg-teal-700 text-white shadow-md active:scale-98 transition-transform flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <CheckCircle2 size={16} />
+                        <span>Selesai (Sudah Tercatat)</span>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImagePreview(null);
+                          setExtractedData(null);
+                        }}
+                        className="p-3 text-xs font-semibold rounded-2xl bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <RefreshCw size={14} />
+                        <span>Ulangi</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleSaveTransaction}
+                        className="flex-1 py-3 text-xs font-black rounded-2xl bg-[#0F766E] hover:bg-teal-700 text-white shadow-md active:scale-98 transition-transform flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <CheckCircle2 size={16} />
+                        <span>Simpan ke Transaksi Sekarang</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             )}

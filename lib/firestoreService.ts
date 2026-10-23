@@ -583,9 +583,18 @@ export async function fetchUserBudgetConfig(
 
     return {
       estimatedIncome: Number(data.estimatedIncome) || 0,
-      needsPercent: Number(data.needsPercent) || 50,
-      wantsPercent: Number(data.wantsPercent) || 30,
-      savingsPercent: Number(data.savingsPercent) || 20,
+      needsPercent:
+        data.needsPercent !== undefined && data.needsPercent !== null
+          ? Number(data.needsPercent)
+          : 50,
+      wantsPercent:
+        data.wantsPercent !== undefined && data.wantsPercent !== null
+          ? Number(data.wantsPercent)
+          : 30,
+      savingsPercent:
+        data.savingsPercent !== undefined && data.savingsPercent !== null
+          ? Number(data.savingsPercent)
+          : 20,
       ...(resolvedPaydayDay ? { paydayDay: resolvedPaydayDay } : {}),
       subcategories: Array.isArray(parsedSubcategories) ? parsedSubcategories : [],
       ...(parsedSubscriptions !== undefined ? { subscriptions: parsedSubscriptions } : {}),
@@ -627,9 +636,18 @@ export async function saveUserBudgetConfig(userId: string, config: BudgetConfig)
     id: 'main',
     userId,
     estimatedIncome: Number(config.estimatedIncome) || 0,
-    needsPercent: Number(config.needsPercent) || 50,
-    wantsPercent: Number(config.wantsPercent) || 30,
-    savingsPercent: Number(config.savingsPercent) || 20,
+    needsPercent:
+      config.needsPercent !== undefined && config.needsPercent !== null
+        ? Number(config.needsPercent)
+        : 50,
+    wantsPercent:
+      config.wantsPercent !== undefined && config.wantsPercent !== null
+        ? Number(config.wantsPercent)
+        : 30,
+    savingsPercent:
+      config.savingsPercent !== undefined && config.savingsPercent !== null
+        ? Number(config.savingsPercent)
+        : 20,
     subcategoriesJson: JSON.stringify(config.subcategories || []).substring(0, 19500),
     createdAt: now,
     updatedAt: now,

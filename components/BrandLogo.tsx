@@ -16,14 +16,20 @@ export function BrandLogo({ size = 'md', className = '' }: BrandLogoProps) {
   const accent = settings?.accentColor || 'lime';
 
   const bgHex =
-    accent === 'orange'
+    accent === 'plum'
+      ? '#71325A'
+      : accent === 'orange'
       ? '#FF6B00'
       : accent === 'pink'
       ? '#FFA4A4'
       : '#D4F826';
 
+  const fgHex = accent === 'plum' || accent === 'orange' ? '#FFFFFF' : '#000000';
+
   const bgClass =
-    accent === 'orange'
+    accent === 'plum'
+      ? 'bg-[#71325A]'
+      : accent === 'orange'
       ? 'bg-[#FF6B00]'
       : accent === 'pink'
       ? 'bg-[#FFA4A4]'
@@ -31,7 +37,7 @@ export function BrandLogo({ size = 'md', className = '' }: BrandLogoProps) {
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><rect width="128" height="128" rx="32" fill="${bgHex}"/><path d="${DOMPT_LOGO_PATH}" fill="#000000" fill-rule="evenodd"/></svg>`;
+    const svgString = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><rect width="128" height="128" rx="32" fill="${bgHex}"/><path d="${DOMPT_LOGO_PATH}" fill="${fgHex}" fill-rule="evenodd"/></svg>`;
     const dataUrl = `data:image/svg+xml,${encodeURIComponent(svgString)}`;
 
     const links = document.querySelectorAll<HTMLLinkElement>(
@@ -48,7 +54,7 @@ export function BrandLogo({ size = 'md', className = '' }: BrandLogoProps) {
       link.href = dataUrl;
       document.head.appendChild(link);
     }
-  }, [bgHex]);
+  }, [bgHex, fgHex]);
 
   const sizeClasses = {
     sm: 'w-8 h-8 rounded-xl',
@@ -67,7 +73,7 @@ export function BrandLogo({ size = 'md', className = '' }: BrandLogoProps) {
         className="w-[86%] h-[86%] select-none pointer-events-none"
         aria-label="Dompt. Logo"
       >
-        <path d={DOMPT_LOGO_PATH} fill="#000000" fillRule="evenodd" />
+        <path d={DOMPT_LOGO_PATH} fill={fgHex} fillRule="evenodd" />
       </svg>
     </div>
   );

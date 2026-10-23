@@ -28,10 +28,12 @@ import {
   CalendarDays,
   Sparkles,
   Calculator,
+  RotateCcw,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatRupiah, formatNominalInput, parseNominalInput, formatFullDateIndo } from '@/lib/formatters';
+import { getMonthlyDebtInstallmentAmount } from '@/lib/budgetUtils';
 import { Debt, DebtPayment } from '@/lib/types';
 
 function computeInstallmentDueDate(startDateStr: string, tenorMonths: number, dueDayOfMonth: number): string {
@@ -59,6 +61,7 @@ export function DebtTab() {
     deleteDebt,
     payDebtInstallment,
     settleDebt,
+    cancelDebtPayment,
     walletsWithBalance,
     wallets,
     settings,
@@ -67,17 +70,24 @@ export function DebtTab() {
   const hide = settings.hideBalance;
   const isPink = settings.accentColor === 'pink';
   const isOrange = settings.accentColor === 'orange';
-  const brandAccentBg = isOrange
+  const isPlum = settings.accentColor === 'plum';
+  const brandAccentBg = isPlum
+    ? 'bg-[#71325A] text-white hover:bg-[#5e284a]'
+    : isOrange
     ? 'bg-[#FF6B00] text-white hover:bg-[#ea5e00]'
     : isPink
     ? 'bg-[#FFA4A4] text-black hover:bg-[#ff8e8e]'
     : 'bg-[#D4F826] text-black hover:bg-[#c6ec15]';
-  const brandAccentText = isOrange
+  const brandAccentText = isPlum
+    ? 'text-[#71325A] dark:text-[#e89ec9]'
+    : isOrange
     ? 'text-[#EA580C] dark:text-[#FF8A3D]'
     : isPink
     ? 'text-[#F43F5E]'
     : 'text-lime-600 dark:text-[#D4F826]';
-  const brandAccentBorder = isOrange
+  const brandAccentBorder = isPlum
+    ? 'border-[#71325A]'
+    : isOrange
     ? 'border-[#FF6B00]'
     : isPink
     ? 'border-[#FFA4A4]'
@@ -101,12 +111,17 @@ export function DebtTab() {
 
   // History detail modal
   const [detailDebt, setDetailDebt] = useState<Debt | null>(null);
+  const activeDetailDebt = useMemo(
+    () => (detailDebt ? debts.find((d) => d.id === detailDebt.id) || detailDebt : null),
+    [debts, detailDebt]
+  );
 
   // Form State for Add / Edit
   const [formType, setFormType] = useState<'payable' | 'receivable'>('payable');
   const [formName, setFormName] = useState('');
   const [formContactName, setFormContactName] = useState('');
   const [formTotalAmount, setFormTotalAmount] = useState('');
+  const [formRemainingAmount, setFormRemainingAmount] = useState('');
   const [formDueDate, setFormDueDate] = useState('');
   const [formStartDate, setFormStartDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [formCategory, setFormCategory] = useState('cicilan');
@@ -266,6 +281,7 @@ export function DebtTab() {
     setFormName(debt.name);
     setFormContactName(debt.contactName || '');
     setFormTotalAmount(formatNominalInput(String(debt.totalAmount)));
+    setFormRemainingAmount(formatNominalInput(String(debt.remainingAmount)));
     setFormDueDate(debt.dueDate || '');
     const sDate = debt.startDate || new Date().toISOString().slice(0, 10);
     setFormStartDate(sDate);
@@ -305,10 +321,14 @@ export function DebtTab() {
 
     if (editingDebt) {
       // Update
+      const parsedRem = formRemainingAmount.trim() !== '' ? parseNominalInput(formRemainingAmount) : undefined;
       const oldTotal = editingDebt.totalAmount;
       const oldRem = editingDebt.remainingAmount;
       const deltaTotal = val - oldTotal;
-      const newRem = Math.max(0, oldRem + deltaTotal);
+      const newRem =
+        parsedRem !== undefined
+          ? Math.max(0, Math.min(val, parsedRem))
+          : Math.max(0, oldRem + deltaTotal);
 
       updateDebt(editingDebt.id, {
         name: formName.trim(),
@@ -316,6 +336,7 @@ export function DebtTab() {
         contactName: formContactName.trim() || (formType === 'payable' ? 'Lembaga / Pihak' : 'Peminjam'),
         totalAmount: val,
         remainingAmount: newRem,
+        status: newRem > 0 ? 'active' : 'paid',
         dueDate: finalDueDate,
         startDate: formStartDate,
         category: formCategory,
@@ -433,7 +454,9 @@ export function DebtTab() {
         <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
         <div
           className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
-            settings.accentColor === 'orange'
+            settings.accentColor === 'plum'
+              ? 'bg-[#71325A]/25'
+              : settings.accentColor === 'orange'
               ? 'bg-[#FF6B2B]/15'
               : settings.accentColor === 'pink'
               ? 'bg-[#FFA4A4]/15'
@@ -530,7 +553,7 @@ export function DebtTab() {
                       Jatuh Tempo: {nextDueItem.name}
                     </p>
                     <p className="text-[10px] text-gray-400 truncate">
-                      {nextDueItem.dueDate} ({formatRupiah(nextDueItem.remainingAmount, hide)})
+                      {nextDueItem.dueDate} ({formatRupiah(getMonthlyDebtInstallmentAmount(nextDueItem), hide)}/bln)
                     </p>
                   </div>
                 </div>
@@ -847,17 +870,30 @@ export function DebtTab() {
 
                 {/* Action Buttons */}
                 <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {/* View history detail */}
                     <button
                       type="button"
                       onClick={() => setDetailDebt(item)}
                       className="px-3 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                      title="Lihat riwayat pembayaran"
+                      title="Lihat & kelola riwayat pembayaran"
                     >
                       <History size={14} />
                       <span>Riwayat ({item.payments?.length || 0})</span>
                     </button>
+
+                    {/* Quick Cancel / Undo Payment button when any payment or paid progress exists */}
+                    {((item.payments && item.payments.length > 0) || item.remainingAmount < item.totalAmount || isPaid) && (
+                      <button
+                        type="button"
+                        onClick={() => cancelDebtPayment(item.id)}
+                        className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                        title="Batalkan pencatatan pembayaran cicilan terakhir & kembalikan saldo"
+                      >
+                        <RotateCcw size={13} />
+                        <span>{isPaid ? 'Batalkan Pelunasan' : 'Batal Bayar'}</span>
+                      </button>
+                    )}
 
                     <button
                       type="button"
@@ -1015,6 +1051,33 @@ export function DebtTab() {
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
                 </div>
+
+                {/* Remaining Amount (Visible when editing) */}
+                {editingDebt && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-bold text-gray-500">
+                        Sisa Kewajiban Saat Ini (Rp)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setFormRemainingAmount(formTotalAmount)}
+                        className="text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer flex items-center gap-1"
+                      >
+                        <RotateCcw size={11} />
+                        <span>Reset ke Total Pinjaman</span>
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={formRemainingAmount}
+                      onChange={(e) => setFormRemainingAmount(formatNominalInput(e.target.value))}
+                      placeholder="Contoh: 3.343.330"
+                      className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                    />
+                  </div>
+                )}
 
                 {/* Category */}
                 <div>
@@ -1548,7 +1611,7 @@ export function DebtTab() {
 
       {/* Modal: History Detail */}
       <AnimatePresence>
-        {detailDebt && (
+        {activeDetailDebt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
@@ -1562,7 +1625,7 @@ export function DebtTab() {
                     Riwayat Pembayaran
                   </h3>
                   <p className="text-xs text-gray-400 truncate max-w-[260px]">
-                    {detailDebt.name} ({detailDebt.contactName})
+                    {activeDetailDebt.name} ({activeDetailDebt.contactName})
                   </p>
                 </div>
                 <button
@@ -1579,52 +1642,52 @@ export function DebtTab() {
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-gray-500">Total Pinjaman:</span>
                   <span className="font-extrabold text-gray-900 dark:text-white">
-                    {formatRupiah(detailDebt.totalAmount)}
+                    {formatRupiah(activeDetailDebt.totalAmount)}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-gray-500">Sisa Belum Dibayar:</span>
                   <span
                     className={`font-black ${
-                      detailDebt.remainingAmount <= 0
+                      activeDetailDebt.remainingAmount <= 0
                         ? 'text-emerald-500'
                         : 'text-rose-500'
                     }`}
                   >
-                    {detailDebt.remainingAmount <= 0
+                    {activeDetailDebt.remainingAmount <= 0
                       ? 'Lunas 🎉'
-                      : formatRupiah(detailDebt.remainingAmount)}
+                      : formatRupiah(activeDetailDebt.remainingAmount)}
                   </span>
                 </div>
-                {detailDebt.monthlyInstallment && (
+                {activeDetailDebt.monthlyInstallment && (
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-gray-500">Cicilan Bulanan:</span>
                     <span className="font-bold text-lime-700 dark:text-[#D4F826]">
-                      {formatRupiah(detailDebt.monthlyInstallment)} / bulan
+                      {formatRupiah(activeDetailDebt.monthlyInstallment)} / bulan
                     </span>
                   </div>
                 )}
-                {detailDebt.tenorMonths && (
+                {activeDetailDebt.tenorMonths && (
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-gray-500">Tempo / Tenor:</span>
                     <span className="font-bold text-gray-700 dark:text-gray-300">
-                      {detailDebt.tenorMonths} Bulan
+                      {activeDetailDebt.tenorMonths} Bulan
                     </span>
                   </div>
                 )}
-                {detailDebt.dueDayOfMonth && (
+                {activeDetailDebt.dueDayOfMonth && (
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-gray-500">Jatuh Tempo Bulanan:</span>
                     <span className="font-bold text-lime-700 dark:text-[#D4F826]">
-                      Setiap tanggal {detailDebt.dueDayOfMonth}
+                      Setiap tanggal {activeDetailDebt.dueDayOfMonth}
                     </span>
                   </div>
                 )}
-                {detailDebt.dueDate && (
+                {activeDetailDebt.dueDate && (
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-gray-500">Target Pelunasan Akhir:</span>
                     <span className="font-bold text-gray-700 dark:text-gray-300">
-                      {detailDebt.dueDate}
+                      {activeDetailDebt.dueDate}
                     </span>
                   </div>
                 )}
@@ -1632,38 +1695,74 @@ export function DebtTab() {
 
               {/* Payments List */}
               <div className="space-y-2">
-                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-                  Daftar Angsuran Terbayar ({detailDebt.payments?.length || 0})
-                </h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                    Daftar Angsuran Terbayar ({activeDetailDebt.payments?.length || 0})
+                  </h4>
+                  {activeDetailDebt.payments && activeDetailDebt.payments.length > 0 && (
+                    <span className="text-[10px] font-semibold text-gray-400">
+                      Klik Batal untuk membatalkan
+                    </span>
+                  )}
+                </div>
 
-                {!detailDebt.payments || detailDebt.payments.length === 0 ? (
-                  <div className="text-center py-6 bg-gray-50 dark:bg-gray-800/40 rounded-2xl text-xs text-gray-400">
-                    Belum ada riwayat cicilan yang dicatat.
+                {!activeDetailDebt.payments || activeDetailDebt.payments.length === 0 ? (
+                  <div className="text-center py-6 bg-gray-50 dark:bg-gray-800/40 rounded-2xl text-xs text-gray-400 space-y-2.5">
+                    <p>Belum ada riwayat cicilan yang dicatat.</p>
+                    {(activeDetailDebt.remainingAmount < activeDetailDebt.totalAmount ||
+                      activeDetailDebt.status === 'paid') && (
+                      <button
+                        type="button"
+                        onClick={() => cancelDebtPayment(activeDetailDebt.id)}
+                        className="mx-auto px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <RotateCcw size={13} />
+                        <span>Batalkan Pembayaran & Kembalikan Sisa Utang</span>
+                      </button>
+                    )}
                   </div>
                 ) : (
-                  detailDebt.payments.map((p, idx) => (
-                    <div
-                      key={p.id || idx}
-                      className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-700/60 flex items-center justify-between text-xs"
-                    >
-                      <div className="space-y-0.5 min-w-0">
-                        <div className="font-bold text-gray-900 dark:text-white truncate">
-                          {p.note || `Cicilan #${idx + 1}`}
+                  <>
+                    <div className="space-y-2 max-h-60 overflow-y-auto pr-0.5">
+                      {activeDetailDebt.payments.map((p, idx) => (
+                        <div
+                          key={p.id || idx}
+                          className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-700/60 flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="space-y-0.5 min-w-0">
+                            <div className="font-bold text-gray-900 dark:text-white truncate">
+                              {p.note || `Cicilan #${idx + 1}`}
+                            </div>
+                            <div className="text-[11px] text-gray-400 flex flex-wrap items-center gap-2">
+                              <span>{p.date}</span>
+                              {p.walletName && (
+                                <span className="inline-flex items-center gap-1 font-semibold text-gray-500 dark:text-gray-400">
+                                  <WalletIcon size={11} /> {p.walletName}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className="text-sm font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
+                              +{formatRupiah(p.amount)}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => cancelDebtPayment(activeDetailDebt.id, p.id)}
+                              className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200/80 dark:border-rose-800/60 text-[11px] font-extrabold flex items-center gap-1 cursor-pointer transition-colors"
+                              title="Batalkan pencatatan pembayaran cicilan ini"
+                            >
+                              <RotateCcw size={12} />
+                              <span>Batal</span>
+                            </button>
+                          </div>
                         </div>
-                        <div className="text-[11px] text-gray-400 flex items-center gap-2">
-                          <span>{p.date}</span>
-                          {p.walletName && (
-                            <span className="inline-flex items-center gap-1 font-semibold text-gray-500 dark:text-gray-400">
-                              <WalletIcon size={11} /> {p.walletName}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="text-sm font-black text-emerald-600 dark:text-emerald-400 tabular-nums shrink-0">
-                        +{formatRupiah(p.amount)}
-                      </div>
+                      ))}
                     </div>
-                  ))
+                    <p className="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed pt-1">
+                      💡 Membatalkan pembayaran akan otomatis mengembalikan sisa kewajiban utang dan mengembalikan saldo dompet yang terpotong.
+                    </p>
+                  </>
                 )}
               </div>
 

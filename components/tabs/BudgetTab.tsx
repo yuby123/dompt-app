@@ -30,6 +30,7 @@ import {
   FIXED_CATEGORY_IDS,
   FIXED_EXPENSE_KEYWORDS_REGEX,
   getBudgetPeriodInfo,
+  getMonthlyDebtInstallmentAmount,
   isDateInBudgetPeriod,
   isGrocerySubcategory,
 } from '@/lib/budgetUtils';
@@ -167,25 +168,27 @@ export function BudgetTab() {
         ? '🚗'
         : '💳';
 
-      const monthlyTarget = (debt.monthlyInstallment && debt.monthlyInstallment > 0)
-        ? Math.min(debt.monthlyInstallment, Number(debt.remainingAmount ?? debt.totalAmount) || 0)
-        : Number(debt.remainingAmount ?? debt.totalAmount) || 0;
-      const allocated = Math.max(monthlyTarget, paidThisMonth);
-
       const existsIdx = base.findIndex((s) => {
         const sLower = s.name.toLowerCase().trim();
         return (
           s.id === debtSubId ||
+          s.subscriptionId === debt.id ||
           sLower === subDisplayName.toLowerCase() ||
           sLower === cleanDebtName
         );
       });
 
+      const monthlyTarget = getMonthlyDebtInstallmentAmount(
+        debt,
+        existsIdx >= 0 ? base[existsIdx].allocatedAmount : undefined
+      );
+      const allocated = Math.max(monthlyTarget, paidThisMonth);
+
       if (existsIdx >= 0) {
         base[existsIdx] = {
           ...base[existsIdx],
           dueDateDay: dueDay !== undefined ? dueDay : base[existsIdx].dueDateDay,
-          allocatedAmount: Math.max(base[existsIdx].allocatedAmount, allocated),
+          allocatedAmount: allocated,
           isSubscriptionActive: !isPaid,
         };
       } else {
@@ -1020,7 +1023,9 @@ export function BudgetTab() {
         <div className="absolute -top-24 -right-16 w-80 h-80 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
         <div
           className={`absolute -bottom-24 -left-16 w-80 h-80 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
-            settings.accentColor === 'orange'
+            settings.accentColor === 'plum'
+              ? 'bg-[#71325A]/25'
+              : settings.accentColor === 'orange'
               ? 'bg-[#FF6B2B]/15'
               : settings.accentColor === 'pink'
               ? 'bg-[#FFA4A4]/15'
@@ -1741,7 +1746,7 @@ export function BudgetTab() {
         )}
       </AnimatePresence>
 
-      {/* Modal: Ubah Kategori (50/30/20 Sliders) */}
+      {/* Modal: Ubah Kategori (0% - 100% Flexible Sliders) */}
       <AnimatePresence>
         {isEditPercentagesOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
@@ -1757,7 +1762,7 @@ export function BudgetTab() {
                     Ubah Alokasi Anggaran
                   </h3>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                    Metode 50/30/20 (Total harus 100%)
+                    Bebas atur 0% – 100% sesuai prioritas (Total harus 100%)
                   </p>
                 </div>
                 <button
@@ -1769,15 +1774,48 @@ export function BudgetTab() {
                 </button>
               </div>
 
+              {/* Quick Presets */}
+              <div className="flex flex-wrap gap-1.5 pt-0.5">
+                {[
+                  { label: '50/30/20 (Standar)', n: 50, w: 30, s: 20 },
+                  { label: '80/20/0 (Fokus Utang)', n: 80, w: 20, s: 0 },
+                  { label: '85/15/0 (Tanpa Nabung)', n: 85, w: 15, s: 0 },
+                  { label: '100/0/0 (Full Kebutuhan)', n: 100, w: 0, s: 0 },
+                ].map((preset) => {
+                  const isActivePreset =
+                    needsPercent === preset.n &&
+                    wantsPercent === preset.w &&
+                    savingsPercent === preset.s;
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => {
+                        setNeedsPercent(preset.n);
+                        setWantsPercent(preset.w);
+                        setSavingsPercent(preset.s);
+                      }}
+                      className={`px-2.5 py-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer border ${
+                        isActivePreset
+                          ? 'bg-[#D4F826] text-black border-[#D4F826] shadow-2xs'
+                          : 'bg-gray-50 dark:bg-gray-800/80 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-gray-400'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Sliders */}
               {(() => {
                 const totalSubNeeds = needsSubs.reduce((acc, s) => acc + s.allocatedAmount, 0);
-                const minNeedsPct = Math.ceil((totalSubNeeds / (totalIncome || 1)) * 100);
-                const isNeedsOverflow = (totalIncome * needsPercent) / 100 < totalSubNeeds;
+                const minNeedsPct = Math.min(100, Math.ceil((totalSubNeeds / (totalIncome || 1)) * 100));
+                const isNeedsOverflow = totalIncome > 0 && (totalIncome * needsPercent) / 100 < totalSubNeeds;
 
                 return (
                   <>
-                    <div className="space-y-4 pt-2">
+                    <div className="space-y-4 pt-1">
                       {/* Kebutuhan */}
                       <div className="space-y-2">
                         <div className="flex items-center justify-between text-xs">
@@ -1785,23 +1823,34 @@ export function BudgetTab() {
                             <span className="font-extrabold text-violet-600 block">KEBUTUHAN</span>
                             {isNeedsOverflow && (
                               <span className="text-[10px] font-bold text-amber-500 dark:text-amber-400">
-                                Min {minNeedsPct}% (sub-kategori butuh {formatRupiah(totalSubNeeds)})
+                                Disarankan min {minNeedsPct}% ({formatRupiah(totalSubNeeds)})
                               </span>
                             )}
                           </div>
-                          <div className="text-right">
-                            <span className="font-black text-gray-900 dark:text-white">
-                              {needsPercent}%
-                            </span>
-                            <span className="text-[10px] text-gray-400 block tabular-nums">
-                              {formatRupiah((totalIncome * needsPercent) / 100, hide)}
-                            </span>
+                          <div className="text-right flex items-center gap-2">
+                            {needsPercent > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setNeedsPercent(0)}
+                                className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 cursor-pointer"
+                              >
+                                Set 0%
+                              </button>
+                            )}
+                            <div>
+                              <span className="font-black text-gray-900 dark:text-white">
+                                {needsPercent}%
+                              </span>
+                              <span className="text-[10px] text-gray-400 block tabular-nums">
+                                {formatRupiah((totalIncome * needsPercent) / 100, hide)}
+                              </span>
+                            </div>
                           </div>
                         </div>
                         <input
                           type="range"
-                          min="10"
-                          max="80"
+                          min="0"
+                          max="100"
                           value={needsPercent}
                           onChange={(e) => setNeedsPercent(Number(e.target.value))}
                           className="w-full accent-violet-600 cursor-pointer"
@@ -1812,19 +1861,35 @@ export function BudgetTab() {
                       <div className="space-y-2">
                         <div className="flex items-center justify-between text-xs">
                           <span className="font-extrabold text-pink-500">KEINGINAN</span>
-                          <div className="text-right">
-                            <span className="font-black text-gray-900 dark:text-white">
-                              {wantsPercent}%
-                            </span>
-                            <span className="text-[10px] text-gray-400 block tabular-nums">
-                              {formatRupiah((totalIncome * wantsPercent) / 100, hide)}
-                            </span>
+                          <div className="text-right flex items-center gap-2">
+                            {wantsPercent > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const freed = wantsPercent;
+                                  setWantsPercent(0);
+                                  setNeedsPercent((prev) => Math.min(100 - savingsPercent, prev + freed));
+                                }}
+                                className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 cursor-pointer"
+                                title="Jadikan 0% dan pindahkan ke Kebutuhan"
+                              >
+                                Set 0%
+                              </button>
+                            )}
+                            <div>
+                              <span className="font-black text-gray-900 dark:text-white">
+                                {wantsPercent}%
+                              </span>
+                              <span className="text-[10px] text-gray-400 block tabular-nums">
+                                {formatRupiah((totalIncome * wantsPercent) / 100, hide)}
+                              </span>
+                            </div>
                           </div>
                         </div>
                         <input
                           type="range"
-                          min="5"
-                          max="70"
+                          min="0"
+                          max="100"
                           value={wantsPercent}
                           onChange={(e) => setWantsPercent(Number(e.target.value))}
                           className="w-full accent-pink-500 cursor-pointer"
@@ -1835,19 +1900,35 @@ export function BudgetTab() {
                       <div className="space-y-2">
                         <div className="flex items-center justify-between text-xs">
                           <span className="font-extrabold text-teal-500">TABUNGAN</span>
-                          <div className="text-right">
-                            <span className="font-black text-gray-900 dark:text-white">
-                              {savingsPercent}%
-                            </span>
-                            <span className="text-[10px] text-gray-400 block tabular-nums">
-                              {formatRupiah((totalIncome * savingsPercent) / 100, hide)}
-                            </span>
+                          <div className="text-right flex items-center gap-2">
+                            {savingsPercent > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const freed = savingsPercent;
+                                  setSavingsPercent(0);
+                                  setNeedsPercent((prev) => Math.min(100 - wantsPercent, prev + freed));
+                                }}
+                                className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 cursor-pointer"
+                                title="Jadikan 0% dan pindahkan ke Kebutuhan"
+                              >
+                                Set 0%
+                              </button>
+                            )}
+                            <div>
+                              <span className="font-black text-gray-900 dark:text-white">
+                                {savingsPercent}%
+                              </span>
+                              <span className="text-[10px] text-gray-400 block tabular-nums">
+                                {formatRupiah((totalIncome * savingsPercent) / 100, hide)}
+                              </span>
+                            </div>
                           </div>
                         </div>
                         <input
                           type="range"
-                          min="5"
-                          max="60"
+                          min="0"
+                          max="100"
                           value={savingsPercent}
                           onChange={(e) => setSavingsPercent(Number(e.target.value))}
                           className="w-full accent-teal-500 cursor-pointer"
@@ -1859,7 +1940,7 @@ export function BudgetTab() {
                     <div className="text-center pt-2">
                       <span
                         className={`text-xs font-black px-3 py-1 rounded-full ${
-                          totalPercentage === 100 && !isNeedsOverflow
+                          totalPercentage === 100
                             ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
                             : 'bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-300'
                         }`}
@@ -1868,11 +1949,11 @@ export function BudgetTab() {
                       </span>
                       {totalPercentage !== 100 ? (
                         <p className="text-[11px] text-red-500 mt-1 font-semibold">
-                          Pastikan total 100%
+                          Pastikan total 100% (kurang/lebih {Math.abs(100 - totalPercentage)}%)
                         </p>
                       ) : isNeedsOverflow ? (
-                        <p className="text-[11px] text-red-500 mt-2 font-medium bg-red-50 dark:bg-red-950/40 p-2.5 rounded-xl border border-red-200 dark:border-red-900/40 text-left">
-                          Total sub-kategori Kebutuhan ({formatRupiah(totalSubNeeds)}) melebihi alokasi baru ({formatRupiah((totalIncome * needsPercent) / 100)}). Kurangi anggaran sub-kategori di Kebutuhan terlebih dahulu.
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2 font-medium bg-amber-50 dark:bg-amber-950/40 p-2.5 rounded-xl border border-amber-200 dark:border-amber-900/40 text-left">
+                          Catatan: Total sub-kategori Kebutuhan ({formatRupiah(totalSubNeeds)}) lebih besar dari batas alokasi ({formatRupiah((totalIncome * needsPercent) / 100)}). Anda tetap bisa menyimpan alokasi ini.
                         </p>
                       ) : null}
                     </div>
@@ -1887,7 +1968,7 @@ export function BudgetTab() {
                       </button>
                       <button
                         type="button"
-                        disabled={totalPercentage !== 100 || isNeedsOverflow}
+                        disabled={totalPercentage !== 100}
                         onClick={handleSavePercentages}
                         className="flex-1 py-3 rounded-2xl bg-[#D4F826] disabled:opacity-50 text-black text-xs font-black shadow-xs cursor-pointer hover:bg-[#c6ec15]"
                       >

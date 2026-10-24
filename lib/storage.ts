@@ -404,13 +404,30 @@ export function getInitialBudgets(): Budget[] {
   ];
 }
 
+export const BOOTSTRAPPED_ADMIN_EMAILS = [
+  'uuuut8012@gmail.com',
+  'admin@dompt.com',
+  'admin@faddompet.com',
+];
+
+export function isBootstrappedAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  return BOOTSTRAPPED_ADMIN_EMAILS.includes(email.trim().toLowerCase());
+}
+
 export interface LocalAccountProfile {
   uid: string;
   displayName: string;
   email: string;
   photoURL: string | null;
   isLocalAccount?: boolean;
+  role?: 'admin' | 'user';
+  status?: 'pending' | 'active' | 'deactivated';
+  approvedAt?: string;
+  approvedBy?: string;
+  deactivatedAt?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface RegisteredAccountRecord extends LocalAccountProfile {
@@ -438,15 +455,60 @@ export function hashAccountPassword(email: string, password: string): string {
   return normalized;
 }
 
+export const DEFAULT_ADMIN_PASSWORD = 'Anton123';
+
+export function getDefaultAdminAccountRecord(
+  adminEmail = 'admin@dompt.com',
+  displayName = 'Admin SuperApp'
+): RegisteredAccountRecord {
+  const cleanEmail = adminEmail.trim().toLowerCase();
+  return {
+    uid: getCloudAccountUid(cleanEmail),
+    displayName,
+    email: cleanEmail,
+    passwordHash: hashAccountPassword(cleanEmail, DEFAULT_ADMIN_PASSWORD),
+    photoURL: '🛡️',
+    isLocalAccount: false,
+    role: 'admin',
+    status: 'active',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
 export function loadRegisteredAccounts(): RegisteredAccountRecord[] {
-  if (typeof window === 'undefined') return [];
+  const defaultAdmins = [
+    getDefaultAdminAccountRecord('admin@dompt.com', 'Admin SuperApp'),
+    getDefaultAdminAccountRecord('uuuut8012@gmail.com', 'Admin Utama'),
+  ];
+  if (typeof window === 'undefined') return defaultAdmins;
   try {
     const raw = localStorage.getItem(REGISTERED_ACCOUNTS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    const parsed: RegisteredAccountRecord[] = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(parsed) ? parsed : [];
+
+    const normalized = list.map((acc) => {
+      const cleanEmail = (acc.email || '').trim().toLowerCase();
+      const isAdmin = isBootstrappedAdminEmail(cleanEmail) || acc.role === 'admin';
+      const legacyAdmin123Hash = hashAccountPassword(cleanEmail, 'admin123');
+      const nextPasswordHash =
+        isAdmin && (!acc.passwordHash || acc.passwordHash === legacyAdmin123Hash)
+          ? hashAccountPassword(cleanEmail, DEFAULT_ADMIN_PASSWORD)
+          : acc.passwordHash;
+      return {
+        ...acc,
+        passwordHash: nextPasswordHash,
+        role: isAdmin ? ('admin' as const) : (acc.role || ('user' as const)),
+        status: isAdmin ? ('active' as const) : (acc.status || ('active' as const)),
+      };
+    });
+
+    const missingAdmins = defaultAdmins.filter(
+      (adm) => !normalized.some((a) => a.email?.toLowerCase() === adm.email.toLowerCase())
+    );
+    return [...missingAdmins, ...normalized];
   } catch {
-    return [];
+    return defaultAdmins;
   }
 }
 
@@ -461,10 +523,68 @@ export function saveRegisteredAccounts(records: RegisteredAccountRecord[]): void
 
 export function cacheRegisteredAccountLocally(record: RegisteredAccountRecord): void {
   const accounts = loadRegisteredAccounts();
+  const existing = accounts.find(
+    (a) => a.email.toLowerCase() === record.email.toLowerCase() || a.uid === record.uid
+  );
+  const isAdmin = isBootstrappedAdminEmail(record.email) || record.role === 'admin' || existing?.role === 'admin';
+  const mergedRecord: RegisteredAccountRecord = {
+    ...existing,
+    ...record,
+    passwordHash: record.passwordHash || existing?.passwordHash || '',
+    role: isAdmin ? 'admin' : (record.role || existing?.role || 'user'),
+    status: isAdmin ? 'active' : (record.status || existing?.status || 'active'),
+  };
   const filtered = accounts.filter(
     (a) => a.email.toLowerCase() !== record.email.toLowerCase() && a.uid !== record.uid
   );
-  saveRegisteredAccounts([record, ...filtered]);
+  saveRegisteredAccounts([mergedRecord, ...filtered]);
+}
+
+export function changeLocalAccountPassword(
+  email: string,
+  currentPassword: string | null,
+  newPassword: string,
+  skipCurrentCheck = false
+): { ok: true; record: RegisteredAccountRecord } | { ok: false; error: string } {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!newPassword || newPassword.length < 6) {
+    return { ok: false, error: 'Password baru minimal harus terdiri dari 6 karakter.' };
+  }
+  const accounts = loadRegisteredAccounts();
+  const existing = accounts.find((a) => a.email.toLowerCase() === cleanEmail);
+  const newHash = hashAccountPassword(cleanEmail, newPassword);
+  const now = new Date().toISOString();
+
+  if (existing && !skipCurrentCheck && currentPassword !== null) {
+    const currentHash = hashAccountPassword(cleanEmail, currentPassword);
+    if (existing.passwordHash && existing.passwordHash !== currentHash) {
+      return { ok: false, error: 'Password lama yang Anda masukkan tidak sesuai.' };
+    }
+  }
+
+  const isAdmin = isBootstrappedAdminEmail(cleanEmail) || existing?.role === 'admin';
+  const updatedRecord: RegisteredAccountRecord = existing
+    ? {
+        ...existing,
+        passwordHash: newHash,
+        updatedAt: now,
+      }
+    : {
+        uid: getCloudAccountUid(cleanEmail),
+        displayName: isAdmin ? 'Admin SuperApp' : 'Pengguna Dompt',
+        email: cleanEmail,
+        passwordHash: newHash,
+        photoURL: null,
+        isLocalAccount: false,
+        role: isAdmin ? 'admin' : 'user',
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+  const filtered = accounts.filter((a) => a.email.toLowerCase() !== cleanEmail);
+  saveRegisteredAccounts([updatedRecord, ...filtered]);
+  return { ok: true, record: updatedRecord };
 }
 
 export function registerAccountWithPassword(
@@ -496,6 +616,11 @@ export function registerAccountWithPassword(
 
   const uid = getCloudAccountUid(cleanEmail);
   const now = new Date().toISOString();
+  const isAdmin = isBootstrappedAdminEmail(cleanEmail);
+  const role: 'admin' | 'user' = isAdmin ? 'admin' : 'user';
+  // New user registrations require Admin ACC ('pending'), while bootstrapped admin is 'active'
+  const status: 'pending' | 'active' | 'deactivated' = isAdmin ? 'active' : 'pending';
+
   const newRecord: RegisteredAccountRecord = {
     uid,
     displayName: cleanName,
@@ -503,7 +628,10 @@ export function registerAccountWithPassword(
     passwordHash: hashAccountPassword(cleanEmail, password),
     photoURL: null,
     isLocalAccount: false,
+    role,
+    status,
     createdAt: now,
+    updatedAt: now,
   };
 
   saveRegisteredAccounts([newRecord, ...accounts]);
@@ -516,7 +644,10 @@ export function registerAccountWithPassword(
     email: newRecord.email,
     photoURL: null,
     isLocalAccount: false,
+    role,
+    status,
     createdAt: newRecord.createdAt,
+    updatedAt: now,
   };
   saveActiveLocalUser(profile);
   return { ok: true, profile, record: newRecord };
@@ -552,10 +683,18 @@ export function loginAccountWithPassword(
   }
 
   const cloudUid = getCloudAccountUid(cleanEmail);
+  const isAdmin = isBootstrappedAdminEmail(cleanEmail) || matched.role === 'admin';
+  const role: 'admin' | 'user' = isAdmin ? 'admin' : 'user';
+  const status: 'pending' | 'active' | 'deactivated' = isAdmin
+    ? 'active'
+    : (matched.status || 'active');
+
   const normalizedRecord: RegisteredAccountRecord = {
     ...matched,
     uid: cloudUid,
     isLocalAccount: false,
+    role,
+    status,
   };
 
   const profile: LocalAccountProfile = {
@@ -564,7 +703,13 @@ export function loginAccountWithPassword(
     email: matched.email,
     photoURL: matched.photoURL,
     isLocalAccount: false,
+    role,
+    status,
+    approvedAt: matched.approvedAt,
+    approvedBy: matched.approvedBy,
+    deactivatedAt: matched.deactivatedAt,
     createdAt: matched.createdAt,
+    updatedAt: matched.updatedAt,
   };
   saveActiveLocalUser(profile);
   return { ok: true, profile, record: normalizedRecord };

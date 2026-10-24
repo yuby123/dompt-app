@@ -145,7 +145,14 @@ function AddTransactionForm() {
     } else if (chosenCat?.expenseNature === 'grocery' || catId === 'cat-belanja-bulanan') {
       setExpenseNature('grocery');
       setIsManualExpenseNature(false);
-    } else if (!isManualExpenseNature || expenseNature === 'savings' || expenseNature === 'grocery') {
+    } else if (
+      chosenCat?.expenseNature === 'non_daily' ||
+      catId === 'cat-kondangan' ||
+      catId === 'cat-sedekah'
+    ) {
+      setExpenseNature('non_daily');
+      setIsManualExpenseNature(false);
+    } else if (!isManualExpenseNature || expenseNature === 'savings') {
       const catMap = new Map(categories.map((c) => [c.id, c]));
       setExpenseNature(detectExpenseNature(catId, note, catMap));
       setIsManualExpenseNature(false);
@@ -156,7 +163,15 @@ function AddTransactionForm() {
     setNote(newNote);
     if (!isManualExpenseNature) {
       const catMap = new Map(categories.map((c) => [c.id, c]));
-      setExpenseNature(detectExpenseNature(selectedCategoryId, newNote, catMap));
+      const detected = detectExpenseNature(selectedCategoryId, newNote, catMap);
+      setExpenseNature(detected);
+      // Auto-select Kondangan & Sosial category when typing amplop/nikahan/kondangan if still on default Makan
+      if (detected === 'non_daily' && selectedCategoryId === 'cat-makan') {
+        const kondanganCat = categories.find((c) => c.id === 'cat-kondangan');
+        if (kondanganCat) {
+          setSelectedCategoryId(kondanganCat.id);
+        }
+      }
     }
   };
 
@@ -736,7 +751,7 @@ function AddTransactionForm() {
           </div>
         )}
 
-        {/* Pos Beban Anggaran (Pengeluaran Harian vs Belanja Bulanan/Masak vs Tagihan Bulanan vs Alokasi Tabungan) */}
+        {/* Pos Beban Anggaran (Makan Luar/Harian vs Keperluan Pribadi Non-Harian vs Tagihan Bulanan vs Alokasi Tabungan) */}
         {type === 'expense' && (
           <div className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200/80 dark:border-gray-700/60 space-y-2.5">
             <div className="flex items-center justify-between">
@@ -749,7 +764,7 @@ function AddTransactionForm() {
                     ? 'bg-emerald-100/80 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
                     : expenseNature === 'fixed'
                     ? 'bg-blue-100/80 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
-                    : expenseNature === 'grocery'
+                    : expenseNature === 'grocery' || expenseNature === 'non_daily'
                     ? 'bg-amber-100/80 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
                     : 'bg-teal-100/80 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300'
                 }`}
@@ -758,8 +773,8 @@ function AddTransactionForm() {
                   ? '🏦 Pos Alokasi Tabungan'
                   : expenseNature === 'fixed'
                   ? '📅 Pos Tagihan Tetap'
-                  : expenseNature === 'grocery'
-                  ? '🛒 Pos Belanja Bulanan / Masak'
+                  : expenseNature === 'grocery' || expenseNature === 'non_daily'
+                  ? '🛍️ Pos Keperluan Pribadi (Non-Harian)'
                   : '🥪 Pos Operasional Harian'}
               </span>
             </div>
@@ -781,7 +796,7 @@ function AddTransactionForm() {
                 <div className="min-w-0">
                   <div className="text-xs font-bold leading-tight">Makan Luar / Harian</div>
                   <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
-                    Beli makan luar, jajan, bensin (potong jatah harian)
+                    Beli makan luar, jajan, bensin (potong jatah hari ini)
                   </div>
                 </div>
               </button>
@@ -789,29 +804,20 @@ function AddTransactionForm() {
               <button
                 type="button"
                 onClick={() => {
-                  setExpenseNature('grocery');
+                  setExpenseNature('non_daily');
                   setIsManualExpenseNature(true);
-                  const groceryCat = availableCategories.find((c) => c.id === 'cat-belanja-bulanan');
-                  const currentCat = availableCategories.find((c) => c.id === selectedCategoryId);
-                  if (
-                    groceryCat &&
-                    currentCat?.id !== 'cat-makan' &&
-                    currentCat?.id !== 'cat-belanja-bulanan'
-                  ) {
-                    setSelectedCategoryId(groceryCat.id);
-                  }
                 }}
                 className={`flex items-start gap-2 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                  expenseNature === 'grocery'
+                  expenseNature === 'non_daily' || expenseNature === 'grocery'
                     ? 'bg-white dark:bg-gray-800 border-amber-500 ring-2 ring-amber-500/20 text-gray-900 dark:text-white shadow-xs'
                     : 'bg-transparent border-gray-200 dark:border-gray-700/60 text-gray-500 dark:text-gray-400 hover:bg-gray-100/50 dark:hover:bg-gray-800/50'
                 }`}
               >
-                <span className="text-base shrink-0">🛒</span>
+                <span className="text-base shrink-0">🛍️</span>
                 <div className="min-w-0">
-                  <div className="text-xs font-bold leading-tight">Belanja Bulanan / Masak</div>
+                  <div className="text-xs font-bold leading-tight">Keperluan Pribadi</div>
                   <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
-                    Kuota harian otomatis menyesuaikan sisa uang setelah belanja ini
+                    Tidak dibebankan kuota harian (belanja bulanan, amplop, kado, dll)
                   </div>
                 </div>
               </button>
@@ -860,36 +866,103 @@ function AddTransactionForm() {
               >
                 <span className="text-base shrink-0">🏦</span>
                 <div className="min-w-0">
-                  <div className="text-xs font-bold leading-tight">Alokasi Tabungan</div>
+                  <div className="text-xs font-bold leading-tight">Alokasi Tabungan & Investasi</div>
                   <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-snug">
-                    Dana darurat & investasi (Pos Tabungan 20%)
+                    Dana darurat & investasi (Pos Tabungan {budgetConfig.savingsPercent}%)
                   </div>
                 </div>
               </button>
             </div>
 
-            {/* Info banner when Belanja Bulanan / Masak is selected */}
-            {expenseNature === 'grocery' && (() => {
-              const previousGroceryAdjust =
-                editingTransaction && editingTransaction.transaction.expenseNature === 'grocery'
+            {/* Info banner when Makan Luar / Harian (variable) is selected and amount > 0 */}
+            {expenseNature === 'variable' && currentAmount > 0 && dashboardSummary.dailyBudgetQuota > 0 && (() => {
+              const prevVarAdjust =
+                editingTransaction &&
+                (!editingTransaction.transaction.expenseNature ||
+                  editingTransaction.transaction.expenseNature === 'variable')
+                  ? editingTransaction.transaction.amount
+                  : 0;
+              const projectedTodayVar = Math.max(
+                0,
+                dashboardSummary.todayVariableExpense - prevVarAdjust + currentAmount
+              );
+              const quotaToday = dashboardSummary.dailyBudgetQuota;
+              const remTodayAfter = Math.max(0, quotaToday - projectedTodayVar);
+              const overTodayAfter = Math.max(0, projectedTodayVar - quotaToday);
+              const nextRemVarPool = Math.max(
+                0,
+                dashboardSummary.remainingVariableBudget + prevVarAdjust - currentAmount
+              );
+              const remDaysTomorrow = Math.max(
+                1,
+                (dashboardSummary.daysRemainingUntilPayday || 2) - 1
+              );
+              const projectedTomorrowQuota = Math.min(
+                quotaToday,
+                Math.round(nextRemVarPool / remDaysTomorrow)
+              );
+
+              return (
+                <div className="pt-2 border-t border-gray-200/70 dark:border-gray-700/50 space-y-1 text-[11px]">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5">
+                    <span className="text-gray-600 dark:text-gray-300 font-semibold">
+                      🥪 Sisa kuota hari ini setelah transaksi:
+                    </span>
+                    <span
+                      className={`font-black tabular-nums ${
+                        overTodayAfter > 0
+                          ? 'text-rose-600 dark:text-rose-400'
+                          : 'text-teal-700 dark:text-[#D4F826]'
+                      }`}
+                    >
+                      {overTodayAfter > 0
+                        ? `Rp0 (Lewat +${formatRupiah(overTodayAfter, settings.hideBalance)})`
+                        : formatRupiah(remTodayAfter, settings.hideBalance)}
+                    </span>
+                  </div>
+                  {overTodayAfter > 0 && (dashboardSummary.daysRemainingUntilPayday || 1) > 1 && (
+                    <div className="p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 text-[10px] text-rose-700 dark:text-rose-300 leading-snug">
+                      ⚠️ Karena melebihi kuota hari ini, kelebihannya memotong sisa saldo pos harian sehingga <strong>kuota mulai besok menyesuaikan jadi ~{formatRupiah(projectedTomorrowQuota, settings.hideBalance)}/hari</strong> (agar uang tetap cukup sampai gajian).
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Info banner when Keperluan Pribadi (non_daily / grocery) is selected */}
+            {(expenseNature === 'non_daily' || expenseNature === 'grocery') && (() => {
+              const previousPersonalAdjust =
+                editingTransaction &&
+                (editingTransaction.transaction.expenseNature === 'non_daily' ||
+                  editingTransaction.transaction.expenseNature === 'grocery')
                   ? editingTransaction.transaction.amount
                   : 0;
               const nextVariablePool = Math.max(
                 0,
-                dashboardSummary.monthlyVariableBudget + previousGroceryAdjust - currentAmount
+                dashboardSummary.monthlyVariableBudget + previousPersonalAdjust - currentAmount
               );
               const nextRemainingPool = Math.max(
                 0,
-                dashboardSummary.remainingVariableBudget + previousGroceryAdjust - currentAmount
+                dashboardSummary.remainingVariableBudget + previousPersonalAdjust - currentAmount
               );
               const totalDays = Math.max(1, dashboardSummary.periodTotalDays || 30);
-              const nextDailyQuota = Math.round(nextVariablePool / totalDays);
+              const remDays = Math.max(1, dashboardSummary.daysRemainingUntilPayday || totalDays);
+              const priorDaysVarExp = Math.max(
+                0,
+                dashboardSummary.monthlyVariableExpense - dashboardSummary.todayVariableExpense
+              );
+              const baseDaily = Math.round(nextVariablePool / totalDays);
+              const rollingDaily = Math.round(
+                Math.max(0, nextVariablePool - priorDaysVarExp) / remDays
+              );
+              const nextDailyQuota =
+                priorDaysVarExp > 0 ? Math.min(baseDaily, rollingDaily) : baseDaily;
 
               return (
                 <div className="pt-2 border-t border-gray-200/70 dark:border-gray-700/50 space-y-1 text-[11px]">
                   <div className="flex flex-wrap items-center justify-between gap-1.5">
                     <span className="text-amber-700 dark:text-amber-400 font-bold">
-                      🛒 Sisa uang setelah belanja ini:
+                      🛍️ Sisa saldo pos harian setelah keperluan pribadi:
                     </span>
                     <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
                       {formatRupiah(nextRemainingPool, settings.hideBalance)}
@@ -897,12 +970,15 @@ function AddTransactionForm() {
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-1.5">
                     <span className="text-gray-500 dark:text-gray-400">
-                      Kuota harian baru (mengikuti sisa uang):
+                      Kuota harian baru (mengikuti sisa saldo pos harian):
                     </span>
                     <span className="font-black text-teal-700 dark:text-[#D4F826] tabular-nums">
                       ~{formatRupiah(nextDailyQuota, settings.hideBalance)} / hari
                     </span>
                   </div>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-snug">
+                    Tidak dibebankan langsung ke kuota hari ini — mengurangi saldo pos harian & menyesuaikan kuota harian secara merata.
+                  </p>
                 </div>
               );
             })()}

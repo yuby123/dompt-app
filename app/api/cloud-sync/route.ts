@@ -104,11 +104,16 @@ export async function POST(req: NextRequest) {
       merge?: boolean;
     };
 
-    if (!path || typeof path !== 'string' || !path.startsWith('users/')) {
+    const cleanPath = typeof path === 'string' ? path.replace(/^\/+|\/+$/g, '') : '';
+    const isAllowedPath =
+      cleanPath === 'users' ||
+      cleanPath.startsWith('users/') ||
+      cleanPath === 'bugReports' ||
+      cleanPath.startsWith('bugReports/');
+
+    if (!cleanPath || !isAllowedPath) {
       return createNoCacheResponse({ ok: false, error: 'Invalid path' }, 400);
     }
-
-    const cleanPath = path.replace(/^\/+|\/+$/g, '');
 
     if (action === 'get') {
       const url = `${BASE_URL}/${cleanPath}?key=${encodeURIComponent(API_KEY)}`;

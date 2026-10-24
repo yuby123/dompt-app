@@ -26,6 +26,8 @@ export function AuthModal() {
     isLoginModalOpen,
     setIsLoginModalOpen,
     user,
+    isAdmin,
+    userAccountStatus,
     loginWithEmailPassword,
     registerWithEmailPassword,
     signOutUser,
@@ -172,7 +174,14 @@ export function AuthModal() {
                 </div>
                 <div className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-xs font-bold">
                   <CheckCircle2 size={14} />
-                  <span>Akun Pribadi Aktif & Terisolasi</span>
+                  <span>
+                    Peran: {isAdmin ? 'Admin Super App' : 'Akun User'} · Status:{' '}
+                    {userAccountStatus === 'active'
+                      ? 'Aktif (Di-ACC)'
+                      : userAccountStatus === 'pending'
+                      ? 'Menunggu ACC'
+                      : 'Nonaktif'}
+                  </span>
                 </div>
               </div>
 
@@ -187,7 +196,7 @@ export function AuthModal() {
                 <div className="flex items-start gap-2.5">
                   <Cloud size={16} className="text-[#3b82f6] shrink-0 mt-0.5" />
                   <span>
-                    Tidak tercampur dengan akun pengguna lain.
+                    Setiap pendaftaran akun User baru wajib di-ACC oleh Admin sebelum aktif.
                   </span>
                 </div>
               </div>
@@ -209,7 +218,7 @@ export function AuthModal() {
                   className="w-full py-3 px-4 rounded-2xl border border-gray-200 dark:border-gray-700 font-bold text-sm hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   <Users size={16} />
-                  <span>Ganti ke Akun Lain</span>
+                  <span>Ganti / Daftar Akun Lain</span>
                 </button>
 
                 <button
@@ -229,12 +238,12 @@ export function AuthModal() {
               <div className="text-center space-y-1.5">
                 <BrandLogo size="lg" className="mx-auto shadow-md" />
                 <h2 className="text-xl font-black">
-                  {mode === 'login' ? 'Masuk ke Akun Lain' : 'Daftar Akun Baru'}
+                  {mode === 'login' ? 'Masuk ke Akun Lain' : 'Daftar Akun User Baru'}
                 </h2>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   {mode === 'login'
-                    ? 'Masukkan email dan password akun yang sudah terdaftar.'
-                    : 'Buat akun baru dengan email dan password (saldo dimulai dari Rp 0).'}
+                    ? 'Masukkan email dan password akun User atau Admin.'
+                    : 'Akun User baru akan berstatus Menunggu ACC Admin sebelum aktif.'}
                 </p>
               </div>
 
@@ -292,7 +301,7 @@ export function AuthModal() {
                         type="text"
                         value={nameInput}
                         onChange={(e) => setNameInput(e.target.value)}
-                        placeholder="Contoh: Trisna"
+                        placeholder="Contoh: Budi Santoso"
                         required
                         className="w-full pl-9 pr-3.5 py-2.5 rounded-xl bg-gray-50 dark:bg-[#0F1115] border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-900 dark:text-white focus:outline-none focus:border-[#D4F826]"
                       />
@@ -379,7 +388,9 @@ export function AuthModal() {
                     <Loader2 size={16} className="animate-spin text-black" />
                   ) : (
                     <>
-                      <span>{mode === 'login' ? 'Masuk ke Akun' : 'Daftar & Buat Akun'}</span>
+                      <span>
+                        {mode === 'login' ? 'Masuk ke Akun' : 'Daftar User Baru (Menunggu ACC)'}
+                      </span>
                       <ArrowRight size={15} />
                     </>
                   )}

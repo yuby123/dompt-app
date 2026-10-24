@@ -11,7 +11,7 @@ export type BudgetGroup = 'kebutuhan' | 'keinginan' | 'tabungan';
 
 export type FoodLifestyleMode = 'eat_out' | 'hybrid' | 'cook_home';
 
-export type ExpenseNature = 'variable' | 'grocery' | 'fixed' | 'savings';
+export type ExpenseNature = 'variable' | 'non_daily' | 'grocery' | 'fixed' | 'savings';
 
 export interface Wallet {
   id: string;
@@ -34,7 +34,7 @@ export interface Category {
   type: 'expense' | 'income';
   groupName: string;
   budgetGroup?: BudgetGroup;
-  expenseNature?: ExpenseNature; // 'variable' (Pengeluaran Harian) | 'grocery' (Belanja Bulanan/Bahan Masak) | 'fixed' (Tagihan Bulanan) | 'savings' (Alokasi Tabungan)
+  expenseNature?: ExpenseNature; // 'variable' (Harian) | 'non_daily' (Kondangan/Sosial/Insidental - Bebas Kuota Harian) | 'grocery' (Belanja Bulanan) | 'fixed' (Tagihan Bulanan) | 'savings' (Tabungan)
   iconKey: string;
   emoji?: string;
   colorValue: string;
@@ -55,6 +55,7 @@ export interface BudgetSubcategory {
   frequency?: 'monthly' | 'yearly' | 'weekly';
   lastRecordedPeriod?: string;
   isGroceryStock?: boolean; // Menandakan pos belanja bulanan / bahan masak (tidak dibagi harian)
+  isNonDaily?: boolean; // Menandakan pos kondangan / sosial / insidental (tidak memotong kuota harian)
 }
 
 export interface RecurringItem {
@@ -97,6 +98,9 @@ export interface BudgetConfig {
   wantsPercent: number; // 30%
   savingsPercent: number; // 20%
   paydayDay?: number; // Tanggal gajian / mulai siklus budget (1-31, default 1)
+  periodMode?: 'standard' | 'custom'; // 'standard' (siklus tgl tetap) | 'custom' (periode fleksibel manual misal gajian maju ke Jumat)
+  customPeriodStart?: string; // YYYY-MM-DD (Tanggal mulai / gajian periode ini, misal '2026-10-23')
+  customNextPayday?: string; // YYYY-MM-DD (Tanggal gajian berikutnya, misal '2026-11-25' -> bisa >31 hari)
   foodLifestyleMode?: FoodLifestyleMode; // 'eat_out' (Makan Luar) | 'hybrid' (Masak + Beli Luar) | 'cook_home' (Full Masak/Belanja Bulanan)
   mealsOutPerDay?: number; // Jumlah makan beli di luar per hari (misal 3, 1, atau 0)
   subcategories: BudgetSubcategory[];
@@ -220,6 +224,9 @@ export interface AppSettings {
   autoLockMinutes?: number;
   avatarUrl?: string;
   paydayDay?: number; // Tanggal gajian / mulai siklus budget (1-31)
+  periodMode?: 'standard' | 'custom';
+  customPeriodStart?: string;
+  customNextPayday?: string;
 }
 
 export interface WalletWithBalance extends Wallet {
@@ -263,15 +270,20 @@ export interface DashboardSummary {
   monthlyVariableBudget: number;
   monthlyFixedExpense: number;
   monthlyGroceryExpense: number;
+  monthlyNonDailyExpense: number;
   monthlyVariableExpense: number;
   todayVariableExpense: number;
+  todayNonDailyExpense: number;
   todayGroceryExpense: number;
   todayFixedExpense: number;
   remainingGroceryBudget: number;
   dailyOverbudget: boolean;
   dailyOverbudgetAmount: number;
+  tomorrowDailyQuota: number;
+  tomorrowQuotaDiff: number;
   // Siklus Periode Gajian (Payday Cycle)
   paydayDay: number;
+  isCustomFlexiblePeriod?: boolean;
   periodTotalDays: number;
   currentPeriodDay: number;
   daysRemainingUntilPayday: number;
@@ -281,3 +293,43 @@ export interface DashboardSummary {
   periodFullLabel: string;
   endShortLabel: string;
 }
+
+export type UserRole = 'admin' | 'user';
+export type UserAccountStatus = 'pending' | 'active' | 'deactivated';
+
+export type BugReportCategory = 'bug' | 'feedback' | 'feature' | 'other';
+export type BugReportPriority = 'low' | 'medium' | 'high';
+export type BugReportStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
+
+export interface BugReport {
+  id: string;
+  userId: string;
+  userEmail: string;
+  userName: string;
+  type: BugReportCategory;
+  priority: BugReportPriority;
+  title: string;
+  description: string;
+  pageContext?: string;
+  status: BugReportStatus;
+  adminReply?: string;
+  repliedAt?: string;
+  repliedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ManagedUserAccount {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string | null;
+  role: UserRole;
+  status: UserAccountStatus;
+  approvedAt?: string;
+  approvedBy?: string;
+  deactivatedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+

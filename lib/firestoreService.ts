@@ -17,14 +17,23 @@ import {
   Budget,
   BudgetConfig,
   BudgetSubcategory,
+  BugReport,
   Debt,
   Goal,
   InvestmentItem,
+  ManagedUserAccount,
   RecurringItem,
   Transaction,
+  UserAccountStatus,
+  UserRole,
   Wallet,
 } from './types';
 import { EMPTY_BUDGET_CONFIG } from './constants';
+import {
+  DEFAULT_ADMIN_PASSWORD,
+  hashAccountPassword,
+  isBootstrappedAdminEmail,
+} from './storage';
 
 export interface UserProfileData {
   uid: string;
@@ -33,6 +42,11 @@ export interface UserProfileData {
   photoURL?: string;
   passwordHash?: string;
   settingsJson?: string;
+  role?: UserRole;
+  status?: UserAccountStatus;
+  approvedAt?: string;
+  approvedBy?: string;
+  deactivatedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -77,12 +91,14 @@ export async function registerCloudEmailAccount(
   uid: string,
   name: string,
   email: string,
-  passwordHash: string
+  passwordHash: string,
+  options?: { isNewSignup?: boolean }
 ): Promise<{ ok: true; profile: UserProfileData } | { ok: false; error: string }> {
   const path = `users/${uid}`;
   const now = new Date().toISOString();
   const cleanEmail = email.trim().toLowerCase();
   const cleanName = name.trim() || 'Pengguna Dompt';
+  const isAdminEmail = isBootstrappedAdminEmail(cleanEmail);
 
   try {
     const userDocRef = doc(db, 'users', uid);
@@ -90,18 +106,27 @@ export async function registerCloudEmailAccount(
 
     if (snap.exists()) {
       const existing = snap.data() as UserProfileData;
-      if (existing.passwordHash && existing.passwordHash !== passwordHash) {
+      if (existing.passwordHash && existing.passwordHash !== passwordHash && options?.isNewSignup) {
         return {
           ok: false,
           error: 'Email ini sudah terdaftar. Silakan masuk menggunakan email dan password Anda.',
         };
       }
+      const role: UserRole = isAdminEmail ? 'admin' : (existing.role || 'user');
+      const status: UserAccountStatus = isAdminEmail
+        ? 'active'
+        : (existing.status || 'active');
       const updated: UserProfileData = {
         uid,
         email: cleanEmail,
         displayName: cleanName || existing.displayName || 'Pengguna Dompt',
         photoURL: existing.photoURL || '',
         passwordHash,
+        role,
+        status,
+        ...(existing.approvedAt ? { approvedAt: existing.approvedAt } : {}),
+        ...(existing.approvedBy ? { approvedBy: existing.approvedBy } : {}),
+        ...(existing.deactivatedAt ? { deactivatedAt: existing.deactivatedAt } : {}),
         ...(existing.settingsJson ? { settingsJson: existing.settingsJson } : {}),
         createdAt: existing.createdAt || now,
         updatedAt: now,
@@ -110,12 +135,22 @@ export async function registerCloudEmailAccount(
       return { ok: true, profile: updated };
     }
 
+    const initialRole: UserRole = isAdminEmail ? 'admin' : 'user';
+    // Every new user registration starts as 'pending' (requires Admin ACC) unless it's an Admin email
+    const initialStatus: UserAccountStatus = isAdminEmail
+      ? 'active'
+      : options?.isNewSignup === false
+      ? 'active'
+      : 'pending';
+
     const initial: UserProfileData = {
       uid,
       email: cleanEmail,
       displayName: cleanName,
       photoURL: '',
       passwordHash,
+      role: initialRole,
+      status: initialStatus,
       createdAt: now,
       updatedAt: now,
     };
@@ -125,18 +160,27 @@ export async function registerCloudEmailAccount(
     const getRes = await cloudRestApi('get', path);
     if (getRes?.ok && getRes.exists && getRes.data) {
       const existing = getRes.data as UserProfileData;
-      if (existing.passwordHash && existing.passwordHash !== passwordHash) {
+      if (existing.passwordHash && existing.passwordHash !== passwordHash && options?.isNewSignup) {
         return {
           ok: false,
           error: 'Email ini sudah terdaftar. Silakan masuk menggunakan email dan password Anda.',
         };
       }
+      const role: UserRole = isAdminEmail ? 'admin' : (existing.role || 'user');
+      const status: UserAccountStatus = isAdminEmail
+        ? 'active'
+        : (existing.status || 'active');
       const updated: UserProfileData = {
         uid,
         email: cleanEmail,
         displayName: cleanName || existing.displayName || 'Pengguna Dompt',
         photoURL: existing.photoURL || '',
         passwordHash,
+        role,
+        status,
+        ...(existing.approvedAt ? { approvedAt: existing.approvedAt } : {}),
+        ...(existing.approvedBy ? { approvedBy: existing.approvedBy } : {}),
+        ...(existing.deactivatedAt ? { deactivatedAt: existing.deactivatedAt } : {}),
         ...(existing.settingsJson ? { settingsJson: existing.settingsJson } : {}),
         createdAt: existing.createdAt || now,
         updatedAt: now,
@@ -145,12 +189,21 @@ export async function registerCloudEmailAccount(
       return { ok: true, profile: updated };
     }
 
+    const initialRole: UserRole = isAdminEmail ? 'admin' : 'user';
+    const initialStatus: UserAccountStatus = isAdminEmail
+      ? 'active'
+      : options?.isNewSignup === false
+      ? 'active'
+      : 'pending';
+
     const initial: UserProfileData = {
       uid,
       email: cleanEmail,
       displayName: cleanName,
       photoURL: '',
       passwordHash,
+      role: initialRole,
+      status: initialStatus,
       createdAt: now,
       updatedAt: now,
     };
@@ -171,12 +224,31 @@ export async function loginCloudEmailAccount(
   const path = `users/${uid}`;
   const now = new Date().toISOString();
   const cleanEmail = email.trim().toLowerCase();
+  const isAdminEmail = isBootstrappedAdminEmail(cleanEmail);
+  const legacyAdmin123Hash = hashAccountPassword(cleanEmail, 'admin123');
+  const defaultAnton123Hash = hashAccountPassword(cleanEmail, DEFAULT_ADMIN_PASSWORD);
 
   try {
     const userDocRef = doc(db, 'users', uid);
     const snap = await getDoc(userDocRef);
 
     if (!snap.exists()) {
+      // If it's a bootstrapped admin logging in with Anton123 for the first time, provision in Firestore
+      if (isAdminEmail && passwordHash === defaultAnton123Hash) {
+        const initialAdmin: UserProfileData = {
+          uid,
+          email: cleanEmail,
+          displayName: cleanEmail === 'admin@dompt.com' ? 'Admin SuperApp' : 'Admin Utama',
+          photoURL: '🛡️',
+          passwordHash: defaultAnton123Hash,
+          role: 'admin',
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+        };
+        await setDoc(userDocRef, initialAdmin, { merge: true });
+        return { ok: true, profile: initialAdmin };
+      }
       return {
         ok: false,
         notFound: true,
@@ -185,12 +257,29 @@ export async function loginCloudEmailAccount(
     }
 
     const data = snap.data() as UserProfileData;
-    if (data.passwordHash && data.passwordHash !== passwordHash) {
+    const storedHash =
+      isAdminEmail && (!data.passwordHash || data.passwordHash === legacyAdmin123Hash)
+        ? defaultAnton123Hash
+        : data.passwordHash;
+
+    if (storedHash && storedHash !== passwordHash) {
       return {
         ok: false,
         error: 'Password yang Anda masukkan salah. Silakan periksa kembali.',
       };
     }
+
+    // If admin had legacy admin123 hash in Firestore, persist the migrated Anton123 hash
+    if (isAdminEmail && data.passwordHash !== passwordHash) {
+      await setDoc(
+        userDocRef,
+        { passwordHash, role: 'admin', status: 'active', updatedAt: now },
+        { merge: true }
+      ).catch(() => {});
+    }
+
+    const role: UserRole = isAdminEmail ? 'admin' : (data.role || 'user');
+    const status: UserAccountStatus = isAdminEmail ? 'active' : (data.status || 'active');
 
     const profile: UserProfileData = {
       uid,
@@ -198,6 +287,11 @@ export async function loginCloudEmailAccount(
       displayName: data.displayName || 'Pengguna Dompt',
       photoURL: data.photoURL || '',
       passwordHash,
+      role,
+      status,
+      ...(data.approvedAt ? { approvedAt: data.approvedAt } : {}),
+      ...(data.approvedBy ? { approvedBy: data.approvedBy } : {}),
+      ...(data.deactivatedAt ? { deactivatedAt: data.deactivatedAt } : {}),
       ...(data.settingsJson ? { settingsJson: data.settingsJson } : {}),
       createdAt: data.createdAt || now,
       updatedAt: data.updatedAt || now,
@@ -207,6 +301,21 @@ export async function loginCloudEmailAccount(
     const getRes = await cloudRestApi('get', path);
     if (getRes?.ok) {
       if (!getRes.exists || !getRes.data) {
+        if (isAdminEmail && passwordHash === defaultAnton123Hash) {
+          const initialAdmin: UserProfileData = {
+            uid,
+            email: cleanEmail,
+            displayName: cleanEmail === 'admin@dompt.com' ? 'Admin SuperApp' : 'Admin Utama',
+            photoURL: '🛡️',
+            passwordHash: defaultAnton123Hash,
+            role: 'admin',
+            status: 'active',
+            createdAt: now,
+            updatedAt: now,
+          };
+          await cloudRestApi('set', path, initialAdmin, true);
+          return { ok: true, profile: initialAdmin };
+        }
         return {
           ok: false,
           notFound: true,
@@ -214,18 +323,38 @@ export async function loginCloudEmailAccount(
         };
       }
       const data = getRes.data as UserProfileData;
-      if (data.passwordHash && data.passwordHash !== passwordHash) {
+      const storedHash =
+        isAdminEmail && (!data.passwordHash || data.passwordHash === legacyAdmin123Hash)
+          ? defaultAnton123Hash
+          : data.passwordHash;
+
+      if (storedHash && storedHash !== passwordHash) {
         return {
           ok: false,
           error: 'Password yang Anda masukkan salah. Silakan periksa kembali.',
         };
       }
+      if (isAdminEmail && data.passwordHash !== passwordHash) {
+        await cloudRestApi(
+          'set',
+          path,
+          { passwordHash, role: 'admin', status: 'active', updatedAt: now },
+          true
+        );
+      }
+      const role: UserRole = isAdminEmail ? 'admin' : (data.role || 'user');
+      const status: UserAccountStatus = isAdminEmail ? 'active' : (data.status || 'active');
       const profile: UserProfileData = {
         uid,
         email: data.email || cleanEmail,
         displayName: data.displayName || 'Pengguna Dompt',
         photoURL: data.photoURL || '',
         passwordHash,
+        role,
+        status,
+        ...(data.approvedAt ? { approvedAt: data.approvedAt } : {}),
+        ...(data.approvedBy ? { approvedBy: data.approvedBy } : {}),
+        ...(data.deactivatedAt ? { deactivatedAt: data.deactivatedAt } : {}),
         ...(data.settingsJson ? { settingsJson: data.settingsJson } : {}),
         createdAt: data.createdAt || now,
         updatedAt: data.updatedAt || now,
@@ -233,6 +362,87 @@ export async function loginCloudEmailAccount(
       return { ok: true, profile };
     }
     handleFirestoreError(error, OperationType.GET, path);
+  }
+}
+
+export async function updateCloudAccountPassword(
+  uid: string,
+  email: string,
+  currentPasswordHash: string | null,
+  newPasswordHash: string,
+  skipCurrentCheck = false
+): Promise<{ ok: boolean; error?: string }> {
+  const path = `users/${uid}`;
+  const now = new Date().toISOString();
+  const cleanEmail = email.trim().toLowerCase();
+  const isAdminEmail = isBootstrappedAdminEmail(cleanEmail);
+  const legacyAdmin123Hash = hashAccountPassword(cleanEmail, 'admin123');
+  const defaultAnton123Hash = hashAccountPassword(cleanEmail, DEFAULT_ADMIN_PASSWORD);
+
+  try {
+    const docRef = doc(db, 'users', uid);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data() as UserProfileData;
+      const effectiveStoredHash =
+        isAdminEmail && (!data.passwordHash || data.passwordHash === legacyAdmin123Hash)
+          ? defaultAnton123Hash
+          : data.passwordHash;
+      if (!skipCurrentCheck && currentPasswordHash && effectiveStoredHash && effectiveStoredHash !== currentPasswordHash) {
+        return { ok: false, error: 'Password lama yang Anda masukkan salah.' };
+      }
+      await setDoc(
+        docRef,
+        {
+          uid,
+          email: cleanEmail,
+          passwordHash: newPasswordHash,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+      return { ok: true };
+    } else {
+      await setDoc(
+        docRef,
+        {
+          uid,
+          email: cleanEmail,
+          displayName: isAdminEmail ? 'Admin SuperApp' : 'Pengguna Dompt',
+          passwordHash: newPasswordHash,
+          role: isAdminEmail ? 'admin' : 'user',
+          status: 'active',
+          createdAt: now,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+      return { ok: true };
+    }
+  } catch {
+    const getRes = await cloudRestApi('get', path);
+    if (getRes?.ok && getRes.exists && getRes.data) {
+      const data = getRes.data as UserProfileData;
+      const effectiveStoredHash =
+        isAdminEmail && (!data.passwordHash || data.passwordHash === legacyAdmin123Hash)
+          ? defaultAnton123Hash
+          : data.passwordHash;
+      if (!skipCurrentCheck && currentPasswordHash && effectiveStoredHash && effectiveStoredHash !== currentPasswordHash) {
+        return { ok: false, error: 'Password lama yang Anda masukkan salah.' };
+      }
+    }
+    const setRes = await cloudRestApi(
+      'set',
+      path,
+      {
+        uid,
+        email: cleanEmail,
+        passwordHash: newPasswordHash,
+        updatedAt: now,
+      },
+      true
+    );
+    return { ok: Boolean(setRes?.ok) };
   }
 }
 
@@ -273,17 +483,27 @@ export async function updateCloudUserProfile(
 export async function syncUserProfile(user: User): Promise<UserProfileData> {
   const path = `users/${user.uid}`;
   const now = new Date().toISOString();
+  const cleanEmail = (user.email || 'user@example.com').trim().toLowerCase();
+  const isAdminEmail = isBootstrappedAdminEmail(cleanEmail);
+
   try {
     const userDocRef = doc(db, 'users', user.uid);
     const snap = await getDoc(userDocRef);
 
     if (snap.exists()) {
       const data = snap.data() as UserProfileData;
+      const role: UserRole = isAdminEmail ? 'admin' : (data.role || 'user');
+      const status: UserAccountStatus = isAdminEmail ? 'active' : (data.status || 'active');
       const updated: UserProfileData = {
         uid: user.uid,
-        email: user.email || data.email || 'user@example.com',
+        email: cleanEmail || data.email || 'user@example.com',
         displayName: data.displayName || user.displayName || 'Pengguna Dompt',
         photoURL: user.photoURL || data.photoURL || '',
+        role,
+        status,
+        ...(data.approvedAt ? { approvedAt: data.approvedAt } : {}),
+        ...(data.approvedBy ? { approvedBy: data.approvedBy } : {}),
+        ...(data.deactivatedAt ? { deactivatedAt: data.deactivatedAt } : {}),
         ...(data.passwordHash ? { passwordHash: data.passwordHash } : {}),
         ...(data.settingsJson ? { settingsJson: data.settingsJson } : {}),
         createdAt: data.createdAt || now,
@@ -294,9 +514,11 @@ export async function syncUserProfile(user: User): Promise<UserProfileData> {
     } else {
       const initial: UserProfileData = {
         uid: user.uid,
-        email: user.email || 'user@example.com',
+        email: cleanEmail,
         displayName: user.displayName || 'Pengguna Dompt',
         photoURL: user.photoURL || '',
+        role: isAdminEmail ? 'admin' : 'user',
+        status: isAdminEmail ? 'active' : 'pending',
         createdAt: now,
         updatedAt: now,
       };
@@ -306,15 +528,282 @@ export async function syncUserProfile(user: User): Promise<UserProfileData> {
   } catch (error) {
     const fallback: UserProfileData = {
       uid: user.uid,
-      email: user.email || 'user@example.com',
+      email: cleanEmail,
       displayName: user.displayName || 'Pengguna Dompt',
       photoURL: user.photoURL || '',
+      role: isAdminEmail ? 'admin' : 'user',
+      status: isAdminEmail ? 'active' : 'active',
       createdAt: now,
       updatedAt: now,
     };
     const setRes = await cloudRestApi('set', path, fallback, true);
     if (setRes?.ok) return fallback;
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+// Fetch single user profile from Cloud Firestore
+export async function fetchCloudUserProfile(uid: string): Promise<UserProfileData | null> {
+  const path = `users/${uid}`;
+  try {
+    const docRef = doc(db, 'users', uid);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return null;
+    return snap.data() as UserProfileData;
+  } catch {
+    const getRes = await cloudRestApi('get', path);
+    if (getRes?.ok && getRes.exists && getRes.data) {
+      return getRes.data as UserProfileData;
+    }
+    return null;
+  }
+}
+
+// Real-time subscription to a user's own profile (for live ACC / deactivation status updates)
+export function subscribeToUserProfileStatus(
+  uid: string,
+  onUpdate: (profile: UserProfileData) => void
+): () => void {
+  if (!uid || typeof window === 'undefined') return () => {};
+  try {
+    const docRef = doc(db, 'users', uid);
+    return onSnapshot(
+      docRef,
+      (snap) => {
+        if (!snap.exists()) return;
+        onUpdate(snap.data() as UserProfileData);
+      },
+      () => {
+        // Ignore snapshot error; fallback polling handles it
+      }
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+function mapDocToManagedUser(d: any): ManagedUserAccount {
+  const email = (d.email || '').trim().toLowerCase();
+  const isAdmin = isBootstrappedAdminEmail(email) || d.role === 'admin';
+  const role: UserRole = isAdmin ? 'admin' : 'user';
+  const status: UserAccountStatus = isAdmin ? 'active' : (d.status || 'active');
+  return {
+    uid: d.uid || '',
+    email: email || 'user@dompt.com',
+    displayName: d.displayName || 'Pengguna Dompt',
+    photoURL: d.photoURL || null,
+    role,
+    status,
+    approvedAt: d.approvedAt || undefined,
+    approvedBy: d.approvedBy || undefined,
+    deactivatedAt: d.deactivatedAt || undefined,
+    createdAt: d.createdAt || new Date().toISOString(),
+    updatedAt: d.updatedAt || d.createdAt || new Date().toISOString(),
+  };
+}
+
+// Fetch all registered user accounts from Cloud Firestore (for Admin Dashboard)
+export async function fetchAllCloudUsers(): Promise<ManagedUserAccount[]> {
+  try {
+    const colRef = collection(db, 'users');
+    const snap = await getDocs(query(colRef));
+    return snap.docs
+      .map((docSnap) => mapDocToManagedUser({ uid: docSnap.id, ...docSnap.data() }))
+      .filter((u) => Boolean(u.uid && u.email));
+  } catch {
+    const listRes = await cloudRestApi('list', 'users');
+    if (listRes?.ok && Array.isArray(listRes.docs)) {
+      return listRes.docs
+        .map((d: any) => mapDocToManagedUser(d))
+        .filter((u: ManagedUserAccount) => Boolean(u.uid && u.email));
+    }
+    return [];
+  }
+}
+
+// Subscribe to all registered users in real-time (for Admin Dashboard)
+export function subscribeToAllCloudUsers(
+  onUpdate: (users: ManagedUserAccount[]) => void
+): () => void {
+  if (typeof window === 'undefined') return () => {};
+  try {
+    const colRef = collection(db, 'users');
+    return onSnapshot(
+      colRef,
+      (snap) => {
+        const list = snap.docs
+          .map((docSnap) => mapDocToManagedUser({ uid: docSnap.id, ...docSnap.data() }))
+          .filter((u) => Boolean(u.uid && u.email));
+        onUpdate(list);
+      },
+      () => {}
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+// Admin action: Update user account status ('active' / 'deactivated' / 'pending') or role
+export async function updateCloudUserAccountStatus(
+  uid: string,
+  email: string,
+  displayName: string,
+  status: UserAccountStatus,
+  adminIdentifier?: string,
+  role?: UserRole
+): Promise<boolean> {
+  const path = `users/${uid}`;
+  const now = new Date().toISOString();
+  const payload: Record<string, any> = {
+    uid,
+    email: email.trim().toLowerCase(),
+    displayName: displayName || 'Pengguna Dompt',
+    status,
+    updatedAt: now,
+  };
+  if (role) {
+    payload.role = role;
+  }
+  if (status === 'active') {
+    payload.approvedAt = now;
+    if (adminIdentifier) {
+      payload.approvedBy = adminIdentifier.substring(0, 120);
+    }
+  } else if (status === 'deactivated') {
+    payload.deactivatedAt = now;
+  }
+
+  try {
+    const docRef = doc(db, 'users', uid);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      payload.createdAt = now;
+    }
+    await setDoc(docRef, payload, { merge: true });
+    return true;
+  } catch {
+    const setRes = await cloudRestApi('set', path, payload, true);
+    return Boolean(setRes?.ok);
+  }
+}
+
+// Bug Reports & User Feedback
+function mapDocToBugReport(d: any): BugReport {
+  return {
+    id: d.id || '',
+    userId: d.userId || '',
+    userEmail: d.userEmail || 'user@dompt.com',
+    userName: d.userName || 'Pengguna',
+    type:
+      d.type === 'bug' || d.type === 'feedback' || d.type === 'feature' || d.type === 'other'
+        ? d.type
+        : 'feedback',
+    priority:
+      d.priority === 'low' || d.priority === 'medium' || d.priority === 'high'
+        ? d.priority
+        : 'medium',
+    title: d.title || 'Laporan Pengguna',
+    description: d.description || '',
+    pageContext: d.pageContext || undefined,
+    status:
+      d.status === 'open' ||
+      d.status === 'in_progress' ||
+      d.status === 'resolved' ||
+      d.status === 'closed'
+        ? d.status
+        : 'open',
+    adminReply: d.adminReply || undefined,
+    repliedAt: d.repliedAt || undefined,
+    repliedBy: d.repliedBy || undefined,
+    createdAt: d.createdAt || new Date().toISOString(),
+    updatedAt: d.updatedAt || d.createdAt || new Date().toISOString(),
+  };
+}
+
+export async function fetchCloudBugReports(): Promise<BugReport[]> {
+  try {
+    const colRef = collection(db, 'bugReports');
+    const snap = await getDocs(query(colRef));
+    return snap.docs
+      .map((docSnap) => mapDocToBugReport({ id: docSnap.id, ...docSnap.data() }))
+      .filter((r) => Boolean(r.id))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    const listRes = await cloudRestApi('list', 'bugReports');
+    if (listRes?.ok && Array.isArray(listRes.docs)) {
+      return listRes.docs
+        .map((d: any) => mapDocToBugReport(d))
+        .filter((r: BugReport) => Boolean(r.id))
+        .sort(
+          (a: BugReport, b: BugReport) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+    }
+    return [];
+  }
+}
+
+export function subscribeToCloudBugReports(
+  onUpdate: (reports: BugReport[]) => void
+): () => void {
+  if (typeof window === 'undefined') return () => {};
+  try {
+    const colRef = collection(db, 'bugReports');
+    return onSnapshot(
+      colRef,
+      (snap) => {
+        const list = snap.docs
+          .map((docSnap) => mapDocToBugReport({ id: docSnap.id, ...docSnap.data() }))
+          .filter((r) => Boolean(r.id))
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        onUpdate(list);
+      },
+      () => {}
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+export async function saveCloudBugReport(report: BugReport): Promise<boolean> {
+  const path = `bugReports/${report.id}`;
+  const payload: Record<string, any> = {
+    id: report.id,
+    userId: report.userId.substring(0, 128),
+    userEmail: report.userEmail.substring(0, 256),
+    userName: report.userName.substring(0, 128),
+    type: report.type,
+    priority: report.priority,
+    title: report.title.substring(0, 200),
+    description: report.description.substring(0, 3000),
+    status: report.status,
+    createdAt: report.createdAt,
+    updatedAt: report.updatedAt,
+    ...(report.pageContext ? { pageContext: report.pageContext.substring(0, 100) } : {}),
+    ...(report.adminReply ? { adminReply: report.adminReply.substring(0, 2000) } : {}),
+    ...(report.repliedAt ? { repliedAt: report.repliedAt.substring(0, 50) } : {}),
+    ...(report.repliedBy ? { repliedBy: report.repliedBy.substring(0, 128) } : {}),
+  };
+
+  try {
+    const docRef = doc(db, 'bugReports', report.id);
+    await setDoc(docRef, payload, { merge: true });
+    return true;
+  } catch {
+    const setRes = await cloudRestApi('set', path, payload, true);
+    return Boolean(setRes?.ok);
+  }
+}
+
+export async function deleteCloudBugReport(reportId: string): Promise<boolean> {
+  const path = `bugReports/${reportId}`;
+  try {
+    const docRef = doc(db, 'bugReports', reportId);
+    await deleteDoc(docRef);
+    return true;
+  } catch {
+    const delRes = await cloudRestApi('delete', path);
+    return Boolean(delRes?.ok);
   }
 }
 

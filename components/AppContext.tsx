@@ -8,29 +8,38 @@ import {
   Budget,
   BudgetConfig,
   BudgetGroup,
+  BugReport,
+  BugReportCategory,
+  BugReportPriority,
+  BugReportStatus,
   Category,
   DashboardSummary,
   Debt,
   DebtPayment,
   Goal,
   InvestmentItem,
+  ManagedUserAccount,
   RecurringItem,
   ThemeMode,
   Transaction,
   TransactionDetail,
   TransactionType,
   UpcomingBill,
+  UserAccountStatus,
+  UserRole,
   Wallet,
   WalletWithBalance,
 } from '@/lib/types';
 import {
   cacheRegisteredAccountLocally,
+  changeLocalAccountPassword,
   clearAllData,
   getCleanDefaultWallets,
   getCloudAccountUid,
   getInitialBudgets,
   getInitialSampleTransactions,
   hashAccountPassword,
+  isBootstrappedAdminEmail,
   loadActiveLocalUser,
   loadRegisteredAccounts,
   loadStoredAssets,
@@ -50,6 +59,7 @@ import {
   registerAccountWithPassword,
   resetStorageToZero,
   saveActiveLocalUser,
+  saveRegisteredAccounts,
   saveStoredAssets,
   saveStoredBudgetConfig,
   saveStoredBudgets,
@@ -105,6 +115,16 @@ import {
   updateCloudUserProfile,
   registerCloudEmailAccount,
   loginCloudEmailAccount,
+  updateCloudAccountPassword,
+  fetchCloudUserProfile,
+  subscribeToUserProfileStatus,
+  fetchAllCloudUsers,
+  subscribeToAllCloudUsers,
+  updateCloudUserAccountStatus,
+  fetchCloudBugReports,
+  subscribeToCloudBugReports,
+  saveCloudBugReport,
+  deleteCloudBugReport,
   fetchUserWallets,
   saveUserWallet,
   deleteUserWallet,
@@ -143,7 +163,9 @@ export type TabType =
   | 'tutorial'
   | 'analytics'
   | 'subscriptions'
-  | 'health-score';
+  | 'health-score'
+  | 'admin'
+  | 'feedback';
 
 export interface ToastMessage {
   id: string;
@@ -301,7 +323,7 @@ interface AppContextType {
   resetAllAppData: () => void;
 
   // Auth & Multi-User Support
-  user: (User & { isLocalAccount?: boolean }) | LocalAccountProfile | null;
+  user: (User & { isLocalAccount?: boolean; role?: UserRole; status?: UserAccountStatus }) | LocalAccountProfile | null;
   authLoading: boolean;
   isLoginModalOpen: boolean;
   setIsLoginModalOpen: (open: boolean) => void;
@@ -318,6 +340,40 @@ interface AppContextType {
   ) => Promise<{ ok: boolean; error?: string }>;
   signOutUser: () => Promise<void>;
   dataResetVersion: number;
+
+  // Super App Role, Account Approval & Bug Report System
+  userRole: UserRole;
+  userAccountStatus: UserAccountStatus;
+  isAdmin: boolean;
+  managedUsers: ManagedUserAccount[];
+  bugReports: BugReport[];
+  approveUserAccount: (uid: string, email: string, displayName: string) => Promise<void>;
+  deactivateUserAccount: (uid: string, email: string, displayName: string) => Promise<void>;
+  setPendingUserAccount: (uid: string, email: string, displayName: string) => Promise<void>;
+  updateUserAccountRole: (uid: string, email: string, displayName: string, role: UserRole) => Promise<void>;
+  refreshUserAccountStatus: () => Promise<void>;
+  refreshAdminData: () => Promise<void>;
+  submitBugReport: (input: {
+    type: BugReportCategory;
+    priority: BugReportPriority;
+    title: string;
+    description: string;
+    pageContext?: string;
+  }) => Promise<boolean>;
+  updateBugReportByAdmin: (
+    reportId: string,
+    status: BugReportStatus,
+    adminReply?: string
+  ) => Promise<boolean>;
+  deleteBugReportById: (reportId: string) => Promise<boolean>;
+  changeAccountPassword: (
+    currentPassword: string,
+    newPassword: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  adminResetUserPassword: (
+    targetEmail: string,
+    newPassword: string
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 export interface InsufficientBalanceAlertInfo {
@@ -383,9 +439,31 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const rawPayday = budgetConfig?.paydayDay || settings?.paydayDay || budgetConfig?.settings?.paydayDay || 1;
   const effectivePaydayDay = Math.max(1, Math.min(31, Math.round(Number(rawPayday) || 1)));
 
+  const effectivePeriodMode =
+    budgetConfig?.periodMode || settings?.periodMode || budgetConfig?.settings?.periodMode;
+  const effectiveCustomStart =
+    budgetConfig?.customPeriodStart || settings?.customPeriodStart || budgetConfig?.settings?.customPeriodStart;
+  const effectiveCustomNext =
+    budgetConfig?.customNextPayday || settings?.customNextPayday || budgetConfig?.settings?.customNextPayday;
+
+  const customPeriodConfig = useMemo(
+    () => ({
+      periodMode: effectivePeriodMode,
+      customPeriodStart: effectiveCustomStart,
+      customNextPayday: effectiveCustomNext,
+    }),
+    [effectivePeriodMode, effectiveCustomStart, effectiveCustomNext]
+  );
+
   const budgetPeriod = useMemo<BudgetPeriodInfo>(() => {
-    return getBudgetPeriodInfo(activeYear, activeMonth, activeDay, effectivePaydayDay);
-  }, [activeYear, activeMonth, activeDay, effectivePaydayDay]);
+    return getBudgetPeriodInfo(
+      activeYear,
+      activeMonth,
+      activeDay,
+      effectivePaydayDay,
+      customPeriodConfig
+    );
+  }, [activeYear, activeMonth, activeDay, effectivePaydayDay, customPeriodConfig]);
 
   const goToPrevPeriod = () => {
     const prevDateStr = getAdjacentPeriodDateStr(
@@ -393,7 +471,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       activeMonth,
       activeDay,
       effectivePaydayDay,
-      -1
+      -1,
+      customPeriodConfig
     );
     setActiveDate(prevDateStr);
   };
@@ -404,13 +483,28 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       activeMonth,
       activeDay,
       effectivePaydayDay,
-      1
+      1,
+      customPeriodConfig
     );
     setActiveDate(nextDateStr);
   };
 
   const goToCurrentPeriod = () => {
-    setActiveDate(getTodayDateStr());
+    const todayStr = getTodayDateStr();
+    if (effectivePeriodMode === 'custom' && effectiveCustomStart && effectiveCustomNext) {
+      const todayD = parseLocalDay(todayStr);
+      const startD = parseLocalDay(effectiveCustomStart);
+      const nextD = parseLocalDay(effectiveCustomNext);
+      if (
+        !Number.isNaN(startD.getTime()) &&
+        !Number.isNaN(nextD.getTime()) &&
+        (todayD.getTime() < startD.getTime() || todayD.getTime() >= nextD.getTime())
+      ) {
+        setActiveDate(effectiveCustomStart);
+        return;
+      }
+    }
+    setActiveDate(todayStr);
   };
 
   // Modals & dialog states
@@ -428,9 +522,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [editingSubcategoryGroup, setEditingSubcategoryGroup] = useState<BudgetGroup>('kebutuhan');
 
   // Auth & Multi-User State
-  const [user, setUser] = useState<(User & { isLocalAccount?: boolean }) | LocalAccountProfile | null>(null);
+  const [user, setUser] = useState<
+    (User & { isLocalAccount?: boolean; role?: UserRole; status?: UserAccountStatus }) | LocalAccountProfile | null
+  >(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+
+  // Super App Role, Approval Status, Managed Users & Bug Reports
+  const [userRoleState, setUserRoleState] = useState<UserRole>('user');
+  const [userAccountStatusState, setUserAccountStatusState] = useState<UserAccountStatus>('active');
+  const [cloudManagedUsers, setCloudManagedUsers] = useState<ManagedUserAccount[]>([]);
+  const [localManagedUsers, setLocalManagedUsers] = useState<ManagedUserAccount[]>([]);
+  const [bugReports, setBugReports] = useState<BugReport[]>([]);
+
+  const userRole: UserRole = useMemo(() => {
+    if (!user) return 'user';
+    if (isBootstrappedAdminEmail(user.email)) return 'admin';
+    if ((user as LocalAccountProfile).role === 'admin') return 'admin';
+    return userRoleState;
+  }, [user, userRoleState]);
+
+  const userAccountStatus: UserAccountStatus = useMemo(() => {
+    if (!user) return 'active';
+    if (isBootstrappedAdminEmail(user.email) || userRole === 'admin') return 'active';
+    const profileStatus = (user as LocalAccountProfile).status;
+    return userAccountStatusState || profileStatus || 'active';
+  }, [user, userRole, userAccountStatusState]);
+
+  const isAdmin = userRole === 'admin';
+
+  // Merge cloud users and locally registered accounts so Admin sees all registered accounts
+  const managedUsers = useMemo<ManagedUserAccount[]>(() => {
+    const map = new Map<string, ManagedUserAccount>();
+    for (const loc of localManagedUsers) {
+      if (!loc?.email) continue;
+      const key = loc.email.toLowerCase();
+      map.set(key, loc);
+    }
+    for (const cld of cloudManagedUsers) {
+      if (!cld?.email) continue;
+      const key = cld.email.toLowerCase();
+      const existing = map.get(key);
+      if (!existing || (cld.updatedAt || '') >= (existing.updatedAt || '')) {
+        map.set(key, {
+          ...existing,
+          ...cld,
+          role: isBootstrappedAdminEmail(cld.email) ? 'admin' : cld.role || existing?.role || 'user',
+          status: isBootstrappedAdminEmail(cld.email)
+            ? 'active'
+            : cld.status || existing?.status || 'active',
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.status === 'pending' && b.status !== 'pending') return -1;
+      if (b.status === 'pending' && a.status !== 'pending') return 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [cloudManagedUsers, localManagedUsers]);
 
   const openLoginModal = () => setIsLoginModalOpen(true);
 
@@ -944,6 +1093,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setBudgetConfig(completeBudget);
   };
 
+  const syncLocalManagedUsersList = () => {
+    const registered = loadRegisteredAccounts();
+    const mapped: ManagedUserAccount[] = registered.map((r) => {
+      const adminFlag = isBootstrappedAdminEmail(r.email) || r.role === 'admin';
+      return {
+        uid: r.uid || getCloudAccountUid(r.email),
+        email: r.email.toLowerCase(),
+        displayName: r.displayName || 'Pengguna Dompt',
+        photoURL: r.photoURL || null,
+        role: adminFlag ? 'admin' : 'user',
+        status: adminFlag ? 'active' : (r.status || 'active'),
+        approvedAt: r.approvedAt,
+        approvedBy: r.approvedBy,
+        deactivatedAt: r.deactivatedAt,
+        createdAt: r.createdAt || new Date().toISOString(),
+        updatedAt: r.updatedAt || r.createdAt || new Date().toISOString(),
+      };
+    });
+    setLocalManagedUsers(mapped);
+  };
+
   // Load and sync an Email/Password account session with Cloud Firestore Database
   const loadAndSyncCloudAccountSession = async (
     profile: LocalAccountProfile,
@@ -952,20 +1122,54 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     isBackgroundSync = false
   ) => {
     const cloudUid = getCloudAccountUid(profile.email);
+    const adminFlag = isBootstrappedAdminEmail(profile.email) || profile.role === 'admin';
+    const resolvedRole: UserRole = adminFlag ? 'admin' : 'user';
+    const resolvedStatus: UserAccountStatus = adminFlag
+      ? 'active'
+      : profile.status || (isNewRegistration ? 'pending' : 'active');
+
     const normalizedProfile: LocalAccountProfile = {
       ...profile,
       uid: cloudUid,
       isLocalAccount: false,
+      role: resolvedRole,
+      status: resolvedStatus,
     };
 
     isCloudSyncingRef.current = true;
     if (!isBackgroundSync) {
       saveActiveLocalUser(normalizedProfile);
       setUser(normalizedProfile);
+      setUserRoleState(resolvedRole);
+      setUserAccountStatusState(resolvedStatus);
       setActiveDate(getTodayDateStr());
+      syncLocalManagedUsersList();
     }
 
     try {
+      const cloudProfile = await fetchCloudUserProfile(cloudUid);
+      if (cloudProfile) {
+        const cloudRole: UserRole =
+          isBootstrappedAdminEmail(cloudProfile.email) || cloudProfile.role === 'admin'
+            ? 'admin'
+            : 'user';
+        const cloudStatus: UserAccountStatus =
+          cloudRole === 'admin' ? 'active' : cloudProfile.status || resolvedStatus;
+        setUserRoleState(cloudRole);
+        setUserAccountStatusState(cloudStatus);
+        const updatedLocalProfile: LocalAccountProfile = {
+          ...normalizedProfile,
+          displayName: cloudProfile.displayName || normalizedProfile.displayName,
+          role: cloudRole,
+          status: cloudStatus,
+          approvedAt: cloudProfile.approvedAt,
+          approvedBy: cloudProfile.approvedBy,
+          deactivatedAt: cloudProfile.deactivatedAt,
+        };
+        saveActiveLocalUser(updatedLocalProfile);
+        setUser(updatedLocalProfile);
+      }
+
       await syncAllAccountDataWithCloud(
         cloudUid,
         normalizedProfile.email,
@@ -984,11 +1188,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     if (!silentToast) {
       setDataResetVersion((v) => v + 1);
-      addToast(
-        isNewRegistration ? 'Pendaftaran Berhasil' : 'Login Berhasil',
-        `Selamat datang, ${normalizedProfile.displayName}! Semua data Anda tersinkronisasi di Cloud DB.`,
-        'success'
-      );
+      if (isNewRegistration && resolvedStatus === 'pending') {
+        addToast(
+          'Pendaftaran Berhasil (Menunggu ACC Admin)',
+          `Akun ${normalizedProfile.displayName} berhasil didaftarkan dan menunggu persetujuan Admin.`,
+          'info'
+        );
+      } else {
+        addToast(
+          isNewRegistration ? 'Pendaftaran Berhasil' : 'Login Berhasil',
+          `Selamat datang, ${normalizedProfile.displayName}!`,
+          'success'
+        );
+      }
     }
   };
 
@@ -1013,15 +1225,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const cloudUid = getCloudAccountUid(cleanEmail);
     const passwordHash = hashAccountPassword(cleanEmail, password);
+    const isAdminEmail = isBootstrappedAdminEmail(cleanEmail);
 
     // 1. Save account credentials directly to Cloud Firestore Database
     try {
-      const cloudRes = await registerCloudEmailAccount(cloudUid, cleanName, cleanEmail, passwordHash);
+      const cloudRes = await registerCloudEmailAccount(
+        cloudUid,
+        cleanName,
+        cleanEmail,
+        passwordHash,
+        { isNewSignup: true }
+      );
       if (!cloudRes.ok) {
         return { ok: false, error: cloudRes.error };
       }
 
       const now = new Date().toISOString();
+      const role: UserRole = isAdminEmail ? 'admin' : (cloudRes.profile.role || 'user');
+      const status: UserAccountStatus = isAdminEmail
+        ? 'active'
+        : (cloudRes.profile.status || 'pending');
+
       const record = {
         uid: cloudUid,
         displayName: cleanName,
@@ -1029,9 +1253,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         passwordHash,
         photoURL: null,
         isLocalAccount: false,
+        role,
+        status,
         createdAt: cloudRes.profile.createdAt || now,
+        updatedAt: now,
       };
       cacheRegisteredAccountLocally(record);
+      syncLocalManagedUsersList();
       resetStorageToZero(cloudUid);
 
       await loadAndSyncCloudAccountSession(
@@ -1041,7 +1269,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           email: cleanEmail,
           photoURL: null,
           isLocalAccount: false,
+          role,
+          status,
           createdAt: record.createdAt,
+          updatedAt: now,
         },
         true
       );
@@ -1055,6 +1286,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!localRes.ok) {
       return { ok: false, error: localRes.error };
     }
+    syncLocalManagedUsersList();
     await loadAndSyncCloudAccountSession(localRes.profile, true);
     return { ok: true };
   };
@@ -1079,19 +1311,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     try {
       const cloudRes = await loginCloudEmailAccount(cloudUid, cleanEmail, passwordHash);
       if (cloudRes.ok) {
+        const role: UserRole =
+          isBootstrappedAdminEmail(cleanEmail) || cloudRes.profile.role === 'admin'
+            ? 'admin'
+            : 'user';
+        const status: UserAccountStatus =
+          role === 'admin' ? 'active' : cloudRes.profile.status || 'active';
+
         const profile: LocalAccountProfile = {
           uid: cloudUid,
           displayName: cloudRes.profile.displayName || 'Pengguna Dompt',
           email: cloudRes.profile.email || cleanEmail,
           photoURL: cloudRes.profile.photoURL || null,
           isLocalAccount: false,
+          role,
+          status,
+          approvedAt: cloudRes.profile.approvedAt,
+          approvedBy: cloudRes.profile.approvedBy,
+          deactivatedAt: cloudRes.profile.deactivatedAt,
           createdAt: cloudRes.profile.createdAt || new Date().toISOString(),
+          updatedAt: cloudRes.profile.updatedAt || new Date().toISOString(),
         };
         cacheRegisteredAccountLocally({
           ...profile,
           passwordHash,
         });
+        syncLocalManagedUsersList();
         await loadAndSyncCloudAccountSession(profile, false);
+        if (role === 'admin') {
+          setActiveTabState('admin');
+        }
         return { ok: true };
       }
 
@@ -1110,12 +1359,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           cloudUid,
           localRes.profile.displayName,
           cleanEmail,
-          passwordHash
+          passwordHash,
+          { isNewSignup: false }
         );
       } catch (e) {
         console.warn('Failed to upload local account to Cloud DB:', e);
       }
+      syncLocalManagedUsersList();
       await loadAndSyncCloudAccountSession(localRes.profile, false);
+      if (localRes.profile.role === 'admin') {
+        setActiveTabState('admin');
+      }
       return { ok: true };
     }
 
@@ -1138,6 +1392,311 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return { ok: false, error: localRes.error };
   };
 
+  // Change current logged-in user's or Admin's password
+  const changeAccountPassword = async (
+    currentPassword: string,
+    newPassword: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const email = (user?.email || settings.userEmail || '').trim().toLowerCase();
+    if (!email) {
+      return { ok: false, error: 'Anda belum masuk ke akun mana pun.' };
+    }
+    if (!currentPassword) {
+      return { ok: false, error: 'Mohon masukkan password lama Anda.' };
+    }
+    if (!newPassword || newPassword.length < 6) {
+      return { ok: false, error: 'Password baru minimal harus terdiri dari 6 karakter.' };
+    }
+
+    const uid = getCloudAccountUid(email);
+    const currentHash = hashAccountPassword(email, currentPassword);
+    const newHash = hashAccountPassword(email, newPassword);
+
+    // Update Cloud Firestore first
+    const cloudRes = await updateCloudAccountPassword(uid, email, currentHash, newHash, false);
+    if (!cloudRes.ok && cloudRes.error) {
+      return { ok: false, error: cloudRes.error };
+    }
+
+    // Also update local registry
+    const localRes = changeLocalAccountPassword(email, currentPassword, newPassword, cloudRes.ok);
+    if (!localRes.ok && !cloudRes.ok) {
+      return { ok: false, error: localRes.error };
+    }
+
+    addToast(
+      'Password Berhasil Diubah',
+      `Password untuk akun ${email} telah berhasil diperbarui.`,
+      'success'
+    );
+    return { ok: true };
+  };
+
+  // Admin action: Reset or change any user's or admin's password directly from Admin Dashboard
+  const adminResetUserPassword = async (
+    targetEmail: string,
+    newPassword: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const cleanEmail = targetEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { ok: false, error: 'Alamat email tidak valid.' };
+    }
+    if (!newPassword || newPassword.length < 6) {
+      return { ok: false, error: 'Password baru minimal harus terdiri dari 6 karakter.' };
+    }
+
+    const uid = getCloudAccountUid(cleanEmail);
+    const newHash = hashAccountPassword(cleanEmail, newPassword);
+
+    await updateCloudAccountPassword(uid, cleanEmail, null, newHash, true);
+    changeLocalAccountPassword(cleanEmail, null, newPassword, true);
+
+    addToast(
+      'Password Diperbarui oleh Admin',
+      `Password untuk akun ${cleanEmail} berhasil diatur ulang.`,
+      'success'
+    );
+    return { ok: true };
+  };
+
+  // Admin & BugReport Actions
+  const updateLocalRegisteredAccountStatus = (
+    uid: string,
+    email: string,
+    status: UserAccountStatus,
+    adminIdentifier?: string,
+    role?: UserRole
+  ) => {
+    const now = new Date().toISOString();
+    const list = loadRegisteredAccounts();
+    const cleanEmail = email.trim().toLowerCase();
+    const updated = list.map((acc) => {
+      if (acc.uid === uid || acc.email.toLowerCase() === cleanEmail) {
+        return {
+          ...acc,
+          status,
+          ...(role ? { role } : {}),
+          ...(status === 'active'
+            ? { approvedAt: now, approvedBy: adminIdentifier || 'Admin' }
+            : {}),
+          ...(status === 'deactivated' ? { deactivatedAt: now } : {}),
+          updatedAt: now,
+        };
+      }
+      return acc;
+    });
+    saveRegisteredAccounts(updated);
+    syncLocalManagedUsersList();
+  };
+
+  const approveUserAccount = async (uid: string, email: string, displayName: string) => {
+    const adminId = user?.email || 'admin@dompt.com';
+    const now = new Date().toISOString();
+    updateLocalRegisteredAccountStatus(uid, email, 'active', adminId);
+    setCloudManagedUsers((prev) =>
+      prev.map((u) =>
+        u.uid === uid || u.email.toLowerCase() === email.toLowerCase()
+          ? { ...u, status: 'active', approvedAt: now, approvedBy: adminId, updatedAt: now }
+          : u
+      )
+    );
+    await updateCloudUserAccountStatus(uid, email, displayName, 'active', adminId);
+    addToast(
+      'Akun User Di-ACC',
+      `Akun ${displayName} (${email}) telah disetujui dan kini aktif.`,
+      'success'
+    );
+  };
+
+  const deactivateUserAccount = async (uid: string, email: string, displayName: string) => {
+    if (isBootstrappedAdminEmail(email)) {
+      addToast('Tidak Dapat Dinonaktifkan', 'Akun Admin Utama tidak dapat dinonaktifkan.', 'error');
+      return;
+    }
+    const adminId = user?.email || 'admin@dompt.com';
+    const now = new Date().toISOString();
+    updateLocalRegisteredAccountStatus(uid, email, 'deactivated', adminId);
+    setCloudManagedUsers((prev) =>
+      prev.map((u) =>
+        u.uid === uid || u.email.toLowerCase() === email.toLowerCase()
+          ? { ...u, status: 'deactivated', deactivatedAt: now, updatedAt: now }
+          : u
+      )
+    );
+    await updateCloudUserAccountStatus(uid, email, displayName, 'deactivated', adminId);
+    addToast(
+      'Akun User Dinonaktifkan',
+      `Akun ${displayName} (${email}) telah dinonaktifkan oleh Admin.`,
+      'info'
+    );
+  };
+
+  const setPendingUserAccount = async (uid: string, email: string, displayName: string) => {
+    const adminId = user?.email || 'admin@dompt.com';
+    const now = new Date().toISOString();
+    updateLocalRegisteredAccountStatus(uid, email, 'pending', adminId);
+    setCloudManagedUsers((prev) =>
+      prev.map((u) =>
+        u.uid === uid || u.email.toLowerCase() === email.toLowerCase()
+          ? { ...u, status: 'pending', updatedAt: now }
+          : u
+      )
+    );
+    await updateCloudUserAccountStatus(uid, email, displayName, 'pending', adminId);
+    addToast(
+      'Status Diubah ke Pending',
+      `Akun ${displayName} kembali menunggu ACC Admin.`,
+      'info'
+    );
+  };
+
+  const updateUserAccountRole = async (
+    uid: string,
+    email: string,
+    displayName: string,
+    role: UserRole
+  ) => {
+    if (isBootstrappedAdminEmail(email) && role !== 'admin') {
+      addToast('Akses Dilindungi', 'Email Admin Utama tidak dapat diubah menjadi User biasa.', 'error');
+      return;
+    }
+    const adminId = user?.email || 'admin@dompt.com';
+    const now = new Date().toISOString();
+    updateLocalRegisteredAccountStatus(uid, email, 'active', adminId, role);
+    setCloudManagedUsers((prev) =>
+      prev.map((u) =>
+        u.uid === uid || u.email.toLowerCase() === email.toLowerCase()
+          ? { ...u, role, status: 'active', updatedAt: now }
+          : u
+      )
+    );
+    await updateCloudUserAccountStatus(uid, email, displayName, 'active', adminId, role);
+    addToast(
+      'Peran Akun Diperbarui',
+      `${displayName} kini berstatus sebagai ${role === 'admin' ? 'Admin' : 'User'}.`,
+      'success'
+    );
+  };
+
+  const refreshUserAccountStatus = async () => {
+    if (!user?.uid) return;
+    const cloudProfile = await fetchCloudUserProfile(user.uid);
+    if (cloudProfile) {
+      const nextRole: UserRole =
+        isBootstrappedAdminEmail(cloudProfile.email) || cloudProfile.role === 'admin'
+          ? 'admin'
+          : 'user';
+      const nextStatus: UserAccountStatus =
+        nextRole === 'admin' ? 'active' : cloudProfile.status || 'active';
+      setUserRoleState(nextRole);
+      setUserAccountStatusState(nextStatus);
+      const activeLocal = loadActiveLocalUser();
+      if (activeLocal) {
+        const updated = { ...activeLocal, role: nextRole, status: nextStatus };
+        saveActiveLocalUser(updated);
+        setUser(updated);
+      }
+      if (nextStatus === 'active') {
+        addToast('Akun Telah Aktif!', 'Selamat, akun Anda telah di-ACC oleh Admin.', 'success');
+      } else if (nextStatus === 'pending') {
+        addToast('Masih Menunggu ACC', 'Akun Anda masih dalam antrean persetujuan Admin.', 'info');
+      } else {
+        addToast('Akun Nonaktif', 'Akun Anda saat ini berstatus dinonaktifkan oleh Admin.', 'error');
+      }
+      return;
+    }
+    // Check local registry fallback
+    const localList = loadRegisteredAccounts();
+    const matched = localList.find(
+      (a) => a.uid === user.uid || a.email.toLowerCase() === (user.email || '').toLowerCase()
+    );
+    if (matched) {
+      const nextRole: UserRole =
+        isBootstrappedAdminEmail(matched.email) || matched.role === 'admin' ? 'admin' : 'user';
+      const nextStatus: UserAccountStatus =
+        nextRole === 'admin' ? 'active' : matched.status || 'active';
+      setUserRoleState(nextRole);
+      setUserAccountStatusState(nextStatus);
+    }
+  };
+
+  const refreshAdminData = async () => {
+    syncLocalManagedUsersList();
+    const [usersFromCloud, reportsFromCloud] = await Promise.all([
+      fetchAllCloudUsers().catch(() => [] as ManagedUserAccount[]),
+      fetchCloudBugReports().catch(() => [] as BugReport[]),
+    ]);
+    if (usersFromCloud.length > 0) {
+      setCloudManagedUsers(usersFromCloud);
+    }
+    setBugReports(reportsFromCloud);
+  };
+
+  const submitBugReport = async (input: {
+    type: BugReportCategory;
+    priority: BugReportPriority;
+    title: string;
+    description: string;
+    pageContext?: string;
+  }): Promise<boolean> => {
+    if (!user) return false;
+    const now = new Date().toISOString();
+    const id = `rep_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const newReport: BugReport = {
+      id,
+      userId: user.uid,
+      userEmail: user.email || settings.userEmail || 'user@dompt.com',
+      userName: user.displayName || settings.userName || 'Pengguna Dompt',
+      type: input.type,
+      priority: input.priority,
+      title: input.title.trim(),
+      description: input.description.trim(),
+      pageContext: input.pageContext || activeTab,
+      status: 'open',
+      createdAt: now,
+      updatedAt: now,
+    };
+    setBugReports((prev) => [newReport, ...prev]);
+    const ok = await saveCloudBugReport(newReport);
+    addToast(
+      'Laporan Terkirim ke Admin',
+      'Terima kasih! Masukan / laporan bug Anda telah diterima oleh Admin.',
+      'success'
+    );
+    return ok;
+  };
+
+  const updateBugReportByAdmin = async (
+    reportId: string,
+    status: BugReportStatus,
+    adminReply?: string
+  ): Promise<boolean> => {
+    const target = bugReports.find((r) => r.id === reportId);
+    if (!target) return false;
+    const now = new Date().toISOString();
+    const adminName = user?.displayName || user?.email || 'Admin SuperApp';
+    const updatedReport: BugReport = {
+      ...target,
+      status,
+      ...(adminReply !== undefined ? { adminReply: adminReply.trim() } : {}),
+      ...(adminReply && adminReply.trim()
+        ? { repliedAt: now, repliedBy: adminName }
+        : {}),
+      updatedAt: now,
+    };
+    setBugReports((prev) => prev.map((r) => (r.id === reportId ? updatedReport : r)));
+    const ok = await saveCloudBugReport(updatedReport);
+    addToast('Laporan Diperbarui', 'Status dan tanggapan Admin berhasil disimpan.', 'success');
+    return ok;
+  };
+
+  const deleteBugReportById = async (reportId: string): Promise<boolean> => {
+    setBugReports((prev) => prev.filter((r) => r.id !== reportId));
+    const ok = await deleteCloudBugReport(reportId);
+    addToast('Laporan Dihapus', 'Data laporan berhasil dihapus.', 'info');
+    return ok;
+  };
+
   // Sign In with Google
   const signInWithGoogle = async () => {
     try {
@@ -1146,7 +1705,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         saveActiveLocalUser(null);
         addToast(
           'Login Berhasil',
-          `Selamat datang, ${result.user.displayName || 'Pengguna'}! Akun Anda aktif.`,
+          `Selamat datang, ${result.user.displayName || 'Pengguna'}!`,
           'success'
         );
       }
@@ -1170,6 +1729,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         await signOut(auth);
       }
       setUser(null);
+      setUserRoleState('user');
+      setUserAccountStatusState('active');
       setActiveTabState('dashboard');
       setDataResetVersion((v) => v + 1);
       addToast('Berhasil Keluar', 'Anda telah keluar dari akun.', 'info');
@@ -1183,17 +1744,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Check active session on client mount and fetch fresh data directly from Cloud Firestore
   useEffect(() => {
     queueMicrotask(async () => {
+      syncLocalManagedUsersList();
       const activeLocal = loadActiveLocalUser();
       const scope = activeLocal ? getCloudAccountUid(activeLocal.email) : undefined;
       const storedSettings = loadStoredSettings(scope);
       if (activeLocal) {
         isCloudSyncingRef.current = true;
+        const adminFlag = isBootstrappedAdminEmail(activeLocal.email) || activeLocal.role === 'admin';
+        const role: UserRole = adminFlag ? 'admin' : 'user';
+        const status: UserAccountStatus = adminFlag ? 'active' : (activeLocal.status || 'active');
         const normalizedLocal: LocalAccountProfile = {
           ...activeLocal,
           uid: scope || activeLocal.uid,
           isLocalAccount: false,
+          role,
+          status,
         };
         setUser(normalizedLocal);
+        setUserRoleState(role);
+        setUserAccountStatusState(status);
       }
       setCategories(loadStoredCategories());
       setSettings(
@@ -1214,6 +1783,52 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     });
   }, []);
+
+  // Real-time listeners for User Profile Status (Pending/Active/Deactivated), All Users (Admin), and Bug Reports
+  useEffect(() => {
+    if (!user?.uid) return;
+    const unsubProfile = subscribeToUserProfileStatus(user.uid, (profile) => {
+      const nextRole: UserRole =
+        isBootstrappedAdminEmail(profile.email) || profile.role === 'admin'
+          ? 'admin'
+          : 'user';
+      const nextStatus: UserAccountStatus =
+        nextRole === 'admin' ? 'active' : profile.status || 'active';
+      setUserRoleState(nextRole);
+      setUserAccountStatusState(nextStatus);
+      updateLocalRegisteredAccountStatus(
+        user.uid,
+        profile.email || user.email || '',
+        nextStatus,
+        profile.approvedBy,
+        nextRole
+      );
+    });
+
+    const unsubReports = subscribeToCloudBugReports((reports) => {
+      setBugReports(reports);
+    });
+
+    const unsubUsers = subscribeToAllCloudUsers((usersList) => {
+      setCloudManagedUsers(usersList);
+    });
+
+    // Initial fetch for users & reports
+    fetchAllCloudUsers()
+      .then((list) => {
+        if (list.length > 0) setCloudManagedUsers(list);
+      })
+      .catch(() => {});
+    fetchCloudBugReports()
+      .then((list) => setBugReports(list))
+      .catch(() => {});
+
+    return () => {
+      unsubProfile();
+      unsubReports();
+      unsubUsers();
+    };
+  }, [user?.uid]);
 
   // Firebase auth & data synchronization
   useEffect(() => {
@@ -1239,6 +1854,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAuthLoading(true);
         try {
           const profileData = await syncUserProfile(currentUser);
+          const nextRole: UserRole =
+            isBootstrappedAdminEmail(currentUser.email) || profileData.role === 'admin'
+              ? 'admin'
+              : 'user';
+          const nextStatus: UserAccountStatus =
+            nextRole === 'admin' ? 'active' : profileData.status || 'active';
+          setUserRoleState(nextRole);
+          setUserAccountStatusState(nextStatus);
           const acctUid = currentUser.email ? getCloudAccountUid(currentUser.email) : undefined;
           await syncAllAccountDataWithCloud(
             currentUser.uid,
@@ -1258,11 +1881,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } else {
         const activeLocal = loadActiveLocalUser();
         if (activeLocal) {
+          const adminFlag = isBootstrappedAdminEmail(activeLocal.email) || activeLocal.role === 'admin';
+          const role: UserRole = adminFlag ? 'admin' : 'user';
+          const status: UserAccountStatus = adminFlag ? 'active' : (activeLocal.status || 'active');
           setUser({
             ...activeLocal,
             uid: getCloudAccountUid(activeLocal.email),
             isLocalAccount: false,
+            role,
+            status,
           });
+          setUserRoleState(role);
+          setUserAccountStatusState(status);
         } else {
           setUser(null);
         }
@@ -1842,14 +2472,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       monthlyVariableBudget: breakdown.monthlyVariableBudget,
       monthlyFixedExpense: breakdown.monthlyFixedExpense,
       monthlyGroceryExpense: breakdown.monthlyGroceryExpense,
+      monthlyNonDailyExpense: breakdown.monthlyNonDailyExpense,
       monthlyVariableExpense: breakdown.monthlyVariableExpense,
       todayVariableExpense: breakdown.todayVariableExpense,
+      todayNonDailyExpense: breakdown.todayNonDailyExpense,
       todayGroceryExpense: breakdown.todayGroceryExpense,
       todayFixedExpense: breakdown.todayFixedExpense,
       remainingGroceryBudget: breakdown.remainingGroceryBudget,
       dailyOverbudget: breakdown.dailyOverbudget,
       dailyOverbudgetAmount: breakdown.dailyOverbudgetAmount,
+      tomorrowDailyQuota: breakdown.tomorrowDailyQuota,
+      tomorrowQuotaDiff: breakdown.tomorrowQuotaDiff,
       paydayDay: breakdown.paydayDay,
+      isCustomFlexiblePeriod: breakdown.isCustomFlexiblePeriod,
       periodTotalDays: breakdown.periodTotalDays,
       currentPeriodDay: breakdown.currentPeriodDay,
       daysRemainingUntilPayday: breakdown.daysRemainingUntilPayday,
@@ -3012,11 +3647,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       data.paydayDay !== undefined
         ? Math.max(1, Math.min(31, Math.round(Number(data.paydayDay) || 1)))
         : budgetConfig.paydayDay || settings.paydayDay || 1;
-    const nextSettings: AppSettings =
-      data.paydayDay !== undefined
-        ? { ...settings, paydayDay: nextPayday }
-        : settings;
-    if (data.paydayDay !== undefined) {
+    const nextPeriodMode =
+      data.periodMode !== undefined
+        ? data.periodMode
+        : budgetConfig.periodMode || settings.periodMode || 'standard';
+    const nextCustomStart =
+      data.customPeriodStart !== undefined
+        ? data.customPeriodStart
+        : budgetConfig.customPeriodStart || settings.customPeriodStart;
+    const nextCustomNext =
+      data.customNextPayday !== undefined
+        ? data.customNextPayday
+        : budgetConfig.customNextPayday || settings.customNextPayday;
+
+    const hasPeriodUpdate =
+      data.paydayDay !== undefined ||
+      data.periodMode !== undefined ||
+      data.customPeriodStart !== undefined ||
+      data.customNextPayday !== undefined;
+
+    const nextSettings: AppSettings = hasPeriodUpdate
+      ? {
+          ...settings,
+          paydayDay: nextPayday,
+          periodMode: nextPeriodMode,
+          customPeriodStart: nextCustomStart,
+          customNextPayday: nextCustomNext,
+        }
+      : settings;
+
+    if (hasPeriodUpdate) {
       setSettings(nextSettings);
       saveStoredSettings(nextSettings, localScopeUid);
       if (mirrorUid) saveStoredSettings(nextSettings, mirrorUid);
@@ -3025,6 +3685,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ...budgetConfig,
       ...data,
       paydayDay: nextPayday,
+      periodMode: nextPeriodMode,
+      customPeriodStart: nextCustomStart,
+      customNextPayday: nextCustomNext,
       settings: nextSettings,
       updatedAt: new Date().toISOString(),
     };
@@ -3036,13 +3699,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         settings: nextSettings,
       });
     }
-    if (data.paydayDay !== undefined && Object.keys(data).length === 1) {
-      addToast(
-        'Periode Gajian Diperbarui',
-        nextPayday === 1
-          ? 'Periode budget diatur ke siklus kalender bulanan (Tgl 1 s/d akhir bulan).'
-          : `Periode budget diatur mulai Tanggal ${nextPayday} hingga Tanggal ${nextPayday} bulan berikutnya.`
-      );
+    if (hasPeriodUpdate && !data.subcategories && data.estimatedIncome === undefined && data.needsPercent === undefined) {
+      if (nextPeriodMode === 'custom' && nextCustomStart && nextCustomNext) {
+        const sD = parseLocalDay(nextCustomStart);
+        const eD = parseLocalDay(nextCustomNext);
+        const diffDays = Math.max(1, Math.round((eD.getTime() - sD.getTime()) / (1000 * 60 * 60 * 24)));
+        addToast(
+          'Periode Gajian Fleksibel Aktif',
+          `Periode diatur manual (${diffDays} hari): ${nextCustomStart} s/d ${nextCustomNext}.`
+        );
+      } else {
+        addToast(
+          'Periode Gajian Diperbarui',
+          nextPayday === 1
+            ? 'Periode budget diatur ke siklus kalender bulanan (Tgl 1 s/d akhir bulan).'
+            : `Periode budget diatur mulai Tanggal ${nextPayday} hingga Tanggal ${nextPayday} bulan berikutnya.`
+        );
+      }
     } else {
       addToast('Alokasi Disimpan', 'Pengaturan anggaran berhasil diperbarui.');
     }
@@ -4284,6 +4957,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         loginWithEmailPassword,
         signOutUser,
         dataResetVersion,
+        userRole,
+        userAccountStatus,
+        isAdmin,
+        managedUsers,
+        bugReports,
+        approveUserAccount,
+        deactivateUserAccount,
+        setPendingUserAccount,
+        updateUserAccountRole,
+        refreshUserAccountStatus,
+        refreshAdminData,
+        submitBugReport,
+        updateBugReportByAdmin,
+        deleteBugReportById,
+        changeAccountPassword,
+        adminResetUserPassword,
       }}
     >
       {children}

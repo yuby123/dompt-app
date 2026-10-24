@@ -32,6 +32,7 @@ import {
   getBudgetPeriodInfo,
   getMonthlyDebtInstallmentAmount,
   isDateInBudgetPeriod,
+  isDebtOrInstallmentSubcategory,
   isDebtScheduledForBudgetPeriod,
   isGrocerySubcategory,
 } from '@/lib/budgetUtils';
@@ -70,6 +71,15 @@ export function BudgetTab() {
   const [isEditPeriodOpen, setIsEditPeriodOpen] = useState(false);
   const [tempPaydayDay, setTempPaydayDay] = useState<number>(budgetPeriod.paydayDay || 1);
   const [tempCycleMode, setTempCycleMode] = useState<'auto' | 'thisMonthStart'>('auto');
+  const [tempPeriodMode, setTempPeriodMode] = useState<'standard' | 'custom'>(
+    budgetConfig.periodMode === 'custom' ? 'custom' : 'standard'
+  );
+  const [tempCustomStart, setTempCustomStart] = useState<string>(
+    budgetConfig.customPeriodStart || budgetPeriod.startDateIso
+  );
+  const [tempCustomNext, setTempCustomNext] = useState<string>(
+    budgetConfig.customNextPayday || budgetPeriod.nextPaydayIso
+  );
 
   const [isEditPercentagesOpen, setIsEditPercentagesOpen] = useState(false);
   const [needsPercent, setNeedsPercent] = useState(budgetConfig.needsPercent);
@@ -103,6 +113,8 @@ export function BudgetTab() {
     keinginan: false,
     tabungan: false,
   });
+  // Cicilan & Utang dipisahkan dari Kebutuhan dan disembunyikan secara default (baru tampil saat diklik)
+  const [showDebtSection, setShowDebtSection] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [showFixedPos, setShowFixedPos] = useState(false);
   const [showGroceryPos, setShowGroceryPos] = useState(false);
@@ -229,10 +241,32 @@ export function BudgetTab() {
     );
   }, [debts, budgetPeriod]);
 
-  // Filter subcategories
-  const needsSubs = effectiveSubcategories.filter((s) => s.group === 'kebutuhan');
-  const wantsSubs = effectiveSubcategories.filter((s) => s.group === 'keinginan');
-  const savingsSubs = effectiveSubcategories.filter((s) => s.group === 'tabungan');
+  // Filter subcategories: separate Cicilan & Utang into its own dedicated menu
+  const debtSubs = useMemo(
+    () => effectiveSubcategories.filter((s) => isDebtOrInstallmentSubcategory(s, debts)),
+    [effectiveSubcategories, debts]
+  );
+  const needsSubs = useMemo(
+    () =>
+      effectiveSubcategories.filter(
+        (s) => s.group === 'kebutuhan' && !isDebtOrInstallmentSubcategory(s, debts)
+      ),
+    [effectiveSubcategories, debts]
+  );
+  const wantsSubs = useMemo(
+    () =>
+      effectiveSubcategories.filter(
+        (s) => s.group === 'keinginan' && !isDebtOrInstallmentSubcategory(s, debts)
+      ),
+    [effectiveSubcategories, debts]
+  );
+  const savingsSubs = useMemo(
+    () =>
+      effectiveSubcategories.filter(
+        (s) => s.group === 'tabungan' && !isDebtOrInstallmentSubcategory(s, debts)
+      ),
+    [effectiveSubcategories, debts]
+  );
 
   // Dynamic subcategory spent amounts calculated from transactions & debt payments in the active period
   const { subSpentMap, unallocatedGroupSpent } = useMemo(() => {
@@ -469,7 +503,7 @@ export function BudgetTab() {
 
   const calculateGroupSpent = (group: BudgetGroup) => {
     const subTotal = effectiveSubcategories
-      .filter((s) => s.group === group)
+      .filter((s) => s.group === group && !isDebtOrInstallmentSubcategory(s, debts))
       .reduce((acc, s) => acc + (subSpentMap[s.id] || 0), 0);
     return subTotal + (unallocatedGroupSpent[group] || 0);
   };
@@ -477,6 +511,19 @@ export function BudgetTab() {
   const needsSpent = calculateGroupSpent('kebutuhan');
   const wantsSpent = calculateGroupSpent('keinginan');
   const savingsSpent = calculateGroupSpent('tabungan');
+
+  const visibleDebtSubs = useMemo(
+    () => (showArchived ? debtSubs : debtSubs.filter((s) => s.isSubscriptionActive !== false)),
+    [debtSubs, showArchived]
+  );
+  const debtTotalAllocated = useMemo(
+    () => visibleDebtSubs.reduce((sum, s) => sum + (Number(s.allocatedAmount) || 0), 0),
+    [visibleDebtSubs]
+  );
+  const debtTotalSpent = useMemo(
+    () => visibleDebtSubs.reduce((sum, s) => sum + (subSpentMap[s.id] || 0), 0),
+    [visibleDebtSubs, subSpentMap]
+  );
 
   // Subcategories that have exceeded their allocated budget limit
   const overbudgetCategories = useMemo(() => {
@@ -511,15 +558,50 @@ export function BudgetTab() {
   };
 
   const openPeriodModal = () => {
-    setTempPaydayDay(budgetPeriod.paydayDay || 1);
+    const pDay = budgetPeriod.paydayDay || 1;
+    setTempPaydayDay(pDay);
     setTempCycleMode('auto');
+    const isCurrentlyCustom =
+      budgetConfig.periodMode === 'custom' &&
+      Boolean(budgetConfig.customPeriodStart) &&
+      Boolean(budgetConfig.customNextPayday);
+    setTempPeriodMode(isCurrentlyCustom ? 'custom' : 'standard');
+    setTempCustomStart(budgetConfig.customPeriodStart || budgetPeriod.startDateIso);
+    setTempCustomNext(budgetConfig.customNextPayday || budgetPeriod.nextPaydayIso);
     setIsEditPeriodOpen(true);
   };
 
   const handleSavePeriod = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanDay = Math.max(1, Math.min(31, Math.round(Number(tempPaydayDay) || 1)));
-    updateBudgetConfig({ paydayDay: cleanDay });
+
+    if (tempPeriodMode === 'custom' && tempCustomStart && tempCustomNext && tempCustomNext > tempCustomStart) {
+      const startParts = tempCustomStart.split('-').map(Number);
+      const inferredPayday = Number(tempPaydayDay) > 1 ? cleanDay : (startParts[2] || cleanDay);
+      updateBudgetConfig({
+        paydayDay: inferredPayday,
+        periodMode: 'custom',
+        customPeriodStart: tempCustomStart,
+        customNextPayday: tempCustomNext,
+      });
+
+      const today = new Date();
+      const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      if (todayIso >= tempCustomStart && todayIso < tempCustomNext) {
+        setActiveDate(todayIso);
+      } else {
+        setActiveDate(tempCustomStart);
+      }
+      setIsEditPeriodOpen(false);
+      return;
+    }
+
+    updateBudgetConfig({
+      paydayDay: cleanDay,
+      periodMode: 'standard',
+      customPeriodStart: '',
+      customNextPayday: '',
+    });
 
     if (cleanDay > 1 && tempCycleMode === 'thisMonthStart') {
       const today = new Date();
@@ -530,7 +612,11 @@ export function BudgetTab() {
       const d = String(clampedD).padStart(2, '0');
       setActiveDate(`${y}-${m}-${d}`);
     } else if (tempCycleMode === 'auto') {
-      goToCurrentPeriod();
+      const today = new Date();
+      const y = today.getFullYear();
+      const m = String(today.getMonth() + 1).padStart(2, '0');
+      const d = String(today.getDate()).padStart(2, '0');
+      setActiveDate(`${y}-${m}-${d}`);
     }
 
     setIsEditPeriodOpen(false);
@@ -893,9 +979,9 @@ export function BudgetTab() {
                               type="button"
                               onClick={openFoodLifestyleModal}
                               className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-1.5 py-0.5 rounded-md border border-amber-500/25 shrink-0 cursor-pointer transition-colors"
-                              title="Pos Stok Belanja Bulanan & Masak (Tidak dibagi harian, aman dipakai belanja stok sekaligus)"
+                              title="Pos Keperluan Pribadi (Tidak dibebankan kuota harian)"
                             >
-                              🛒 Stok Masak
+                              🛍️ Keperluan Pribadi
                             </button>
                           )}
                         </div>
@@ -1098,16 +1184,16 @@ export function BudgetTab() {
               </div>
             )}
 
-            {dashboardSummary.monthlyGroceryExpense > 0 && (
-              <div className="pt-1">
+            {((dashboardSummary.monthlyGroceryExpense || 0) + (dashboardSummary.monthlyNonDailyExpense || 0)) > 0 && (
+              <div className="pt-1 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={openFoodLifestyleModal}
-                  className="bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/40 px-3 py-1 rounded-xl text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer text-[10px] font-bold"
-                  title="Lihat simulasi kuota harian fleksibel mengikuti sisa belanja bulanan"
+                  className="bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/40 px-3 py-1 rounded-xl text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer text-[10px] font-bold tabular-nums"
+                  title="Tidak dibebankan langsung ke kuota harian — mengurangi saldo pos harian & menyesuaikan kuota harian"
                 >
                   <span>
-                    🛒 Belanja Bulanan: -{formatRupiah(dashboardSummary.monthlyGroceryExpense, hide)}
+                    🛍️ Keperluan Pribadi: -{formatRupiah((dashboardSummary.monthlyGroceryExpense || 0) + (dashboardSummary.monthlyNonDailyExpense || 0), hide)}
                   </span>
                   <HelpCircle size={11} />
                 </button>
@@ -1242,18 +1328,18 @@ export function BudgetTab() {
               </AnimatePresence>
             </div>
 
-            {/* 2. Menu Pos Pengeluaran Harian & Belanja Bulanan (Fleksibel Mengikuti Sisa Uang) */}
+            {/* 2. Menu Pos Pengeluaran Harian & Keperluan Pribadi (Fleksibel Mengikuti Sisa Uang) */}
             <div className="h-full flex flex-col bg-white/[0.04] hover:bg-white/[0.07] rounded-2xl border border-white/10 transition-colors overflow-hidden">
               <button
                 type="button"
                 onClick={() => setShowVariablePos((prev) => !prev)}
                 className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 cursor-pointer text-left"
-                title={showVariablePos ? 'Sembunyikan rincian Pos Harian & Belanja Bulanan' : 'Klik untuk melihat rincian Pos Harian & Belanja Bulanan'}
+                title={showVariablePos ? 'Sembunyikan rincian Pos Harian & Keperluan Pribadi' : 'Klik untuk melihat rincian Pos Harian & Keperluan Pribadi'}
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-base shrink-0">🥪</span>
                   <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider truncate">
-                    POS HARIAN & BELANJA BULANAN (FLEKSIBEL)
+                    POS HARIAN & KEPERLUAN PRIBADI (FLEKSIBEL)
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
@@ -1276,7 +1362,7 @@ export function BudgetTab() {
                     className="overflow-hidden flex-1 flex flex-col"
                   >
                     <div className="px-3.5 pb-3.5 pt-2 border-t border-white/10 space-y-2 flex-1 flex flex-col justify-between">
-                      {/* Baris 1: Pagu Awal vs Potongan Belanja Bulanan */}
+                      {/* Baris 1: Pagu Awal vs Potongan Keperluan Pribadi (Non-Harian) */}
                       <div className="text-[10px] text-gray-300 font-medium flex flex-wrap items-center justify-between gap-2">
                         <span>
                           Pagu awal non-tagihan:{' '}
@@ -1286,13 +1372,13 @@ export function BudgetTab() {
                         </span>
                         <div className="flex items-center gap-1.5">
                           <span className="text-amber-300 font-bold tabular-nums bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-400/30">
-                            🛒 Belanja Bulanan: -{formatRupiah(dashboardSummary.monthlyGroceryExpense, hide)}
+                            🛍️ Keperluan Pribadi: -{formatRupiah((dashboardSummary.monthlyGroceryExpense || 0) + (dashboardSummary.monthlyNonDailyExpense || 0), hide)}
                           </span>
                           <button
                             type="button"
                             onClick={openFoodLifestyleModal}
                             className="text-[10px] font-black text-amber-200 hover:text-white bg-white/10 px-1.5 py-0.5 rounded-md cursor-pointer"
-                            title="Lihat simulasi kuota harian mengikuti sisa belanja bulanan"
+                            title="Lihat simulasi kuota harian mengikuti sisa keperluan pribadi"
                           >
                             Simulasi
                           </button>
@@ -1323,7 +1409,7 @@ export function BudgetTab() {
                       {/* Baris 3: Kuota Harian Mengikuti Sisa Uang */}
                       <div className="text-[11px] text-gray-400 font-medium flex flex-wrap items-center justify-between gap-2 min-h-[24px]">
                         <span>
-                          Kuota harian mengikuti sisa s/d <strong className="text-white">{budgetPeriod.endShortLabel}</strong> (
+                          Kuota hari ini (mengikuti sisa s/d <strong className="text-white">{budgetPeriod.endShortLabel}</strong> •{' '}
                           {budgetPeriod.daysRemainingUntilPayday} hari):
                         </span>
                         {dashboardSummary.remainingVariableBudget <= 0 ? (
@@ -1336,6 +1422,37 @@ export function BudgetTab() {
                           </span>
                         )}
                       </div>
+
+                      {/* Baris 4: Dampak jika hari ini melebihi kuota harian (Overbudget Rollover ke Esok Hari) */}
+                      {dashboardSummary.dailyOverbudget && budgetPeriod.daysRemainingUntilPayday > 1 ? (
+                        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 space-y-1.5 text-[10px]">
+                          <div className="flex flex-wrap items-center justify-between gap-1">
+                            <span className="text-rose-300 font-extrabold">
+                              ⚠️ Hari ini lewat +{formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)} dari kuota:
+                            </span>
+                            <span className="text-amber-300 font-black tabular-nums">
+                              Kuota mulai besok: ~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hari
+                            </span>
+                          </div>
+                          <p className="text-gray-300 leading-relaxed">
+                            Kelebihan hari ini otomatis memotong sisa saldo pos harian, sehingga kuota harian selama sisa{' '}
+                            <strong className="text-white">{budgetPeriod.daysRemainingUntilPayday - 1} hari</strong> ke depan berkurang{' '}
+                            <strong className="text-rose-300">-{formatRupiah(dashboardSummary.tomorrowQuotaDiff, hide)}/hari</strong> agar uang tetap cukup sampai gajian.
+                            {dashboardSummary.dailyBudgetQuota > dashboardSummary.dailyOverbudgetAmount && (
+                              <>
+                                {' '}Atau jika ingin lusa kembali normal (<strong className="text-[#D4F826]">{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari</strong>), cukup rem belanja besok maksimal{' '}
+                                <strong className="text-amber-300">
+                                  {formatRupiah(Math.max(0, dashboardSummary.dailyBudgetQuota - dashboardSummary.dailyOverbudgetAmount), hide)}
+                                </strong>.
+                              </>
+                            )}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-gray-400/90 bg-white/[0.03] border border-white/5 rounded-xl px-2.5 py-1.5 leading-relaxed">
+                          💡 <strong className="text-gray-200">Jika hari ini lewat kuota:</strong> Kelebihannya otomatis mengurangi jatah hari-hari berikutnya (kuota mulai besok menyesuaikan dibagi sisa hari) agar uang tetap cukup sampai gajian.
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 )}
@@ -1356,7 +1473,9 @@ export function BudgetTab() {
                   PERIODE AKTIF
                 </span>
                 <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-white/10 text-[#D4F826] uppercase tracking-wider">
-                  {budgetPeriod.paydayDay === 1
+                  {budgetPeriod.isCustomFlexiblePeriod
+                    ? `Fleksibel (${budgetPeriod.totalDays} Hari)`
+                    : budgetPeriod.paydayDay === 1
                     ? 'Tgl 1 - Akhir Bulan'
                     : `Gajian Tgl ${budgetPeriod.paydayDay}`}
                 </span>
@@ -1488,15 +1607,219 @@ export function BudgetTab() {
         {renderGroupSection({
           group: 'kebutuhan',
           title: 'KEBUTUHAN',
-          tooltip: `Alokasi Kebutuhan Pokok & Tagihan Rutin (${budgetConfig.needsPercent}%)`,
+          tooltip: `Alokasi Kebutuhan Pokok & Operasional (${budgetConfig.needsPercent}%) — Cicilan & Utang dipisahkan di menu bawah`,
           dotColor: 'bg-[#A594F9]',
           sectionBarColor: 'bg-[#A594F9]',
           itemBarColor: 'bg-[#A594F9]',
           subs: showArchived ? needsSubs : needsSubs.filter((s) => s.isSubscriptionActive !== false),
           groupSpent: needsSpent,
-          groupLimit: needsLimit,
+          groupLimit: Math.max(0, needsLimit - debtTotalAllocated),
           spentLabel: 'TERPAKAI',
         })}
+
+        {/* Menu Terpisah: CICILAN & UTANG (Disembunyikan secara default, tampil saat diklik) */}
+        {(visibleDebtSubs.length > 0 || deferredNextPeriodDebts.length > 0) && (
+          <div className="space-y-3.5 pt-2">
+            {/* Clickable Section Header */}
+            <div
+              onClick={() => setShowDebtSection((prev) => !prev)}
+              className="flex items-center justify-between px-1 cursor-pointer select-none group"
+            >
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                <h3 className="text-xs font-extrabold tracking-[0.22em] text-gray-900 dark:text-white uppercase">
+                  CICILAN & UTANG
+                </h3>
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-[10px] font-black text-amber-600 dark:text-amber-400 tabular-nums">
+                  {visibleDebtSubs.length} Cicilan
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveTab('debt');
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[11px] font-bold text-gray-600 dark:text-gray-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+                >
+                  <span>Kelola Utang</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowDebtSection((prev) => !prev);
+                }}
+                className="px-3 py-1 rounded-xl bg-gray-100 dark:bg-gray-800 group-hover:bg-gray-200 dark:group-hover:bg-gray-700 text-[11px] font-bold text-gray-600 dark:text-gray-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+                title={showDebtSection ? 'Sembunyikan daftar cicilan & utang' : 'Klik untuk menampilkan daftar cicilan & utang'}
+              >
+                <span>{showDebtSection ? 'Sembunyikan' : 'Klik untuk Tampilkan'}</span>
+                {showDebtSection ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              </button>
+            </div>
+
+            {/* Section-Level Progress Bar & Labels */}
+            <div
+              onClick={() => setShowDebtSection((prev) => !prev)}
+              className="space-y-1.5 px-1 cursor-pointer"
+            >
+              <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-amber-400 transition-all duration-500"
+                  style={{
+                    width: `${
+                      debtTotalAllocated > 0
+                        ? Math.min(100, Math.round((debtTotalSpent / debtTotalAllocated) * 100))
+                        : 0
+                    }%`,
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-[10px] font-extrabold tracking-wider uppercase tabular-nums">
+                <span className="text-gray-400">
+                  TERBAYAR PERIODE INI: {formatRupiah(debtTotalSpent, hide)}
+                </span>
+                <span className="text-gray-400">
+                  TAGIHAN CICILAN: {formatRupiah(debtTotalAllocated, hide)}
+                </span>
+              </div>
+            </div>
+
+            {!showDebtSection ? (
+              <button
+                type="button"
+                onClick={() => setShowDebtSection(true)}
+                className="w-full py-3 px-4 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-[#16181D]/60 hover:border-amber-400/60 dark:hover:border-amber-400/50 text-xs font-bold text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white flex items-center justify-between gap-2 cursor-pointer transition-all"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span>💳</span>
+                  <span className="truncate">
+                    {visibleDebtSubs.length > 0
+                      ? `${visibleDebtSubs.length} daftar cicilan & utang disembunyikan (${visibleDebtSubs.map((s) => s.name).join(', ')})`
+                      : `${deferredNextPeriodDebts.length} utang dijadwalkan mulai bulan depan`}
+                  </span>
+                </div>
+                <span className="text-[11px] font-extrabold text-amber-600 dark:text-amber-400 shrink-0 flex items-center gap-1">
+                  <span>Tampilkan</span>
+                  <ChevronDown size={14} />
+                </span>
+              </button>
+            ) : (
+              <div className="space-y-3 pt-1">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  {visibleDebtSubs.map((sub) => {
+                    const spent = subSpentMap[sub.id] || 0;
+                    const rawPct = sub.allocatedAmount > 0 ? Math.round((spent / sub.allocatedAmount) * 100) : 0;
+                    const pct = Math.min(100, rawPct);
+                    const isMenuOpen = activeMenuSubId === sub.id;
+                    const isPaidThisMonth = sub.allocatedAmount > 0 && spent >= sub.allocatedAmount;
+
+                    return (
+                      <div
+                        key={sub.id}
+                        className={`rounded-[22px] px-5 py-4 border transition-all flex items-center gap-4 relative group ${
+                          isMenuOpen
+                            ? 'border-[#D4F826] shadow-[0_4px_20px_rgba(212,248,38,0.15)] bg-white dark:bg-[#16181D]'
+                            : 'border-gray-100 dark:border-gray-800/80 hover:border-amber-400/70 shadow-[0_2px_10px_rgba(0,0,0,0.02)] bg-white dark:bg-[#16181D]'
+                        }`}
+                      >
+                        <div className="relative shrink-0">
+                          <div className="text-[28px] leading-none w-9 text-center select-none">
+                            {sub.emoji || '💳'}
+                          </div>
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline justify-between gap-2 mb-2">
+                            <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                              <span className="text-[13px] font-extrabold truncate text-gray-900 dark:text-white">
+                                {sub.name}
+                              </span>
+                              {sub.dueDateDay && (
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveTab('debt')}
+                                  className="text-[10px] font-semibold text-gray-400 hover:text-amber-500 shrink-0 cursor-pointer transition-colors"
+                                >
+                                  · Tgl {sub.dueDateDay}
+                                </button>
+                              )}
+                              {isPaidThisMonth && (
+                                <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-md border border-emerald-500/20">
+                                  Lunas Bulan Ini
+                                </span>
+                              )}
+                            </div>
+
+                            <span className="text-[13px] font-black tabular-nums shrink-0 text-gray-900 dark:text-white">
+                              {formatRupiah(spent, hide)}
+                            </span>
+                          </div>
+
+                          <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${
+                                isPaidThisMonth ? 'bg-emerald-500' : 'bg-amber-400'
+                              }`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between mt-1.5 gap-2">
+                            <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 tabular-nums">
+                              Sisa {formatRupiah(Math.max(0, sub.allocatedAmount - spent), hide)}
+                            </span>
+                            <span className="text-[11px] font-semibold text-gray-400 tabular-nums shrink-0">
+                              dari {formatRupiah(sub.allocatedAmount, hide)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setActiveMenuSubId(isMenuOpen ? null : sub.id)}
+                          className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-colors text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        >
+                          <MoreVertical size={15} />
+                        </button>
+
+                        {isMenuOpen && (
+                          <div className="absolute right-4 top-14 z-30 bg-white dark:bg-[#1E2026] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[140px] text-xs font-bold space-y-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveMenuSubId(null);
+                                setActiveTab('debt');
+                              }}
+                              className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
+                            >
+                              <Pencil size={12} />
+                              <span>Kelola di Utang</span>
+                            </button>
+                            {!sub.id.startsWith('sub-debt-') && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  deleteBudgetSubcategory(sub.id);
+                                  setActiveMenuSubId(null);
+                                }}
+                                className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer"
+                              >
+                                <Trash2 size={12} />
+                                <span>Hapus</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {renderGroupSection({
           group: 'keinginan',
@@ -1650,6 +1973,56 @@ export function BudgetTab() {
               {(() => {
                 const today = new Date();
                 const previewDay = Math.max(1, Math.min(31, Number(tempPaydayDay) || 1));
+                const DAYS_ID = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+                const MONTHS_ID = [
+                  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+                  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+                ];
+                const toIso = (y: number, mIdx: number, d: number) =>
+                  `${y}-${String(mIdx + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                const formatDateWithDayName = (iso: string) => {
+                  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '-';
+                  const [y, m, d] = iso.split('-').map(Number);
+                  const dt = new Date(y, m - 1, d, 12, 0, 0);
+                  if (Number.isNaN(dt.getTime())) return iso;
+                  return `${DAYS_ID[dt.getDay()]}, ${d} ${MONTHS_ID[m - 1]} ${y}`;
+                };
+
+                // Detect if regular paydayDay this month falls on Saturday (6) or Sunday (0)
+                const refYear = activeYear;
+                const refMonth = activeMonth;
+                const maxDayRefMonth = new Date(refYear, refMonth + 1, 0).getDate();
+                const clampedRefPayday = Math.min(previewDay, maxDayRefMonth);
+                const thisMonthPaydayDate = new Date(refYear, refMonth, clampedRefPayday, 12, 0, 0);
+                const thisMonthPaydayDow = thisMonthPaydayDate.getDay(); // 0 = Minggu, 6 = Sabtu
+                const isWeekendPayday = previewDay > 1 && (thisMonthPaydayDow === 0 || thisMonthPaydayDow === 6);
+                const fridayShiftOffset = thisMonthPaydayDow === 0 ? 2 : thisMonthPaydayDow === 6 ? 1 : 0;
+                const shiftedFridayDay = Math.max(1, clampedRefPayday - fridayShiftOffset);
+                const shiftedFridayIso = toIso(refYear, refMonth, shiftedFridayDay);
+
+                // Next month regular payday (e.g. tetap tgl 25 bulan depan)
+                const nextMonthObj = new Date(refYear, refMonth + 1, 1);
+                const nextYear = nextMonthObj.getFullYear();
+                const nextMonthIdx = nextMonthObj.getMonth();
+                const maxDayNextMonth = new Date(nextYear, nextMonthIdx + 1, 0).getDate();
+                const nextRegularPaydayDay = Math.min(previewDay > 1 ? previewDay : 25, maxDayNextMonth);
+                const nextRegularPaydayIso = toIso(nextYear, nextMonthIdx, nextRegularPaydayDay);
+
+                // Also compute Friday before regular payday for ANY month (even if not weekend, for manual shortcut)
+                const regularTargetDay = previewDay > 1 ? previewDay : 25;
+                const clampedTargetThisMonth = Math.min(regularTargetDay, maxDayRefMonth);
+                const targetThisMonthDate = new Date(refYear, refMonth, clampedTargetThisMonth, 12, 0, 0);
+                const targetDow = targetThisMonthDate.getDay();
+                const offsetToFriday =
+                  targetDow === 0 ? 2 : targetDow === 6 ? 1 : targetDow === 5 ? 0 : 2;
+                const suggestedStartFridayDay = Math.max(1, clampedTargetThisMonth - offsetToFriday);
+                const suggestedStartFridayIso = toIso(refYear, refMonth, suggestedStartFridayDay);
+                const suggestedNext25Iso = toIso(
+                  nextYear,
+                  nextMonthIdx,
+                  Math.min(regularTargetDay, maxDayNextMonth)
+                );
+
                 const autoPeriod = getBudgetPeriodInfo(
                   today.getFullYear(),
                   today.getMonth(),
@@ -1667,8 +2040,22 @@ export function BudgetTab() {
                   Math.min(previewDay, maxDayThisMonth),
                   previewDay
                 );
+
+                // Custom flexible period preview
+                let customPreview = autoPeriod;
+                if (tempCustomStart && tempCustomNext && tempCustomNext > tempCustomStart) {
+                  const [csY, csM, csD] = tempCustomStart.split('-').map(Number);
+                  customPreview = getBudgetPeriodInfo(csY, csM - 1, csD, previewDay, {
+                    periodMode: 'custom',
+                    customPeriodStart: tempCustomStart,
+                    customNextPayday: tempCustomNext,
+                  });
+                }
+
                 const selectedPreview =
-                  previewDay > 1 && tempCycleMode === 'thisMonthStart'
+                  tempPeriodMode === 'custom'
+                    ? customPreview
+                    : previewDay > 1 && tempCycleMode === 'thisMonthStart'
                     ? thisMonthStartPeriod
                     : autoPeriod;
 
@@ -1689,98 +2076,244 @@ export function BudgetTab() {
 
                 return (
                   <form onSubmit={handleSavePeriod} className="space-y-4">
-                    {/* Quick Presets */}
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
-                        Pilihan Cepat Tanggal Gajian
-                      </label>
-                      <div className="flex flex-wrap gap-1.5">
-                        {presets.map((p) => (
-                          <button
-                            key={p.day}
-                            type="button"
-                            onClick={() => setTempPaydayDay(p.day)}
-                            className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer border ${
-                              previewDay === p.day
-                                ? 'bg-[#D4F826] text-black border-[#D4F826] shadow-xs'
-                                : 'bg-gray-50 dark:bg-gray-800/80 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-gray-400'
-                            }`}
-                          >
-                            {p.label}
-                          </button>
-                        ))}
-                      </div>
+                    {/* Mode Switcher: Tanggal Tetap vs Periode Fleksibel Manual */}
+                    <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-gray-100 dark:bg-gray-800/80 border border-gray-200/70 dark:border-gray-700/70">
+                      <button
+                        type="button"
+                        onClick={() => setTempPeriodMode('standard')}
+                        className={`py-2 px-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                          tempPeriodMode === 'standard'
+                            ? 'bg-[#D4F826] text-black shadow-2xs'
+                            : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'
+                        }`}
+                      >
+                        📅 Tanggal Tetap
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTempPeriodMode('custom');
+                          if (!tempCustomStart || !tempCustomNext || tempCustomNext <= tempCustomStart) {
+                            setTempCustomStart(suggestedStartFridayIso);
+                            setTempCustomNext(suggestedNext25Iso);
+                          }
+                        }}
+                        className={`py-2 px-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                          tempPeriodMode === 'custom'
+                            ? 'bg-[#D4F826] text-black shadow-2xs'
+                            : 'text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white'
+                        }`}
+                      >
+                        ✨ Fleksibel / Manual
+                      </button>
                     </div>
 
-                    {/* 1-31 Calendar Date Selector Grid */}
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
-                        Atau Pilih Tanggal Gajian (1 - 31)
-                      </label>
-                      <div className="grid grid-cols-7 gap-1.5 bg-gray-50 dark:bg-gray-800/40 p-2.5 rounded-2xl border border-gray-100 dark:border-gray-800">
-                        {Array.from({ length: 31 }, (_, i) => i + 1).map((dayNum) => (
-                          <button
-                            key={dayNum}
-                            type="button"
-                            onClick={() => setTempPaydayDay(dayNum)}
-                            className={`h-9 rounded-xl text-xs font-black transition-all cursor-pointer ${
-                              previewDay === dayNum
-                                ? 'bg-[#D4F826] text-black shadow-xs scale-105 ring-2 ring-black/10 dark:ring-white/20'
-                                : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
-                            }`}
-                          >
-                            {dayNum}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Option to choose active cycle if today is before paydayDay */}
-                    {previewDay > 1 && autoPeriod.periodFullLabel !== thisMonthStartPeriod.periodFullLabel && (
-                      <div className="space-y-1.5">
-                        <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
-                          Tampilkan Siklus Periode
-                        </label>
-                        <div className="grid grid-cols-1 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setTempCycleMode('auto')}
-                            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
-                              tempCycleMode === 'auto'
-                                ? 'bg-[#D4F826]/15 border-[#D4F826] text-gray-900 dark:text-white'
-                                : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
-                            }`}
-                          >
-                            <div>
-                              <span className="text-xs font-black block">
-                                Siklus Berjalan Saat Ini ({autoPeriod.periodShortLabel})
-                              </span>
-                              <span className="text-[10px] text-gray-500 dark:text-gray-400">
-                                Hari ini masuk di siklus {autoPeriod.periodFullLabel}
-                              </span>
+                    {tempPeriodMode === 'standard' ? (
+                      <>
+                        {/* Smart Weekend Alert when payday falls on Saturday/Sunday */}
+                        {isWeekendPayday && (
+                          <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 space-y-2">
+                            <div className="text-[11px] text-amber-900 dark:text-amber-200 leading-snug">
+                              💡 <strong>Tgl {clampedRefPayday} {MONTHS_ID[refMonth]}</strong> jatuh di hari{' '}
+                              <strong>{DAYS_ID[thisMonthPaydayDow]}</strong>! Jika gajian bulan ini dimajukan ke hari{' '}
+                              <strong>Jumat Tgl {shiftedFridayDay}</strong> dan bulan depan tetap <strong>Tgl {nextRegularPaydayDay}</strong>:
                             </div>
-                            {tempCycleMode === 'auto' && <Check size={16} className="text-lime-600 dark:text-[#D4F826]" />}
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTempPeriodMode('custom');
+                                setTempCustomStart(shiftedFridayIso);
+                                setTempCustomNext(nextRegularPaydayIso);
+                              }}
+                              className="w-full py-2 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black text-[11px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                            >
+                              <span>Atur Gajian Maju ke Jumat Tgl {shiftedFridayDay} (s/d {nextRegularPaydayDay} {MONTHS_ID[nextMonthIdx].slice(0, 3)})</span>
+                            </button>
+                          </div>
+                        )}
 
-                          <button
-                            type="button"
-                            onClick={() => setTempCycleMode('thisMonthStart')}
-                            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
-                              tempCycleMode === 'thisMonthStart'
-                                ? 'bg-[#D4F826]/15 border-[#D4F826] text-gray-900 dark:text-white'
-                                : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
-                            }`}
-                          >
-                            <div>
-                              <span className="text-xs font-black block">
-                                Siklus Gajian Tgl {previewDay} Bulan Ini ({thisMonthStartPeriod.periodShortLabel})
-                              </span>
-                              <span className="text-[10px] text-gray-500 dark:text-gray-400">
-                                Atur budget untuk {thisMonthStartPeriod.periodFullLabel}
-                              </span>
+                        {/* Quick Presets */}
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
+                            Pilihan Cepat Tanggal Gajian
+                          </label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {presets.map((p) => (
+                              <button
+                                key={p.day}
+                                type="button"
+                                onClick={() => setTempPaydayDay(p.day)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer border ${
+                                  previewDay === p.day
+                                    ? 'bg-[#D4F826] text-black border-[#D4F826] shadow-xs'
+                                    : 'bg-gray-50 dark:bg-gray-800/80 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-gray-400'
+                                }`}
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* 1-31 Calendar Date Selector Grid */}
+                        <div className="space-y-1.5">
+                          <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
+                            Atau Pilih Tanggal Gajian (1 - 31)
+                          </label>
+                          <div className="grid grid-cols-7 gap-1.5 bg-gray-50 dark:bg-gray-800/40 p-2.5 rounded-2xl border border-gray-100 dark:border-gray-800">
+                            {Array.from({ length: 31 }, (_, i) => i + 1).map((dayNum) => (
+                              <button
+                                key={dayNum}
+                                type="button"
+                                onClick={() => setTempPaydayDay(dayNum)}
+                                className={`h-9 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                                  previewDay === dayNum
+                                    ? 'bg-[#D4F826] text-black shadow-xs scale-105 ring-2 ring-black/10 dark:ring-white/20'
+                                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                                }`}
+                              >
+                                {dayNum}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Option to choose active cycle if today is before paydayDay */}
+                        {previewDay > 1 && autoPeriod.periodFullLabel !== thisMonthStartPeriod.periodFullLabel && (
+                          <div className="space-y-1.5">
+                            <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
+                              Tampilkan Siklus Periode
+                            </label>
+                            <div className="grid grid-cols-1 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setTempCycleMode('auto')}
+                                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                                  tempCycleMode === 'auto'
+                                    ? 'bg-[#D4F826]/15 border-[#D4F826] text-gray-900 dark:text-white'
+                                    : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
+                                }`}
+                              >
+                                <div>
+                                  <span className="text-xs font-black block">
+                                    Siklus Berjalan Saat Ini ({autoPeriod.periodShortLabel})
+                                  </span>
+                                  <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                                    Hari ini masuk di siklus {autoPeriod.periodFullLabel}
+                                  </span>
+                                </div>
+                                {tempCycleMode === 'auto' && <Check size={16} className="text-lime-600 dark:text-[#D4F826]" />}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => setTempCycleMode('thisMonthStart')}
+                                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                                  tempCycleMode === 'thisMonthStart'
+                                    ? 'bg-[#D4F826]/15 border-[#D4F826] text-gray-900 dark:text-white'
+                                    : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
+                                }`}
+                              >
+                                <div>
+                                  <span className="text-xs font-black block">
+                                    Siklus Gajian Tgl {previewDay} Bulan Ini ({thisMonthStartPeriod.periodShortLabel})
+                                  </span>
+                                  <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                                    Atur budget untuk {thisMonthStartPeriod.periodFullLabel}
+                                  </span>
+                                </div>
+                                {tempCycleMode === 'thisMonthStart' && <Check size={16} className="text-lime-600 dark:text-[#D4F826]" />}
+                              </button>
                             </div>
-                            {tempCycleMode === 'thisMonthStart' && <Check size={16} className="text-lime-600 dark:text-[#D4F826]" />}
-                          </button>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      /* MODE PERIODE FLEKSIBEL / MANUAL (Misal Gajian Maju ke Jumat Tgl 23 -> Bulan Depan Tetap Tgl 25 = >31 Hari) */
+                      <div className="space-y-3.5">
+                        <div className="p-3 rounded-2xl bg-lime-500/10 dark:bg-[#D4F826]/10 border border-lime-500/30 dark:border-[#D4F826]/30 text-[11px] text-gray-700 dark:text-gray-200 leading-relaxed">
+                          Cocok saat tanggal gajian bulan ini <strong>dimajukan/dimundurkan</strong> (misal Tgl 25 jatuh di hari Minggu sehingga gajian maju ke <strong>Jumat Tgl 23</strong>, sedangkan bulan depan tetap <strong>Tgl 25</strong> → durasi <strong>33 hari</strong>).
+                        </div>
+
+                        {/* Quick Scenario Presets */}
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
+                            Skenario Cepat Gajian Maju (Weekend)
+                          </label>
+                          <div className="flex flex-wrap gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTempPaydayDay(25);
+                                setTempCustomStart(toIso(refYear, refMonth, 23));
+                                setTempCustomNext(toIso(nextYear, nextMonthIdx, Math.min(25, maxDayNextMonth)));
+                              }}
+                              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer border ${
+                                tempCustomStart.endsWith('-23') && tempCustomNext.endsWith('-25')
+                                  ? 'bg-[#D4F826] text-black border-[#D4F826]'
+                                  : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700'
+                              }`}
+                            >
+                              Tgl 23 Ini → Tgl 25 Depan (Maju 2 Hari)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTempPaydayDay(25);
+                                setTempCustomStart(toIso(refYear, refMonth, 24));
+                                setTempCustomNext(toIso(nextYear, nextMonthIdx, Math.min(25, maxDayNextMonth)));
+                              }}
+                              className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer border ${
+                                tempCustomStart.endsWith('-24') && tempCustomNext.endsWith('-25')
+                                  ? 'bg-[#D4F826] text-black border-[#D4F826]'
+                                  : 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700'
+                              }`}
+                            >
+                              Tgl 24 Ini → Tgl 25 Depan (Maju 1 Hari)
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Input 1: Tanggal Gajian / Mulai Periode Ini */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-extrabold text-gray-700 dark:text-gray-200">
+                              1. Tanggal Gajian / Mulai Periode Ini
+                            </label>
+                            <span className="text-[10px] font-bold text-lime-600 dark:text-[#D4F826]">
+                              {formatDateWithDayName(tempCustomStart)}
+                            </span>
+                          </div>
+                          <input
+                            type="date"
+                            value={tempCustomStart}
+                            onChange={(e) => setTempCustomStart(e.target.value)}
+                            required
+                            className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                          />
+                        </div>
+
+                        {/* Input 2: Tanggal Gajian Bulan Depan */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-extrabold text-gray-700 dark:text-gray-200">
+                              2. Tanggal Gajian Bulan Depan
+                            </label>
+                            <span className="text-[10px] font-bold text-lime-600 dark:text-[#D4F826]">
+                              {formatDateWithDayName(tempCustomNext)}
+                            </span>
+                          </div>
+                          <input
+                            type="date"
+                            value={tempCustomNext}
+                            min={tempCustomStart || undefined}
+                            onChange={(e) => setTempCustomNext(e.target.value)}
+                            required
+                            className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                          />
+                          <p className="text-[10px] text-gray-400">
+                            Kuota harian akan dihitung agar uang gajian cukup sampai H-1 tanggal gajian bulan depan.
+                          </p>
                         </div>
                       </div>
                     )}
@@ -2192,10 +2725,10 @@ export function BudgetTab() {
                   >
                     <div>
                       <span className="text-xs font-extrabold block">
-                        🛒 Pos Stok Belanja Bulanan / Masak
+                        🛍️ Pos Keperluan Pribadi (Tidak Dibebankan Kuota Harian)
                       </span>
                       <span className="text-[10px] text-gray-500 dark:text-gray-400">
-                        Anggaran tidak dibagi harian agar aman dipakai belanja stok sekaligus
+                        Anggaran tidak dibagi harian (untuk belanja bulanan, amplop, keperluan pribadi)
                       </span>
                     </div>
                     <div
@@ -2231,7 +2764,7 @@ export function BudgetTab() {
         )}
       </AnimatePresence>
 
-      {/* Modal: Simulasi & Konsep Kuota Harian Mengikuti Sisa Belanja Bulanan */}
+      {/* Modal: Simulasi & Konsep Kuota Harian Mengikuti Sisa Keperluan Pribadi */}
       <AnimatePresence>
         {isFoodModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
@@ -2244,13 +2777,13 @@ export function BudgetTab() {
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400 bg-amber-500/15 px-2.5 py-0.5 rounded-full">
-                    KONSEP FLEKSIBEL: MENGIKUTI SISA UANG
+                    KONSEP FLEKSIBEL: MENGIKUTI SISA SALDO POS HARIAN
                   </span>
                   <h3 className="text-base sm:text-lg font-extrabold text-gray-900 dark:text-white mt-1">
-                    Kuota Harian Mengikuti Sisa Belanja Bulanan
+                    Keperluan Pribadi (Tidak Dibebankan Kuota Harian)
                   </h3>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
-                    Tidak perlu mengunci jatah masak yang kaku di awal bulan. Mau hari ini masak, besok pagi masak malam beli luar, atau seharian tidak masak sama sekali — <strong>kuota harian otomatis menyesuaikan sisa uang Anda!</strong>
+                    Semua pengeluaran yang tidak dibebankan ke jatah harian (seperti belanja bulanan, amplop nikahan, ngado, sedekah, dll) digabung dalam 1 menu <strong>Keperluan Pribadi</strong> — <strong>mengurangi saldo pos harian & otomatis menyesuaikan kuota harian!</strong>
                   </p>
                 </div>
                 <button
@@ -2279,6 +2812,9 @@ export function BudgetTab() {
 
                 const poolAfterNextWeekShop = Math.max(0, poolAfterTodayShop - shopNextWeek);
                 const dailyQuotaAfterNextWeekShop = Math.round(poolAfterNextWeekShop / nextWeekDaysLeft);
+                const totalPersonalSpent =
+                  (dashboardSummary.monthlyGroceryExpense || 0) +
+                  (dashboardSummary.monthlyNonDailyExpense || 0);
 
                 return (
                   <div className="space-y-4">
@@ -2294,10 +2830,10 @@ export function BudgetTab() {
                       </div>
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-gray-500 dark:text-gray-400 font-bold">
-                          Sudah Dipakai Belanja Bulanan (🛒):
+                          Sudah Dipakai Keperluan Pribadi (🛍️):
                         </span>
                         <span className="font-extrabold text-amber-600 dark:text-amber-400 tabular-nums">
-                          -{formatRupiah(dashboardSummary.monthlyGroceryExpense, hide)}
+                          -{formatRupiah(totalPersonalSpent, hide)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-xs">
@@ -2310,7 +2846,7 @@ export function BudgetTab() {
                       </div>
                       <div className="pt-2 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-xs">
                         <span className="font-black text-gray-900 dark:text-white">
-                          Sisa Uang Saat Ini ({daysLeft} hari s/d gajian):
+                          Sisa Saldo Pos Harian ({daysLeft} hari s/d gajian):
                         </span>
                         <span className="font-black text-emerald-600 dark:text-[#D4F826] text-sm tabular-nums">
                           {formatRupiah(dashboardSummary.remainingVariableBudget, hide)} (~{formatRupiah(currentDailyQuota, hide)}/hari)
@@ -2321,15 +2857,15 @@ export function BudgetTab() {
                     {/* Simulator Interaktif */}
                     <div className="space-y-3">
                       <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
-                        Simulasi Jika Anda Belanja Bulanan Bertahap:
+                        Simulasi Jika Ada Pengeluaran Keperluan Pribadi:
                       </label>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {/* Tahap 1: Hari Ini */}
                         <div className="p-3 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-800/50 space-y-1.5">
                           <label className="text-[11px] font-black text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
-                            <span>🛒</span>
-                            <span>Misal Hari Ini Belanja:</span>
+                            <span>🛍️</span>
+                            <span>Misal Hari Ini Keluar:</span>
                           </label>
                           <input
                             type="text"
@@ -2341,7 +2877,7 @@ export function BudgetTab() {
                           />
                           <div className="text-[10px] text-amber-800 dark:text-amber-300 font-semibold space-y-0.5 pt-0.5">
                             <div className="flex justify-between">
-                              <span>Sisa uang:</span>
+                              <span>Sisa saldo:</span>
                               <strong className="tabular-nums">{formatRupiah(poolAfterTodayShop, hide)}</strong>
                             </div>
                             <div className="flex justify-between">
@@ -2354,20 +2890,20 @@ export function BudgetTab() {
                         {/* Tahap 2: Minggu Depan */}
                         <div className="p-3 rounded-2xl bg-sky-50/60 dark:bg-sky-950/20 border border-sky-200/80 dark:border-sky-800/50 space-y-1.5">
                           <label className="text-[11px] font-black text-sky-800 dark:text-sky-300 flex items-center gap-1.5">
-                            <span>🛒</span>
-                            <span>Minggu Depan Belanja Lagi:</span>
+                            <span>🛍️</span>
+                            <span>Minggu Depan Keluar Lagi:</span>
                           </label>
                           <input
                             type="text"
                             inputMode="numeric"
                             value={tempEatOutBudgetInput}
                             onChange={(e) => setTempEatOutBudgetInput(formatNominalInput(e.target.value))}
-                            placeholder="2.000.000"
+                            placeholder="500.000"
                             className="w-full p-2.5 bg-white dark:bg-gray-900 border border-sky-300 dark:border-sky-700 rounded-xl text-sm font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400 tabular-nums"
                           />
                           <div className="text-[10px] text-sky-800 dark:text-sky-300 font-semibold space-y-0.5 pt-0.5">
                             <div className="flex justify-between">
-                              <span>Sisa uang lagi:</span>
+                              <span>Sisa saldo lagi:</span>
                               <strong className="tabular-nums">{formatRupiah(poolAfterNextWeekShop, hide)}</strong>
                             </div>
                             <div className="flex justify-between">
@@ -2387,13 +2923,13 @@ export function BudgetTab() {
                       </div>
                       <ul className="space-y-1.5 text-gray-300 list-disc pl-4">
                         <li>
-                          Saat habis belanja bulanan/mingguan (misal Rp 1 juta hari ini atau Rp 2 juta minggu depan), klik <strong>+ Catat</strong> lalu pilih sifat <strong>🛒 Belanja Bulanan / Masak</strong>.
+                          Saat ada pengeluaran yang tidak dibebankan ke kuota harian (misal belanja bulanan, amplop nikahan, ngado, dll), klik <strong>+ Catat</strong> lalu pilih <strong>🛍️ Keperluan Pribadi</strong>.
                         </li>
                         <li>
-                          Belanja tersebut <strong>tidak bikin kuota hari ini merah/jebol</strong>, melainkan langsung mengurangi <strong>Sisa Uang</strong> periode ini sehingga <strong>Kuota Harian besok & seterusnya otomatis menyesuaikan sisa uang</strong>.
+                          Pengeluaran tersebut <strong>tidak bikin kuota makan/harian hari ini merah/jebol</strong>, melainkan mengurangi <strong>Sisa Saldo Pos Harian</strong> sehingga <strong>Kuota Harian otomatis menyesuaikan sisa saldo</strong>.
                         </li>
                         <li>
-                          Jika suatu hari Anda <strong>tidak masak sama sekali</strong> dan beli makan di luar seharian, cukup catat sebagai <strong>🥪 Harian / Makan Luar</strong> — otomatis memotong kuota harian yang sedang berjalan.
+                          Untuk pengeluaran operasional harian (beli makan luar, jajan, bensin), pilih <strong>🥪 Makan Luar / Harian</strong> — otomatis memotong kuota harian hari ini.
                         </li>
                       </ul>
                     </div>
@@ -2414,8 +2950,8 @@ export function BudgetTab() {
                         }}
                         className="flex-1 py-3 px-4 rounded-2xl bg-[#D4F826] text-black text-xs font-black shadow-xs cursor-pointer hover:bg-[#c6ec15] flex items-center justify-center gap-1.5"
                       >
-                        <span>🛒</span>
-                        <span>+ Catat Belanja Bulanan Sekarang</span>
+                        <span>🛍️</span>
+                        <span>+ Catat Keperluan Pribadi</span>
                       </button>
                     </div>
                   </div>

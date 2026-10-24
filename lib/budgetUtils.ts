@@ -20,6 +20,12 @@ export const GROCERY_CATEGORY_IDS = new Set([
   'cat-belanja-bulanan',
 ]);
 
+// Category IDs that represent non-daily social / incidental expenses (Kondangan, Amplop, Kado, Sedekah)
+export const NON_DAILY_CATEGORY_IDS = new Set([
+  'cat-kondangan',
+  'cat-sedekah',
+]);
+
 // Keywords in transaction note or category name indicating a fixed monthly bill
 export const FIXED_EXPENSE_KEYWORDS_REGEX =
   /(wifi|wi-fi|indihome|biznet|first media|myrepublic|my republic|iconnet|cbn|pln|token|token listrik|listrik|air pam|pdam|bpjs|asuransi|sewa|kost|kosan|kontrakan|kontrak rumah|netflix|spotify|youtube premium|disney|disney\+|hbo|apple tv|prime video|icloud|google one|canva|zoom|cicilan|angsuran|kpr|utang|tagihan|iuran|langganan|subscription|kartu kredit|credit card|paylater|bayar cicilan|pembayaran cicilan|otomatis rutin)/i;
@@ -27,6 +33,10 @@ export const FIXED_EXPENSE_KEYWORDS_REGEX =
 // Keywords indicating bulk grocery shopping / cooking ingredients (Belanja Bulanan / Bahan Masak)
 export const GROCERY_EXPENSE_KEYWORDS_REGEX =
   /(belanja bulanan|bahan masak|bahan makanan|sembako|stok dapur|belanja dapur|belanja pasar|sayur & lauk|bumbu dapur|beras & minyak|stok masak|belanja mingguan|supermarket bulanan)/i;
+
+// Keywords indicating non-daily social / incidental expenses (Amplop Nikahan, Kondangan, Ngado, Kado, Sedekah, Donasi, Takziah)
+export const NON_DAILY_EXPENSE_KEYWORDS_REGEX =
+  /(kondangan|amplop|nikahan|pernikahan|kawinan|resepsi|ngado|kado|hadiah|bingkisan|parsel|parcel|nyumbang|bowo|buwuh|becek|mantenan|hajatan|wisuda|ultah|ulang tahun|sumbangan|santunan|takziah|melayat|duka|tahlilan|aqiqah|khitanan|sunatan|syukuran|arisan|angpao|thr|sedekah|donasi|zakat|infak|infaq|amal|baksos)/i;
 
 /**
  * Normalizes a recurring subscription amount into its monthly equivalent.
@@ -93,6 +103,30 @@ export function getMonthlyDebtInstallmentAmount(
 }
 
 /**
+ * Determines whether a budget subcategory is a Debt / Installment item (Cicilan / Utang).
+ */
+export function isDebtOrInstallmentSubcategory(
+  sub: { id: string; name: string; subscriptionId?: string },
+  debts?: Debt[]
+): boolean {
+  if (sub.id.startsWith('sub-debt-')) return true;
+  const sLower = sub.name.toLowerCase().trim();
+  if (/^(cicilan|utang|hutang|angsuran|pinjaman|kpr|paylater)\b/i.test(sLower)) return true;
+  if (debts && debts.length > 0) {
+    return debts.some((d) => {
+      if (d.type !== 'payable') return false;
+      const dLower = d.name.toLowerCase().trim();
+      return (
+        sub.subscriptionId === d.id ||
+        sLower === dLower ||
+        sLower === `cicilan ${dLower}`
+      );
+    });
+  }
+  return false;
+}
+
+/**
  * Determines whether a transaction is a Savings / Investment Allocation (Alokasi Tabungan).
  */
 export function isSavingsExpense(
@@ -105,12 +139,52 @@ export function isSavingsExpense(
   category?: Category | null
 ): boolean {
   if (tx.expenseNature === 'savings') return true;
-  if (tx.expenseNature === 'variable' || tx.expenseNature === 'grocery' || tx.expenseNature === 'fixed') return false;
+  if (
+    tx.expenseNature === 'variable' ||
+    tx.expenseNature === 'non_daily' ||
+    tx.expenseNature === 'grocery' ||
+    tx.expenseNature === 'fixed'
+  ) {
+    return false;
+  }
   if (tx.budgetGroup === 'tabungan') return true;
   if (tx.categoryId && SAVINGS_CATEGORY_IDS.has(tx.categoryId)) return true;
-  if (category?.budgetGroup === 'tabungan' || category?.groupName === 'Tabungan' || category?.expenseNature === 'savings') {
+  if (
+    category?.budgetGroup === 'tabungan' ||
+    category?.groupName === 'Tabungan' ||
+    category?.expenseNature === 'savings'
+  ) {
     return true;
   }
+  return false;
+}
+
+/**
+ * Determines whether a transaction is a Non-Daily Social / Incidental Expense
+ * (Amplop Nikahan / Kondangan, Kado, Sedekah, Donasi, Acara Sosial — TIDAK memotong kuota jatah harian).
+ */
+export function isNonDailyExpense(
+  tx: {
+    categoryId?: string | null;
+    note?: string;
+    budgetGroup?: string;
+    expenseNature?: ExpenseNature;
+  },
+  category?: Category | null
+): boolean {
+  if (tx.expenseNature === 'non_daily') return true;
+  if (
+    tx.expenseNature === 'grocery' ||
+    tx.expenseNature === 'fixed' ||
+    tx.expenseNature === 'savings'
+  ) {
+    return false;
+  }
+  if (isSavingsExpense(tx, category)) return false;
+  if (tx.categoryId && NON_DAILY_CATEGORY_IDS.has(tx.categoryId)) return true;
+  if (category?.expenseNature === 'non_daily') return true;
+  if (category?.name && NON_DAILY_EXPENSE_KEYWORDS_REGEX.test(category.name)) return true;
+  if (tx.note && NON_DAILY_EXPENSE_KEYWORDS_REGEX.test(tx.note)) return true;
   return false;
 }
 
@@ -128,7 +202,12 @@ export function isGroceryExpense(
   category?: Category | null
 ): boolean {
   if (tx.expenseNature === 'grocery') return true;
-  if (tx.expenseNature === 'variable' || tx.expenseNature === 'fixed' || tx.expenseNature === 'savings') {
+  if (
+    tx.expenseNature === 'variable' ||
+    tx.expenseNature === 'non_daily' ||
+    tx.expenseNature === 'fixed' ||
+    tx.expenseNature === 'savings'
+  ) {
     return false;
   }
   if (isSavingsExpense(tx, category)) return false;
@@ -174,10 +253,18 @@ export function isFixedExpense(
 ): boolean {
   // 1. Explicit user designation on transaction has highest priority
   if (tx.expenseNature === 'fixed') return true;
-  if (tx.expenseNature === 'variable' || tx.expenseNature === 'grocery' || tx.expenseNature === 'savings') return false;
+  if (
+    tx.expenseNature === 'variable' ||
+    tx.expenseNature === 'non_daily' ||
+    tx.expenseNature === 'grocery' ||
+    tx.expenseNature === 'savings'
+  ) {
+    return false;
+  }
 
-  // Savings allocations & Grocery stock belong to their own buckets, not fixed bills
+  // Savings allocations, Non-daily social expenses, & Grocery stock belong to their own buckets
   if (isSavingsExpense(tx, category)) return false;
+  if (isNonDailyExpense(tx, category)) return false;
   if (isGroceryExpense(tx, category)) return false;
 
   // 2. Debt / installment or automated recurring subscription payments are always fixed obligations
@@ -213,7 +300,7 @@ export function isFixedExpense(
 }
 
 /**
- * Auto-detect whether an input should default to 'savings', 'fixed', 'grocery', or 'variable'
+ * Auto-detect whether an input should default to 'savings', 'non_daily', 'fixed', 'grocery', or 'variable'
  */
 export function detectExpenseNature(
   categoryId: string | null | undefined,
@@ -222,13 +309,15 @@ export function detectExpenseNature(
 ): ExpenseNature {
   const cat = categoryId && categoryMap ? categoryMap.get(categoryId) : undefined;
   if (isSavingsExpense({ categoryId, note }, cat)) return 'savings';
+  if (isNonDailyExpense({ categoryId, note }, cat)) return 'non_daily';
   if (isGroceryExpense({ categoryId, note }, cat)) return 'grocery';
   return isFixedExpense({ categoryId, note }, cat) ? 'fixed' : 'variable';
 }
 
 export interface BudgetPeriodInfo {
   paydayDay: number; // 1..31
-  isCustomPayday: boolean; // paydayDay > 1
+  isCustomPayday: boolean; // paydayDay > 1 or manual custom period
+  isCustomFlexiblePeriod?: boolean; // true when manual customPeriodStart & customNextPayday are active
   startDate: Date;
   endDate: Date;
   nextPaydayDate: Date;
@@ -249,6 +338,12 @@ export interface BudgetPeriodInfo {
   endShortLabel: string;
   periodShortLabel: string;
   periodFullLabel: string;
+}
+
+export interface CustomBudgetPeriodInput {
+  periodMode?: 'standard' | 'custom';
+  customPeriodStart?: string;
+  customNextPayday?: string;
 }
 
 const SHORT_MONTHS_ID = [
@@ -279,22 +374,113 @@ export function parseLocalDay(dateOrStr: Date | string): Date {
 }
 
 /**
- * Computes the active budget period based on the user's payday (Tanggal Gajian 1-31).
- * For example, if paydayDay = 25:
- * - On 25 Oct (or 26 Oct), the active period is 25 Oct -> 24 Nov 23:59:59 (until 25 Nov payday).
- * - On 21 Oct (before the 25th), the active period is 25 Sep -> 24 Oct 23:59:59 (until 25 Oct payday).
+ * Computes the active budget period based on the user's payday (Tanggal Gajian 1-31)
+ * OR a manual flexible period (customPeriodStart -> customNextPayday, e.g. 23 Okt -> 25 Nov = 33 Hari).
  */
 export function getBudgetPeriodInfo(
   activeYear: number,
   activeMonth: number,
   activeDay: number,
-  rawPaydayDay?: number
+  rawPaydayDay?: number,
+  customPeriod?: CustomBudgetPeriodInput
 ): BudgetPeriodInfo {
   const paydayDay = Math.max(1, Math.min(31, Math.round(Number(rawPaydayDay) || 1)));
   const isCustomPayday = paydayDay > 1;
   const now = new Date();
   const realTodayMidday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
   const refMidday = new Date(activeYear, activeMonth, activeDay, 12, 0, 0);
+  const msPerDay = 1000 * 60 * 60 * 24;
+
+  // 1. Check if a manual flexible period is configured and active for this viewed date
+  if (
+    customPeriod &&
+    (customPeriod.periodMode === 'custom' || (customPeriod.customPeriodStart && customPeriod.customNextPayday)) &&
+    customPeriod.customPeriodStart &&
+    customPeriod.customNextPayday
+  ) {
+    const cStart = parseLocalDay(customPeriod.customPeriodStart);
+    const cNext = parseLocalDay(customPeriod.customNextPayday);
+    if (!Number.isNaN(cStart.getTime()) && !Number.isNaN(cNext.getTime())) {
+      const cStartDate = new Date(cStart.getFullYear(), cStart.getMonth(), cStart.getDate(), 0, 0, 0, 0);
+      const cNextDate = new Date(cNext.getFullYear(), cNext.getMonth(), cNext.getDate(), 0, 0, 0, 0);
+      const cEndDate = new Date(cNextDate.getTime() - 1);
+
+      if (cNextDate.getTime() > cStartDate.getTime()) {
+        // Check if refMidday falls inside the custom period (or within 10 days prior when setting up upcoming Friday payday)
+        const tenDaysBeforeStart = cStartDate.getTime() - 10 * msPerDay;
+        const isViewingCustomPeriod =
+          (refMidday.getTime() >= cStartDate.getTime() && refMidday.getTime() <= cEndDate.getTime()) ||
+          (refMidday.getTime() >= tenDaysBeforeStart &&
+            refMidday.getTime() < cStartDate.getTime() &&
+            activeMonth === cStart.getMonth());
+
+        if (isViewingCustomPeriod) {
+          const startYear = cStartDate.getFullYear();
+          const startMonth = cStartDate.getMonth();
+          const startDay = cStartDate.getDate();
+          const nextPaydayYear = cNextDate.getFullYear();
+          const nextPaydayMonth = cNextDate.getMonth();
+          const nextPaydayDay = cNextDate.getDate();
+
+          const startMidday = new Date(startYear, startMonth, startDay, 12, 0, 0);
+          const nextPaydayMidday = new Date(nextPaydayYear, nextPaydayMonth, nextPaydayDay, 12, 0, 0);
+          const totalDays = Math.max(
+            1,
+            Math.round((nextPaydayMidday.getTime() - startMidday.getTime()) / msPerDay)
+          );
+
+          const isRealTodayInPeriod =
+            realTodayMidday.getTime() >= cStartDate.getTime() &&
+            realTodayMidday.getTime() <= cEndDate.getTime();
+          const isPastCustomPeriod =
+            !isRealTodayInPeriod && realTodayMidday.getTime() > cEndDate.getTime();
+
+          const effectiveRefMidday = isRealTodayInPeriod ? realTodayMidday : refMidday;
+          const elapsedDays = Math.floor((effectiveRefMidday.getTime() - startMidday.getTime()) / msPerDay);
+          const currentDayOfPeriod = isPastCustomPeriod
+            ? totalDays
+            : Math.max(1, Math.min(totalDays, elapsedDays + 1));
+          const daysRemainingUntilPayday = Math.max(1, totalDays - currentDayOfPeriod + 1);
+
+          const startMShort = SHORT_MONTHS_ID[startMonth] || 'Jan';
+          const endMShort = SHORT_MONTHS_ID[nextPaydayMonth] || 'Feb';
+          const startShortLabel = `${String(startDay).padStart(2, '0')} ${startMShort}`;
+          const endShortLabel = `${String(nextPaydayDay).padStart(2, '0')} ${endMShort}`;
+          const periodShortLabel = `${startShortLabel} - ${endShortLabel}`;
+          const periodFullLabel =
+            startYear === nextPaydayYear
+              ? `${startShortLabel} - ${endShortLabel} ${nextPaydayYear}`
+              : `${startShortLabel} ${startYear} - ${endShortLabel} ${nextPaydayYear}`;
+
+          return {
+            paydayDay,
+            isCustomPayday: true,
+            isCustomFlexiblePeriod: true,
+            startDate: cStartDate,
+            endDate: cEndDate,
+            nextPaydayDate: cNextDate,
+            startYear,
+            startMonth,
+            startDay,
+            endYear: cEndDate.getFullYear(),
+            endMonth: cEndDate.getMonth(),
+            endDay: cEndDate.getDate(),
+            startDateIso: toIsoDateStr(startYear, startMonth, startDay),
+            endDateIso: toIsoDateStr(cEndDate.getFullYear(), cEndDate.getMonth(), cEndDate.getDate()),
+            nextPaydayIso: toIsoDateStr(nextPaydayYear, nextPaydayMonth, nextPaydayDay),
+            periodKey: `${startYear}-${String(startMonth + 1).padStart(2, '0')}-flex-${startDay}`,
+            totalDays,
+            currentDayOfPeriod,
+            daysRemainingUntilPayday,
+            startShortLabel,
+            endShortLabel,
+            periodShortLabel,
+            periodFullLabel,
+          };
+        }
+      }
+    }
+  }
 
   if (!isCustomPayday) {
     const totalDays = new Date(activeYear, activeMonth + 1, 0).getDate();
@@ -321,6 +507,7 @@ export function getBudgetPeriodInfo(
     return {
       paydayDay: 1,
       isCustomPayday: false,
+      isCustomFlexiblePeriod: false,
       startDate,
       endDate,
       nextPaydayDate: nextMonthObj,
@@ -358,16 +545,30 @@ export function getBudgetPeriodInfo(
   }
 
   const nextMonthFromStart = new Date(startYear, startMonth + 1, 1);
-  const nextPaydayYear = nextMonthFromStart.getFullYear();
-  const nextPaydayMonth = nextMonthFromStart.getMonth();
-  const nextPaydayDay = clampDayInMonth(nextPaydayYear, nextPaydayMonth, paydayDay);
+  let nextPaydayYear = nextMonthFromStart.getFullYear();
+  let nextPaydayMonth = nextMonthFromStart.getMonth();
+  let nextPaydayDay = clampDayInMonth(nextPaydayYear, nextPaydayMonth, paydayDay);
+
+  // If the next period is a configured custom flexible period, align our nextPaydayDate to its start so there's no overlap!
+  if (
+    customPeriod?.periodMode === 'custom' &&
+    customPeriod.customPeriodStart
+  ) {
+    const cStart = parseLocalDay(customPeriod.customPeriodStart);
+    if (
+      !Number.isNaN(cStart.getTime()) &&
+      cStart.getFullYear() === nextPaydayYear &&
+      cStart.getMonth() === nextPaydayMonth
+    ) {
+      nextPaydayDay = cStart.getDate();
+    }
+  }
 
   const startDate = new Date(startYear, startMonth, startDay, 0, 0, 0, 0);
   const nextPaydayDate = new Date(nextPaydayYear, nextPaydayMonth, nextPaydayDay, 0, 0, 0, 0);
   // Inclusive end is the day right before nextPaydayDate at 23:59:59.999
   const endDate = new Date(nextPaydayDate.getTime() - 1);
 
-  const msPerDay = 1000 * 60 * 60 * 24;
   const startMidday = new Date(startYear, startMonth, startDay, 12, 0, 0);
   const nextPaydayMidday = new Date(nextPaydayYear, nextPaydayMonth, nextPaydayDay, 12, 0, 0);
 
@@ -402,6 +603,7 @@ export function getBudgetPeriodInfo(
   return {
     paydayDay,
     isCustomPayday: true,
+    isCustomFlexiblePeriod: false,
     startDate,
     endDate,
     nextPaydayDate,
@@ -525,9 +727,21 @@ export function getAdjacentPeriodDateStr(
   activeMonth: number,
   activeDay: number,
   rawPaydayDay: number | undefined,
-  direction: -1 | 1
+  direction: -1 | 1,
+  customPeriod?: CustomBudgetPeriodInput
 ): string {
-  const currentPeriod = getBudgetPeriodInfo(activeYear, activeMonth, activeDay, rawPaydayDay);
+  const currentPeriod = getBudgetPeriodInfo(
+    activeYear,
+    activeMonth,
+    activeDay,
+    rawPaydayDay,
+    customPeriod
+  );
+
+  if (direction === 1 && currentPeriod.isCustomFlexiblePeriod) {
+    return currentPeriod.nextPaydayIso;
+  }
+
   const targetStartMonthObj = new Date(
     currentPeriod.startYear,
     currentPeriod.startMonth + direction,
@@ -543,13 +757,14 @@ export function getAdjacentPeriodDateStr(
     targetYear,
     targetMonth,
     targetStartDay,
-    currentPeriod.paydayDay
+    currentPeriod.paydayDay,
+    customPeriod
   );
   if (isDateInBudgetPeriod(today, targetPeriod)) {
     return toIsoDateStr(today.getFullYear(), today.getMonth(), today.getDate());
   }
 
-  return toIsoDateStr(targetYear, targetMonth, targetStartDay);
+  return targetPeriod.startDateIso;
 }
 
 export interface BudgetBreakdownResult {
@@ -562,6 +777,7 @@ export interface BudgetBreakdownResult {
   monthlyVariableBudget: number;
   dailyBudgetQuota: number;
   todayVariableExpense: number;
+  todayNonDailyExpense: number;
   todayGroceryExpense: number;
   todayFixedExpense: number;
   todayTotalExpense: number;
@@ -569,12 +785,16 @@ export interface BudgetBreakdownResult {
   remainingGroceryBudget: number;
   dailyOverbudget: boolean;
   dailyOverbudgetAmount: number;
+  tomorrowDailyQuota: number;
+  tomorrowQuotaDiff: number;
   monthlyFixedExpense: number;
+  monthlyNonDailyExpense: number;
   monthlyGroceryExpense: number;
   monthlyVariableExpense: number;
   monthlyTotalExpense: number;
   // Siklus Periode Gajian (Payday Cycle)
   paydayDay: number;
+  isCustomFlexiblePeriod: boolean;
   periodTotalDays: number;
   currentPeriodDay: number;
   daysRemainingUntilPayday: number;
@@ -588,10 +808,7 @@ export interface BudgetBreakdownResult {
 /**
  * Calculates structured period budget allocation and daily budget remaining.
  * Supports custom payday cycles (e.g. Tanggal 25 -> Tanggal 25 bulan selanjutnya)
- * and 3 Food/Grocery Lifestyle Modes:
- * - 'eat_out': Tiap hari makan di luar (semua anggaran makan dibagi harian)
- * - 'hybrid': Pagi/siang masak, malam beli makan di luar (sebagian di Pos Belanja Bulanan/Masak, sebagian dibagi harian)
- * - 'cook_home': Tiap hari masak sendiri dengan belanja bulanan/mingguan (anggaran makan masuk ke Pos Belanja Bulanan/Masak)
+ * and manual flexible periods (e.g. 23 Okt -> 25 Nov = 33 Hari).
  */
 export function calculateBudgetBreakdown({
   budgetConfig,
@@ -613,7 +830,12 @@ export function calculateBudgetBreakdown({
   debts?: Debt[];
 }): BudgetBreakdownResult {
   const rawPayday = budgetConfig?.paydayDay || budgetConfig?.settings?.paydayDay || 1;
-  const periodInfo = getBudgetPeriodInfo(activeYear, activeMonth, activeDay, rawPayday);
+  const customPeriod: CustomBudgetPeriodInput = {
+    periodMode: budgetConfig?.periodMode || budgetConfig?.settings?.periodMode,
+    customPeriodStart: budgetConfig?.customPeriodStart || budgetConfig?.settings?.customPeriodStart,
+    customNextPayday: budgetConfig?.customNextPayday || budgetConfig?.settings?.customNextPayday,
+  };
+  const periodInfo = getBudgetPeriodInfo(activeYear, activeMonth, activeDay, rawPayday, customPeriod);
   const daysInMonth = periodInfo.totalDays;
 
   let periodRecordedIncome = 0;
@@ -798,11 +1020,13 @@ export function calculateBudgetBreakdown({
     });
   };
 
-  // 3. Partition transactions in the active budget period into Variable (Harian) vs Grocery (Belanja Bulanan) vs Fixed (Tagihan)
+  // 3. Partition transactions in the active budget period into Variable (Harian), Non-Daily (Kondangan/Sosial), Grocery (Belanja Bulanan), and Fixed (Tagihan)
   let monthlyVarExp = 0;
+  let monthlyNonDailyExp = 0;
   let monthlyGrocExp = 0;
   let monthlyFixExp = 0;
   let todayVarExp = 0;
+  let todayNonDailyExp = 0;
   let todayGrocExp = 0;
   let todayFixExp = 0;
   const recordedTxIds = new Set<string>();
@@ -813,11 +1037,12 @@ export function calculateBudgetBreakdown({
     const d = parseLocalDay(tx.date);
     if (isDateInBudgetPeriod(d, periodInfo)) {
       const cat = tx.categoryId ? categoryMap.get(tx.categoryId) || null : null;
-      // Savings allocations belong to the 20% Tabungan bucket, not Needs/Wants daily or fixed obligations
+      // Savings allocations belong to the Tabungan bucket
       if (isSavingsExpense(tx, cat)) return;
 
-      const grocery = isGroceryExpense(tx, cat);
-      const fixed = !grocery && isFixedExpense(tx, cat);
+      const nonDaily = isNonDailyExpense(tx, cat);
+      const grocery = !nonDaily && isGroceryExpense(tx, cat);
+      const fixed = !nonDaily && !grocery && isFixedExpense(tx, cat);
 
       if (fixed) {
         monthlyFixExp += tx.amount;
@@ -834,6 +1059,8 @@ export function calculateBudgetBreakdown({
         }
       } else if (grocery) {
         monthlyGrocExp += tx.amount;
+      } else if (nonDaily) {
+        monthlyNonDailyExp += tx.amount;
       } else {
         monthlyVarExp += tx.amount;
       }
@@ -847,6 +1074,8 @@ export function calculateBudgetBreakdown({
           todayFixExp += tx.amount;
         } else if (grocery) {
           todayGrocExp += tx.amount;
+        } else if (nonDaily) {
+          todayNonDailyExp += tx.amount;
         } else {
           todayVarExp += tx.amount;
         }
@@ -891,19 +1120,29 @@ export function calculateBudgetBreakdown({
 
   const monthlyFixedBudget = effectiveSubsFixedTotal + unallocatedFixedExp;
 
-  // 5. Dynamic Operational & Grocery Pool (Konsep Fleksibel: Kuota Harian Mengikuti Sisa Uang Setelah Belanja Bulanan):
-  // - initialOperationalPool = Total Pagu Operasional & Makan/Belanja (di luar Tagihan Bulanan & Tabungan).
-  // - Setiap kali user mencatat Belanja Bulanan (misal hari ini Rp 1 juta, minggu depan Rp 2 juta),
-  //   uang Belanja Bulanan (monthlyGrocExp) langsung memotong Pagu Operasional tanpa membuat hari ini Overbudget Harian,
-  //   dan Kuota Harian otomatis dihitung ulang mengikuti sisa uangnya!
+  // 5. Dynamic Operational, Grocery & Non-Daily Social Pool:
+  // - Both Belanja Bulanan (monthlyGrocExp) and Kondangan/Amplop/Ngado/Sosial (monthlyNonDailyExp)
+  //   reduce Saldo Pos Harian (monthlyVariableBudget), so Kuota Harian automatically recalculates/updates
+  //   following the remaining balance in Pos Harian.
+  // - Neither is counted in todayVarExp, so giving an amplop/ngado today does NOT wipe out today's
+  //   single-day eating/transport allowance all at once.
   const initialOperationalPool = Math.max(0, monthlySpendingLimit - monthlyFixedBudget);
   const monthlyGroceryBudget = initialOperationalPool;
-  const monthlyVariableBudget = Math.max(0, initialOperationalPool - monthlyGrocExp);
+  const monthlyVariableBudget = Math.max(
+    0,
+    initialOperationalPool - monthlyGrocExp - monthlyNonDailyExp
+  );
 
-  // 6. Sisa Uang Operasional & Kuota Harian Dinamis (mengikuti sisa uang setelah Belanja Bulanan)
+  // 6. Sisa Uang Operasional & Kuota Harian Dinamis
   const priorDaysVarExp = Math.max(0, monthlyVarExp - todayVarExp);
-  const remainingMonthlyVarBeforeToday = Math.max(0, monthlyVariableBudget - priorDaysVarExp);
-  const remainingVariableBudget = Math.max(0, monthlyVariableBudget - monthlyVarExp);
+  const remainingMonthlyVarBeforeToday = Math.max(
+    0,
+    monthlyVariableBudget - priorDaysVarExp
+  );
+  const remainingVariableBudget = Math.max(
+    0,
+    monthlyVariableBudget - monthlyVarExp
+  );
   const remainingGroceryBudget = remainingVariableBudget;
 
   const baseDailyAfterGrocery =
@@ -914,7 +1153,7 @@ export function calculateBudgetBreakdown({
       ? Math.round(remainingMonthlyVarBeforeToday / periodInfo.daysRemainingUntilPayday)
       : 0;
 
-  // Kuota Harian mengikuti sisa pagu setelah dipotong Belanja Bulanan (dan menyesuaikan jika sisa uang riil lebih kecil)
+  // Kuota Harian otomatis mengikuti sisa Saldo Pos Harian setelah dipotong Belanja Bulanan & Kondangan/Amplop/Ngado
   const dailyBudgetQuota =
     priorDaysVarExp > 0
       ? Math.min(baseDailyAfterGrocery, rollingDailyBeforeToday)
@@ -940,6 +1179,19 @@ export function calculateBudgetBreakdown({
   const dailyOverbudget = todayVarExp > effectiveDailyQuota && dailyBudgetQuota > 0;
   const dailyOverbudgetAmount = Math.max(0, todayVarExp - effectiveDailyQuota);
 
+  // Tomorrow's daily quota after today's variable spending (rolls over excess today across remaining days until payday)
+  const tomorrowRemainingDays =
+    periodInfo.daysRemainingUntilPayday > 1 ? periodInfo.daysRemainingUntilPayday - 1 : 1;
+  const rollingTomorrowQuota =
+    estIncome > 0 && tomorrowRemainingDays > 0
+      ? Math.round(remainingVariableBudget / tomorrowRemainingDays)
+      : 0;
+  const tomorrowDailyQuota =
+    periodInfo.daysRemainingUntilPayday > 1
+      ? Math.min(baseDailyAfterGrocery, rollingTomorrowQuota)
+      : baseDailyAfterGrocery;
+  const tomorrowQuotaDiff = Math.max(0, effectiveDailyQuota - tomorrowDailyQuota);
+
   return {
     daysInMonth,
     monthlySpendingLimit,
@@ -950,18 +1202,23 @@ export function calculateBudgetBreakdown({
     monthlyVariableBudget,
     dailyBudgetQuota,
     todayVariableExpense: todayVarExp,
+    todayNonDailyExpense: todayNonDailyExp,
     todayGroceryExpense: todayGrocExp,
     todayFixedExpense: todayFixExp,
-    todayTotalExpense: todayVarExp + todayGrocExp + todayFixExp,
+    todayTotalExpense: todayVarExp + todayNonDailyExp + todayGrocExp + todayFixExp,
     dailyBudgetRemaining,
     remainingGroceryBudget,
     dailyOverbudget,
     dailyOverbudgetAmount,
+    tomorrowDailyQuota,
+    tomorrowQuotaDiff,
     monthlyFixedExpense: monthlyFixExp,
+    monthlyNonDailyExpense: monthlyNonDailyExp,
     monthlyGroceryExpense: monthlyGrocExp,
     monthlyVariableExpense: monthlyVarExp,
-    monthlyTotalExpense: monthlyVarExp + monthlyGrocExp + monthlyFixExp,
+    monthlyTotalExpense: monthlyVarExp + monthlyNonDailyExp + monthlyGrocExp + monthlyFixExp,
     paydayDay: periodInfo.paydayDay,
+    isCustomFlexiblePeriod: Boolean(periodInfo.isCustomFlexiblePeriod),
     periodTotalDays: periodInfo.totalDays,
     currentPeriodDay: periodInfo.currentDayOfPeriod,
     daysRemainingUntilPayday: periodInfo.daysRemainingUntilPayday,

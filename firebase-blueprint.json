@@ -11,10 +11,38 @@
         "photoURL": { "type": "string", "maxLength": 512 },
         "passwordHash": { "type": "string", "maxLength": 256 },
         "settingsJson": { "type": "string", "maxLength": 10000 },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "status": { "type": "string", "enum": ["pending", "active", "deactivated"] },
+        "approvedAt": { "type": "string", "maxLength": 50 },
+        "approvedBy": { "type": "string", "maxLength": 128 },
+        "deactivatedAt": { "type": "string", "maxLength": 50 },
         "createdAt": { "type": "string", "maxLength": 50 },
         "updatedAt": { "type": "string", "maxLength": 50 }
       },
       "required": ["uid", "email"]
+    },
+    "BugReport": {
+      "title": "BugReport",
+      "description": "User feedback and bug reports submitted to Admin",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 256 },
+        "userName": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["bug", "feedback", "feature", "other"] },
+        "priority": { "type": "string", "enum": ["low", "medium", "high"] },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 3000 },
+        "pageContext": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["open", "in_progress", "resolved", "closed"] },
+        "adminReply": { "type": "string", "maxLength": 2000 },
+        "repliedAt": { "type": "string", "maxLength": 50 },
+        "repliedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "userId", "userEmail", "userName", "type", "priority", "title", "description", "status"]
     },
     "Wallet": {
       "title": "Wallet",
@@ -48,7 +76,7 @@
         "amount": { "type": "number" },
         "categoryId": { "type": "string", "maxLength": 100 },
         "budgetGroup": { "type": "string", "maxLength": 50 },
-        "expenseNature": { "type": "string", "enum": ["variable", "fixed", "savings", "grocery"] },
+        "expenseNature": { "type": "string", "enum": ["variable", "fixed", "savings", "grocery", "non_daily"] },
         "date": { "type": "string", "maxLength": 30 },
         "note": { "type": "string", "maxLength": 500 },
         "transferWalletId": { "type": "string", "maxLength": 128 },
@@ -166,6 +194,10 @@
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "User profile document"
+    },
+    "/bugReports/{reportId}": {
+      "schema": { "$ref": "#/entities/BugReport" },
+      "description": "User feedback and bug reports collection"
     },
     "/users/{userId}/wallets/{walletId}": {
       "schema": { "$ref": "#/entities/Wallet" },

@@ -12,6 +12,8 @@ import {
   Sun,
   Moon,
   AlertCircle,
+  ShieldCheck,
+  Clock,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from './AppContext';
@@ -116,15 +118,18 @@ export function AuthScreen() {
   return (
     <div className="min-h-screen w-full bg-[#F6F7FB] dark:bg-[#08090F] bg-noise-subtle text-slate-900 dark:text-white flex flex-col selection:bg-[#D4F826] selection:text-black">
       {/* Clean Top Bar */}
-      <header className="sticky top-0 z-30 backdrop-blur-xl bg-[#F6F7FB]/85 dark:bg-[#08090F]/85 border-b border-slate-200/80 dark:border-white/[0.08] px-6 py-4 flex items-center justify-between gap-8">
+      <header className="sticky top-0 z-30 backdrop-blur-xl bg-[#F6F7FB]/85 dark:bg-[#08090F]/85 border-b border-slate-200/80 dark:border-white/[0.08] px-6 py-4 flex items-center justify-between gap-4">
         <div className="flex items-center gap-3 shrink-0">
           <BrandLogo size="sm" className="w-9 h-9 shadow-2xs" />
           <span className="font-display text-xl font-extrabold tracking-tight text-slate-900 dark:text-white whitespace-nowrap">
             Dompt.
           </span>
+          <span className="hidden sm:inline-block text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-slate-200/80 dark:bg-white/10 text-slate-700 dark:text-slate-300 font-bold">
+            Super App
+          </span>
         </div>
 
-        <div className="flex items-center shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
             onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
@@ -158,9 +163,9 @@ export function AuthScreen() {
             {/* Top Utility Row inside Hero */}
             <div className="relative z-10 flex items-center justify-between gap-4">
               <div className="flex items-center gap-2 text-xs text-slate-300">
-                <span className="text-[#D4F826] font-semibold">Dompt. Keuangan Pribadi</span>
+                <span className="text-[#D4F826] font-semibold">Dompt. Super App</span>
                 <span aria-hidden="true">·</span>
-                <span>Teman Atur Uang Harianmu</span>
+                <span>Sistem Multi-Peran Admin & User</span>
               </div>
               <button
                 type="button"
@@ -182,9 +187,9 @@ export function AuthScreen() {
                 Atur Gaji, Jatah Harian & Tabungan Jadi Lebih Tenang.
               </h1>
               <p className="text-sm sm:text-base text-slate-300/90 leading-relaxed max-w-xl">
-                Catat pemasukan dan pengeluaran harian dengan mudah, sesuaikan periode budget
-                dengan tanggal gajianmu, serta pantau saldo seluruh dompet dan tabungan impian
-                di satu tempat.
+                Dilengkapi ekosistem Super App: akun User untuk mengelola keuangan harian &
+                mengirim laporan bug, serta Dashboard Admin untuk menyetujui (ACC) pendaftaran user
+                baru dan mengelola akses akun.
               </p>
             </div>
 
@@ -200,21 +205,21 @@ export function AuthScreen() {
                 </span>
               </div>
               <div className="p-4 rounded-2xl bg-white/[0.05] border border-white/[0.08]">
-                <span className="text-[11px] text-slate-400 block">Semua Saldo Terpantau</span>
+                <span className="text-[11px] text-slate-400 block">Verifikasi Pendaftaran</span>
                 <span className="font-display text-base sm:text-lg font-extrabold text-white mt-0.5 block">
-                  Multi-Dompet
+                  ACC oleh Admin
                 </span>
                 <span className="text-[11px] text-slate-400">
-                  Bank, e-wallet, tunai, tagihan & tabungan goals
+                  Setiap pendaftaran user baru diverifikasi oleh Admin
                 </span>
               </div>
               <div className="p-4 rounded-2xl bg-white/[0.05] border border-white/[0.08]">
-                <span className="text-[11px] text-slate-400 block">Akses Fleksibel</span>
+                <span className="text-[11px] text-slate-400 block">Layanan Pengguna</span>
                 <span className="font-display text-base sm:text-lg font-extrabold text-[#D4F826] mt-0.5 block">
-                  HP & Laptop
+                  Lapor Bug & Saran
                 </span>
                 <span className="text-[11px] text-slate-400">
-                  Catatan otomatis tersinkron di semua perangkatmu
+                  Kirim masukan langsung ke Dashboard Admin
                 </span>
               </div>
             </div>
@@ -226,24 +231,24 @@ export function AuthScreen() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.2 }}
-              className="bg-white dark:bg-[#11131E] rounded-[32px] p-6 sm:p-8 border border-slate-200/80 dark:border-white/[0.08] space-y-6 h-full flex flex-col justify-between"
+              className="bg-white dark:bg-[#11131E] rounded-[32px] p-6 sm:p-8 border border-slate-200/80 dark:border-white/[0.08] space-y-5 h-full flex flex-col justify-between"
             >
-              <div className="space-y-5">
+              <div className="space-y-4">
                 {/* Header */}
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <BrandLogo size="md" className="w-11 h-11 shadow-xs" />
                     <span className="text-xs text-slate-400 font-medium">
-                      Sinkron Otomatis
+                      Admin & User Portal
                     </span>
                   </div>
-                  <h2 className="font-display text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white pt-2">
-                    {mode === 'login' ? 'Selamat Datang Kembali!' : 'Mulai Atur Keuanganmu'}
+                  <h2 className="font-display text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white pt-1">
+                    {mode === 'login' ? 'Masuk ke Super App' : 'Daftar Akun User Baru'}
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     {mode === 'login'
-                      ? 'Masuk dengan email dan password untuk membuka catatan keuanganmu.'
-                      : 'Buat akun baru untuk mulai mencatat keuangan dan mengatur budgetmu.'}
+                      ? 'Masuk sebagai User atau Admin menggunakan email dan password Anda.'
+                      : 'Pendaftaran akun User baru akan menunggu ACC dari Admin sebelum aktif.'}
                   </p>
                 </div>
 
@@ -258,7 +263,7 @@ export function AuthScreen() {
                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
-                    Masuk
+                    Masuk (User / Admin)
                   </button>
                   <button
                     type="button"
@@ -269,9 +274,19 @@ export function AuthScreen() {
                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
-                    Daftar Baru
+                    Daftar User Baru
                   </button>
                 </div>
+
+                {mode === 'register' && (
+                  <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-start gap-2 text-[11px] text-amber-700 dark:text-amber-300 font-semibold">
+                    <Clock size={14} className="shrink-0 mt-0.5" />
+                    <span>
+                      Setiap pendaftaran akun User baru wajib di-ACC oleh Admin di Dashboard Admin
+                      agar akun dapat aktif.
+                    </span>
+                  </div>
+                )}
 
                 {/* Error Alert */}
                 <AnimatePresence mode="wait">
@@ -289,9 +304,9 @@ export function AuthScreen() {
                 </AnimatePresence>
 
                 {/* Form */}
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <form onSubmit={handleSubmit} className="space-y-3.5">
                   {mode === 'register' && (
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
                         Nama Lengkap / Panggilan
                       </label>
@@ -304,16 +319,16 @@ export function AuthScreen() {
                           type="text"
                           value={name}
                           onChange={(e) => setName(e.target.value)}
-                          placeholder="Contoh: Trisna"
+                          placeholder="Contoh: Budi Santoso"
                           required
                           autoComplete="name"
-                          className="w-full pl-10 pr-4 py-3 rounded-2xl bg-slate-50 dark:bg-[#0B0D15] border border-slate-200 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#D4F826] transition-colors"
+                          className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-[#0B0D15] border border-slate-200 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#D4F826] transition-colors"
                         />
                       </div>
                     </div>
                   )}
 
-                  <div className="space-y-1.5">
+                  <div className="space-y-1">
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
                       Alamat Email
                     </label>
@@ -329,12 +344,12 @@ export function AuthScreen() {
                         placeholder="nama@email.com"
                         required
                         autoComplete="email"
-                        className="w-full pl-10 pr-4 py-3 rounded-2xl bg-slate-50 dark:bg-[#0B0D15] border border-slate-200 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#D4F826] transition-colors"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-2xl bg-slate-50 dark:bg-[#0B0D15] border border-slate-200 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#D4F826] transition-colors"
                       />
                     </div>
                   </div>
 
-                  <div className="space-y-1.5">
+                  <div className="space-y-1">
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
                       Password
                     </label>
@@ -350,7 +365,7 @@ export function AuthScreen() {
                         placeholder={mode === 'register' ? 'Minimal 6 karakter' : 'Masukkan password'}
                         required
                         autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-                        className="w-full pl-10 pr-11 py-3 rounded-2xl bg-slate-50 dark:bg-[#0B0D15] border border-slate-200 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#D4F826] transition-colors"
+                        className="w-full pl-10 pr-11 py-2.5 rounded-2xl bg-slate-50 dark:bg-[#0B0D15] border border-slate-200 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#D4F826] transition-colors"
                       />
                       <button
                         type="button"
@@ -365,7 +380,7 @@ export function AuthScreen() {
                   </div>
 
                   {mode === 'register' && (
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
                         Konfirmasi Password
                       </label>
@@ -381,7 +396,7 @@ export function AuthScreen() {
                           placeholder="Ulangi password Anda"
                           required
                           autoComplete="new-password"
-                          className="w-full pl-10 pr-11 py-3 rounded-2xl bg-slate-50 dark:bg-[#0B0D15] border border-slate-200 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#D4F826] transition-colors"
+                          className="w-full pl-10 pr-11 py-2.5 rounded-2xl bg-slate-50 dark:bg-[#0B0D15] border border-slate-200 dark:border-white/10 text-xs font-semibold text-slate-900 dark:text-white focus:outline-none focus:border-[#D4F826] transition-colors"
                         />
                         <button
                           type="button"
@@ -407,7 +422,9 @@ export function AuthScreen() {
                       <Loader2 size={18} className="animate-spin text-black" />
                     ) : (
                       <>
-                        <span>{mode === 'login' ? 'Masuk ke Akun' : 'Daftar & Buat Akun'}</span>
+                        <span>
+                          {mode === 'login' ? 'Masuk ke Akun' : 'Daftar Akun User (Menunggu ACC)'}
+                        </span>
                         <ArrowRight size={16} />
                       </>
                     )}
@@ -416,30 +433,32 @@ export function AuthScreen() {
               </div>
 
               {/* Footer Switch Link */}
-              <div className="pt-4 border-t border-slate-100 dark:border-white/[0.06] text-center">
-                {mode === 'login' ? (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Belum memiliki akun?{' '}
-                    <button
-                      type="button"
-                      onClick={() => switchMode('register')}
-                      className="font-bold text-slate-900 dark:text-[#D4F826] hover:underline cursor-pointer"
-                    >
-                      Daftar Akun Baru
-                    </button>
-                  </p>
-                ) : (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Sudah memiliki akun?{' '}
-                    <button
-                      type="button"
-                      onClick={() => switchMode('login')}
-                      className="font-bold text-slate-900 dark:text-[#D4F826] hover:underline cursor-pointer"
-                    >
-                      Masuk di sini
-                    </button>
-                  </p>
-                )}
+              <div className="pt-3 border-t border-slate-100 dark:border-white/[0.06] space-y-2.5">
+                <div className="text-center">
+                  {mode === 'login' ? (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Belum memiliki akun?{' '}
+                      <button
+                        type="button"
+                        onClick={() => switchMode('register')}
+                        className="font-bold text-slate-900 dark:text-[#D4F826] hover:underline cursor-pointer"
+                      >
+                        Daftar Akun Baru
+                      </button>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Sudah memiliki akun?{' '}
+                      <button
+                        type="button"
+                        onClick={() => switchMode('login')}
+                        className="font-bold text-slate-900 dark:text-[#D4F826] hover:underline cursor-pointer"
+                      >
+                        Masuk di sini
+                      </button>
+                    </p>
+                  )}
+                </div>
               </div>
             </motion.div>
           </div>

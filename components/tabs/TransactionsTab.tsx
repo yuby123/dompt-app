@@ -354,6 +354,11 @@ export function TransactionsTab() {
                               <span className="font-medium text-slate-600 dark:text-slate-300">
                                 {isTransfer ? `${wallet.name} → ${transferWallet?.name || 'Tujuan'}` : wallet.name}
                               </span>
+                              {isExpense && (transaction.expenseNature === 'non_daily' || transaction.expenseNature === 'grocery') && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-[10px] font-bold">
+                                  🛍️ Keperluan Pribadi
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>

@@ -17,9 +17,10 @@ import {
   Sun,
   BookOpen,
   CalendarClock,
-  Activity,
   Megaphone,
   BarChart3,
+  ShieldCheck,
+  Bug,
 } from 'lucide-react';
 import { TabType, useApp } from './AppContext';
 import { BrandLogo } from './BrandLogo';
@@ -33,6 +34,9 @@ export function DesktopSidebar() {
     settings,
     setThemeMode,
     user,
+    isAdmin,
+    managedUsers,
+    bugReports,
   } = useApp();
 
   const mounted = React.useSyncExternalStore(
@@ -56,11 +60,28 @@ export function DesktopSidebar() {
   const isOrange = settings.accentColor === 'orange';
   const isPlum = settings.accentColor === 'plum';
 
+  const pendingAccCount = managedUsers.filter((u) => u.status === 'pending').length;
+  const openReportCount = bugReports.filter(
+    (r) => r.status === 'open' || r.status === 'in_progress'
+  ).length;
+  const adminBadgeCount = pendingAccCount + openReportCount;
+
   const navItems: {
     id: TabType;
     label: string;
     icon: React.ElementType;
+    badge?: number;
   }[] = [
+    ...(isAdmin
+      ? [
+          {
+            id: 'admin' as TabType,
+            label: 'Dashboard Admin',
+            icon: ShieldCheck,
+            badge: adminBadgeCount > 0 ? adminBadgeCount : undefined,
+          },
+        ]
+      : []),
     { id: 'dashboard', label: 'Home', icon: LayoutGrid },
     { id: 'wallets', label: 'Dompet', icon: Wallet },
     { id: 'transactions', label: 'Transaksi', icon: ArrowRightLeft },
@@ -73,6 +94,7 @@ export function DesktopSidebar() {
     { id: 'invest', label: 'Investasi', icon: TrendingUp },
     { id: 'ai-advisor', label: 'AI Advisor', icon: Sparkles },
     { id: 'reports', label: 'Laporan', icon: FileText },
+    { id: 'feedback', label: 'Masukan / Lapor Bug', icon: Bug },
     { id: 'tutorial', label: 'Panduan', icon: BookOpen },
     { id: 'settings', label: 'Profil', icon: Settings },
   ];
@@ -125,7 +147,7 @@ export function DesktopSidebar() {
           </div>
         </div>
 
-        {/* Navigation Links (without + Catat Transaksi button) */}
+        {/* Navigation Links */}
         <nav className="flex-1 overflow-y-auto no-scrollbar space-y-1 pr-0.5 pt-1">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -136,7 +158,7 @@ export function DesktopSidebar() {
                 key={item.id}
                 type="button"
                 onClick={() => setActiveTab(item.id)}
-                className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-2xl text-xs transition-all cursor-pointer whitespace-nowrap ${
+                className={`w-full flex items-center justify-between gap-2 px-4 py-3 rounded-2xl text-xs transition-all cursor-pointer whitespace-nowrap ${
                   isActive
                     ? isPlum
                       ? 'bg-[#71325A] text-white font-extrabold shadow-xs shadow-[#71325A]/30'
@@ -148,18 +170,25 @@ export function DesktopSidebar() {
                     : 'font-semibold text-slate-500 dark:text-slate-400 hover:bg-slate-100/80 dark:hover:bg-white/[0.05] hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                <Icon
-                  size={17}
-                  strokeWidth={isActive ? 2.5 : 2}
-                  className={
-                    isActive
-                      ? isOrange
-                        ? 'text-white shrink-0'
-                        : 'text-black shrink-0'
-                      : 'text-slate-400 dark:text-slate-500 shrink-0'
-                  }
-                />
-                <span className="truncate">{item.label}</span>
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <Icon
+                    size={17}
+                    strokeWidth={isActive ? 2.5 : 2}
+                    className={
+                      isActive
+                        ? isOrange || isPlum
+                          ? 'text-white shrink-0'
+                          : 'text-black shrink-0'
+                        : 'text-slate-400 dark:text-slate-500 shrink-0'
+                    }
+                  />
+                  <span className="truncate">{item.label}</span>
+                </div>
+                {item.badge !== undefined && item.badge > 0 && (
+                  <span className="px-1.5 py-0.5 text-[10px] font-mono font-black rounded bg-amber-500 text-black tabular-nums shrink-0">
+                    {item.badge}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -192,11 +221,22 @@ export function DesktopSidebar() {
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-              {displayName}
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                {displayName}
+              </p>
+              <span
+                className={`text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded shrink-0 ${
+                  isAdmin
+                    ? 'bg-[#D4F826] text-black'
+                    : 'bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                {isAdmin ? 'ADMIN' : 'USER'}
+              </span>
+            </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-              Ruang Pribadi · {user ? 'Cloud Sync' : 'Lokal'}
+              {isAdmin ? 'Administrator Super App' : 'Akun User Aktif'}
             </p>
           </div>
         </button>

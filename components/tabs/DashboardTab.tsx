@@ -24,6 +24,8 @@ import {
   Activity,
   ArrowUpRight,
   BarChart3,
+  ShieldCheck,
+  Bug,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -53,6 +55,8 @@ export function DashboardTab() {
     budgetPeriod,
     user,
     openLoginModal,
+    isAdmin,
+    managedUsers,
   } = useApp();
 
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
@@ -323,7 +327,9 @@ export function DashboardTab() {
           </div>
           <div className="whitespace-nowrap">
             <span className="text-[9px] font-extrabold uppercase tracking-wider text-gray-400 block leading-none">
-              {budgetPeriod.paydayDay > 1
+              {budgetPeriod.isCustomFlexiblePeriod
+                ? `FLEKSIBEL (${budgetPeriod.totalDays}H)`
+                : budgetPeriod.paydayDay > 1
                 ? `GAJIAN TGL ${budgetPeriod.paydayDay}`
                 : 'PERIODE AKTIF'}
             </span>
@@ -422,9 +428,21 @@ export function DashboardTab() {
                 {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.dailyBudgetRemaining, false)}
               </div>
               {dashboardSummary.dailyOverbudget ? (
-                <p className="text-xs sm:text-sm text-rose-400 font-semibold mt-2.5 sm:mt-3 leading-snug">
-                  Melebihi kuota harian ({formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota {formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
-                </p>
+                <div className="mt-2.5 sm:mt-3 space-y-1">
+                  <p className="text-xs sm:text-sm text-rose-400 font-semibold leading-snug">
+                    Melebihi kuota hari ini (+{formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota {formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
+                  </p>
+                  {budgetPeriod.daysRemainingUntilPayday > 1 && (
+                    <p className="text-[11px] sm:text-xs text-amber-300/95 font-medium leading-snug">
+                      ↳ Kuota mulai besok menyesuaikan jadi <strong>~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hari</strong> (-{formatRupiah(dashboardSummary.tomorrowQuotaDiff, hide)}/hari s/d gajian)
+                      {dashboardSummary.dailyBudgetQuota > dashboardSummary.dailyOverbudgetAmount && (
+                        <>
+                          {' '}• Atau belanja besok maks <strong>{formatRupiah(dashboardSummary.dailyBudgetQuota - dashboardSummary.dailyOverbudgetAmount, hide)}</strong> agar lusa kembali normal
+                        </>
+                      )}
+                    </p>
+                  )}
+                </div>
               ) : dashboardSummary.dailyBudgetQuota > 0 && dashboardSummary.remainingVariableBudget <= 0 ? (
                 <p className="text-xs sm:text-sm text-amber-300 font-medium mt-2.5 sm:mt-3 leading-snug">
                   Sisa uang operasional periode ini telah habis terpakai
@@ -543,20 +561,56 @@ export function DashboardTab() {
             })}
           </div>
 
-          <div className="pt-2 border-t border-gray-100 dark:border-gray-800">
-            <button
-              type="button"
-              onClick={() => setActiveTab('tutorial')}
-              className="w-full py-2.5 px-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/60 hover:bg-[#D4F826]/20 dark:hover:bg-[#D4F826]/15 border border-gray-100 dark:border-gray-700/60 flex items-center justify-between text-xs font-extrabold text-gray-800 dark:text-gray-200 transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-6 h-6 rounded-lg bg-[#D4F826] text-black flex items-center justify-center shrink-0">
-                  <BookOpen size={13} strokeWidth={2.5} />
+          <div className="pt-2 border-t border-gray-100 dark:border-gray-800 space-y-2">
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('admin')}
+                className="w-full py-2.5 px-3.5 rounded-2xl bg-[#D4F826] hover:bg-[#c8ec1c] text-black flex items-center justify-between text-xs font-extrabold transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-6 h-6 rounded-lg bg-black text-[#D4F826] flex items-center justify-center shrink-0">
+                    <ShieldCheck size={13} strokeWidth={2.5} />
+                  </div>
+                  <span className="truncate">
+                    Dashboard Admin (Kelola User & Laporan)
+                  </span>
                 </div>
-                <span className="truncate">Panduan Lengkap Semua Fitur & Cara Pakai</span>
-              </div>
-              <ChevronRight size={15} className="text-gray-400 shrink-0" />
-            </button>
+                <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded bg-black/15">
+                  {managedUsers.filter((u) => u.status === 'pending').length} Pending
+                </span>
+              </button>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setActiveTab('feedback')}
+                className="py-2.5 px-3 rounded-2xl bg-gray-50 dark:bg-gray-800/60 hover:bg-[#D4F826]/20 dark:hover:bg-[#D4F826]/15 border border-gray-100 dark:border-gray-700/60 flex items-center justify-between text-xs font-extrabold text-gray-800 dark:text-gray-200 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-6 h-6 rounded-lg bg-rose-500/15 text-rose-500 flex items-center justify-center shrink-0">
+                    <Bug size={13} strokeWidth={2.5} />
+                  </div>
+                  <span className="truncate">Lapor Bug / Saran</span>
+                </div>
+                <ChevronRight size={14} className="text-gray-400 shrink-0" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('tutorial')}
+                className="py-2.5 px-3 rounded-2xl bg-gray-50 dark:bg-gray-800/60 hover:bg-[#D4F826]/20 dark:hover:bg-[#D4F826]/15 border border-gray-100 dark:border-gray-700/60 flex items-center justify-between text-xs font-extrabold text-gray-800 dark:text-gray-200 transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="w-6 h-6 rounded-lg bg-[#D4F826] text-black flex items-center justify-center shrink-0">
+                    <BookOpen size={13} strokeWidth={2.5} />
+                  </div>
+                  <span className="truncate">Panduan Fitur</span>
+                </div>
+                <ChevronRight size={14} className="text-gray-400 shrink-0" />
+              </button>
+            </div>
           </div>
         </div>
 

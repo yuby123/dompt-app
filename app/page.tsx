@@ -20,6 +20,9 @@ import { TutorialTab } from '@/components/tabs/TutorialTab';
 import { AnalyticsTab } from '@/components/tabs/AnalyticsTab';
 import { SubscriptionsTab } from '@/components/tabs/SubscriptionsTab';
 import { HealthScoreTab } from '@/components/tabs/HealthScoreTab';
+import { AdminTab } from '@/components/tabs/AdminTab';
+import { FeedbackTab } from '@/components/tabs/FeedbackTab';
+import { AccountStatusGate } from '@/components/AccountStatusGate';
 import { AddTransactionModal } from '@/components/AddTransactionModal';
 import { TransferModal } from '@/components/TransferModal';
 import { ScanReceiptModal } from '@/components/ScanReceiptModal';
@@ -32,13 +35,24 @@ import { ClipboardScreenshotDetector } from '@/components/ClipboardScreenshotDet
 import { motion, AnimatePresence } from 'motion/react';
 
 function MainAppContent() {
-  const { activeTab, user, settings } = useApp();
+  const { activeTab, user, settings, isAdmin, userAccountStatus } = useApp();
   const accentAttr = settings.accentColor || 'lime';
 
   if (!user) {
     return (
       <div data-accent={accentAttr}>
         <AuthScreen />
+        <ToastContainer />
+      </div>
+    );
+  }
+
+  // Gate pending or deactivated user accounts until Admin approves (ACC) or reactivates them
+  if (!isAdmin && (userAccountStatus === 'pending' || userAccountStatus === 'deactivated')) {
+    return (
+      <div data-accent={accentAttr}>
+        <AccountStatusGate />
+        <AuthModal />
         <ToastContainer />
       </div>
     );
@@ -82,6 +96,8 @@ function MainAppContent() {
               {activeTab === 'analytics' && <AnalyticsTab />}
               {activeTab === 'subscriptions' && <SubscriptionsTab />}
               {activeTab === 'health-score' && <HealthScoreTab />}
+              {activeTab === 'admin' && <AdminTab />}
+              {activeTab === 'feedback' && <FeedbackTab />}
             </motion.div>
           </AnimatePresence>
         </main>

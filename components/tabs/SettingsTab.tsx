@@ -17,6 +17,11 @@ import {
   BookOpen,
   Upload,
   X,
+  ShieldCheck,
+  Bug,
+  KeyRound,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -37,6 +42,12 @@ export function SettingsTab() {
     signOutUser,
     setActiveTab,
     dataResetVersion,
+    isAdmin,
+    userRole,
+    userAccountStatus,
+    managedUsers,
+    bugReports,
+    changeAccountPassword,
   } = useApp();
 
   const syncKey = `${user?.uid || 'guest'}_${settings.userName}_${settings.userEmail}_${dataResetVersion}`;
@@ -100,6 +111,46 @@ export function SettingsTab() {
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [pinError, setPinError] = useState('');
+
+  // Change Password states
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [oldPasswordInput, setOldPasswordInput] = useState('');
+  const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [confirmNewPasswordInput, setConfirmNewPasswordInput] = useState('');
+  const [showPwdFields, setShowPwdFields] = useState(false);
+  const [pwdError, setPwdError] = useState('');
+  const [pwdSaving, setPwdSaving] = useState(false);
+
+  const handleSaveNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwdError('');
+    if (!oldPasswordInput) {
+      setPwdError('Masukkan password lama Anda.');
+      return;
+    }
+    if (newPasswordInput.length < 6) {
+      setPwdError('Password baru minimal harus 6 karakter.');
+      return;
+    }
+    if (newPasswordInput !== confirmNewPasswordInput) {
+      setPwdError('Konfirmasi password baru tidak cocok.');
+      return;
+    }
+    setPwdSaving(true);
+    try {
+      const res = await changeAccountPassword(oldPasswordInput, newPasswordInput);
+      if (!res.ok) {
+        setPwdError(res.error || 'Gagal mengubah password.');
+        return;
+      }
+      setOldPasswordInput('');
+      setNewPasswordInput('');
+      setConfirmNewPasswordInput('');
+      setIsChangingPassword(false);
+    } finally {
+      setPwdSaving(false);
+    }
+  };
 
   // Reset Confirmation Modal state
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
@@ -318,9 +369,20 @@ export function SettingsTab() {
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-black text-gray-900 dark:text-white truncate">
-                      {user.displayName || 'Pengguna Dompt'}
-                    </p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <p className="text-xs font-black text-gray-900 dark:text-white truncate">
+                        {user.displayName || 'Pengguna Dompt'}
+                      </p>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                          isAdmin
+                            ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-500/20'
+                            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-500/20'
+                        }`}
+                      >
+                        {isAdmin ? 'Admin Super App' : `User (${userAccountStatus === 'active' ? 'ACC Aktif' : userAccountStatus})`}
+                      </span>
+                    </div>
                     <p className="text-[11px] text-gray-400 truncate">{user.email}</p>
                   </div>
                 </div>
@@ -329,6 +391,37 @@ export function SettingsTab() {
                   Catatan dompet, transaksi, dan target untuk <strong>{user.email}</strong> tersimpan
                   aman dan terisolasi dari pengguna lain.
                 </p>
+
+                {/* Super App Quick Navigation */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('feedback')}
+                    className="py-2.5 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <Bug size={14} />
+                    <span>Masukan / Lapor Bug</span>
+                  </button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('admin')}
+                      className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center justify-center gap-2 transition-colors shadow-xs cursor-pointer"
+                    >
+                      <ShieldCheck size={14} />
+                      <span>
+                        Dashboard Admin
+                        {managedUsers.filter((u) => u.status === 'pending').length +
+                          bugReports.filter((b) => b.status === 'open').length >
+                          0 &&
+                          ` (${
+                            managedUsers.filter((u) => u.status === 'pending').length +
+                            bugReports.filter((b) => b.status === 'open').length
+                          })`}
+                      </span>
+                    </button>
+                  )}
+                </div>
 
                 <div className="flex gap-2 pt-1">
                   <button
@@ -452,6 +545,102 @@ export function SettingsTab() {
                   </button>
                 </div>
               </form>
+            )}
+
+            {/* Ubah Password Login Section */}
+            {user && (
+              <div className="pt-3 border-t border-gray-100 dark:border-gray-800 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <KeyRound size={15} className="text-indigo-500" />
+                    <span className="text-xs font-extrabold text-gray-900 dark:text-white">
+                      Password Login Akun
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPwdError('');
+                      setIsChangingPassword((prev) => !prev);
+                    }}
+                    className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                  >
+                    {isChangingPassword ? 'Tutup' : 'Ubah Password'}
+                  </button>
+                </div>
+
+                {isChangingPassword && (
+                  <form
+                    onSubmit={handleSaveNewPassword}
+                    className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200/70 dark:border-gray-700/70 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
+                        Akun: {user.email}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowPwdFields((p) => !p)}
+                        className="text-[11px] font-bold text-gray-500 hover:text-gray-800 dark:hover:text-white flex items-center gap-1 cursor-pointer"
+                      >
+                        {showPwdFields ? <EyeOff size={13} /> : <Eye size={13} />}
+                        <span>{showPwdFields ? 'Sembunyikan' : 'Lihat'}</span>
+                      </button>
+                    </div>
+
+                    <input
+                      type={showPwdFields ? 'text' : 'password'}
+                      value={oldPasswordInput}
+                      onChange={(e) => setOldPasswordInput(e.target.value)}
+                      placeholder="Masukkan Password Lama"
+                      required
+                      className="w-full p-2.5 bg-white dark:bg-[#11131A] border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-semibold text-gray-900 dark:text-white"
+                    />
+                    <input
+                      type={showPwdFields ? 'text' : 'password'}
+                      value={newPasswordInput}
+                      onChange={(e) => setNewPasswordInput(e.target.value)}
+                      placeholder="Password Baru (minimal 6 karakter)"
+                      required
+                      className="w-full p-2.5 bg-white dark:bg-[#11131A] border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-semibold text-gray-900 dark:text-white"
+                    />
+                    <input
+                      type={showPwdFields ? 'text' : 'password'}
+                      value={confirmNewPasswordInput}
+                      onChange={(e) => setConfirmNewPasswordInput(e.target.value)}
+                      placeholder="Ulangi Password Baru"
+                      required
+                      className="w-full p-2.5 bg-white dark:bg-[#11131A] border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-semibold text-gray-900 dark:text-white"
+                    />
+
+                    {pwdError && (
+                      <p className="text-[11px] text-rose-600 dark:text-rose-400 font-bold">
+                        {pwdError}
+                      </p>
+                    )}
+
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsChangingPassword(false);
+                          setPwdError('');
+                        }}
+                        className="flex-1 py-2 bg-gray-200/70 dark:bg-gray-700 rounded-xl text-xs font-bold cursor-pointer"
+                      >
+                        Batal
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={pwdSaving}
+                        className={`flex-1 py-2 ${accentBg} text-black rounded-xl text-xs font-black cursor-pointer disabled:opacity-50`}
+                      >
+                        {pwdSaving ? 'Menyimpan...' : 'Simpan Password'}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
             )}
           </div>
         </div>

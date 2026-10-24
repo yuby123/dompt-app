@@ -288,7 +288,10 @@ interface AppContextType {
   updateSubscription: (id: string, data: Partial<RecurringItem>) => void;
   deleteSubscription: (id: string) => void;
   toggleSubscriptionActive: (id: string) => void;
-  recordSubscriptionPayment: (id: string) => boolean;
+  recordSubscriptionPayment: (
+    id: string,
+    options?: { walletId?: string; amount?: number; date?: string; note?: string }
+  ) => boolean;
   syncSubscriptionsToBudget: () => void;
 
   addAsset: (type: 'liquid' | 'fixed', item: Omit<AssetItem, 'id'>) => void;
@@ -4312,17 +4315,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addToast('Jadwal Dihapus', 'Langganan & alokasi subkategori budget terkait telah dihapus.', 'info');
   };
 
-  const recordSubscriptionPayment = (id: string): boolean => {
+  const recordSubscriptionPayment = (
+    id: string,
+    options?: { walletId?: string; amount?: number; date?: string; note?: string }
+  ): boolean => {
     const item = subscriptions.find((i) => i.id === id);
     if (!item) return false;
 
-    const targetWalletId = item.walletId || walletsWithBalance[0]?.id || wallets[0]?.id || 'wallet-bca';
+    const paymentAmount =
+      options?.amount !== undefined && options.amount > 0 ? options.amount : item.amount;
+
+    const requestedWalletId = options?.walletId || item.walletId;
+    const validRequestedWallet = requestedWalletId
+      ? walletsWithBalance.find((w) => w.id === requestedWalletId)
+      : undefined;
+
+    const liquidFallback =
+      walletsWithBalance.find(
+        (w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance >= paymentAmount
+      ) ||
+      walletsWithBalance.find((w) => w.type !== 'credit' && w.type !== 'paylater') ||
+      walletsWithBalance[0];
+
+    const resolvedWallet = validRequestedWallet || liquidFallback;
+    const targetWalletId = resolvedWallet?.id || wallets[0]?.id || 'wallet-bca';
+
     if (item.type === 'expense') {
       const currentWalletBalance = getWalletBalance(targetWalletId);
-      if (item.amount > currentWalletBalance) {
+      if (paymentAmount > currentWalletBalance) {
         triggerInsufficientBalanceAlert(
           targetWalletId,
-          item.amount,
+          paymentAmount,
           `Tagihan Rutin: ${item.name}`,
           currentWalletBalance
         );
@@ -4334,7 +4357,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const now = new Date().toISOString();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const currentPeriodKey = budgetPeriod.periodKey;
-    const dateStr = new Date(activeYear, activeMonth, activeDay, 9, 0, 0).toISOString();
+    const dateStr =
+      options?.date ||
+      `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}-${String(activeDay).padStart(2, '0')}`;
 
     const cleanItemName = item.name.toLowerCase().trim();
     const matchedSub =
@@ -4354,20 +4379,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       item.budgetGroup ||
       (item.categoryId === 'cat-hiburan' ? 'keinginan' : 'kebutuhan');
 
+    const txNote = options?.note?.trim() || `${item.name} (Otomatis Rutin)`;
     const createdId = addTransaction({
       walletId: targetWalletId,
       categoryId: item.categoryId || (matchedSub ? matchedSub.id.replace('sub-', 'cat-') : 'cat-tagihan'),
       budgetGroup: item.type === 'expense' ? determinedBudgetGroup : undefined,
       expenseNature: item.type === 'expense' ? 'fixed' : undefined,
       type: item.type,
-      amount: item.amount,
-      note: `${item.name} (Otomatis Rutin)`,
+      amount: paymentAmount,
+      note: txNote,
       date: dateStr,
     });
     if (!createdId) return false;
 
     const updatedItem: RecurringItem = {
       ...item,
+      walletId: targetWalletId,
       lastRecordedPeriod: currentPeriodKey,
       updatedAt: now,
     };
@@ -4378,15 +4405,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     const updatedSubcategories = (budgetConfig.subcategories || []).map((s) =>
       matchedSub && s.id === matchedSub.id
-        ? { ...s, lastRecordedPeriod: currentPeriodKey }
+        ? { ...s, walletId: targetWalletId, lastRecordedPeriod: currentPeriodKey }
         : s
     );
+
+    let nextEstimatedIncome = budgetConfig.estimatedIncome;
+    if (item.type === 'income') {
+      const syntheticTx: Transaction = {
+        id: createdId,
+        type: 'income',
+        amount: paymentAmount,
+        walletId: targetWalletId,
+        date: dateStr,
+        note: txNote,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const { periodRecordedIncome } = resolveEffectivePeriodIncome(
+        budgetConfig,
+        [syntheticTx, ...transactions],
+        budgetPeriod
+      );
+      if (periodRecordedIncome > 0) {
+        nextEstimatedIncome = periodRecordedIncome;
+      }
+    }
+
     const nextBudgetConfig: BudgetConfig = {
       ...budgetConfig,
-      estimatedIncome:
-        item.type === 'income'
-          ? Math.max(0, (Number(budgetConfig.estimatedIncome) || 0) + item.amount)
-          : budgetConfig.estimatedIncome,
+      estimatedIncome: nextEstimatedIncome,
       subcategories: updatedSubcategories,
       subscriptions: nextSubs,
       updatedAt: now,

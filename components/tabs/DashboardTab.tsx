@@ -21,16 +21,24 @@ import {
   Plus,
   BookOpen,
   CalendarClock,
-  Activity,
   ArrowUpRight,
   BarChart3,
   ShieldCheck,
   Bug,
+  Wallet,
+  CheckCircle2,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatCompactRupiah, formatRupiah, formatFullDateIndo } from '@/lib/formatters';
-import { isDateInBudgetPeriod, resolveEffectivePeriodIncome } from '@/lib/budgetUtils';
+import {
+  getAdjacentPeriodDateStr,
+  getBudgetPeriodInfo,
+  isDateInBudgetPeriod,
+  isSavingsExpense,
+  parseLocalDay,
+  resolveEffectivePeriodIncome,
+} from '@/lib/budgetUtils';
 
 export function DashboardTab() {
   const {
@@ -46,11 +54,11 @@ export function DashboardTab() {
     transactionDetails,
     transactions,
     categories,
+    debts,
     budgetConfig,
     activeYear,
     activeMonth,
     activeDay,
-    activeDate,
     setActiveDate,
     budgetPeriod,
     user,
@@ -74,13 +82,12 @@ export function DashboardTab() {
     () => '☀️'
   );
 
-  const refDateObj = useMemo(() => new Date(activeDate + 'T12:00:00'), [activeDate]);
   const currentDay = activeDay;
   const daysInMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
   const firstDayOfWeek = new Date(activeYear, activeMonth, 1).getDay();
   // Monday-based offset (Mon=0..Sun=6)
   const startDayOffset = (firstDayOfWeek + 6) % 7;
-  const calendarCells = [];
+  const calendarCells: (number | null)[] = [];
   for (let i = 0; i < startDayOffset; i++) {
     calendarCells.push(null);
   }
@@ -89,7 +96,9 @@ export function DashboardTab() {
   }
 
   const currentMonthKey = `${activeYear}-${activeMonth}`;
-  const [selectedDayState, setSelectedDayState] = useState<{ monthKey: string; day: number } | null>(null);
+  const [selectedDayState, setSelectedDayState] = useState<{ monthKey: string; day: number } | null>(
+    null
+  );
   const selectedCalendarDay =
     selectedDayState && selectedDayState.monthKey === currentMonthKey
       ? selectedDayState.day
@@ -101,12 +110,15 @@ export function DashboardTab() {
   // Today's real expense & income from context metrics
   const { todayIncome, todayExpense } = dashboardSummary;
 
-  // Dynamic daily expenses & income map from transactions this month
+  // Dynamic daily expenses & income map from transactions + standalone debt payments this month
   const { dailyExpensesMap, dailyIncomeMap } = useMemo(() => {
     const expMap: Record<number, number> = {};
     const incMap: Record<number, number> = {};
+    const recordedTxIds = new Set<string>();
+
     transactions.forEach((tx) => {
-      const d = new Date(tx.date);
+      recordedTxIds.add(tx.id);
+      const d = parseLocalDay(tx.date);
       if (d.getFullYear() === activeYear && d.getMonth() === activeMonth) {
         const day = d.getDate();
         if (tx.type === 'expense') {
@@ -116,14 +128,27 @@ export function DashboardTab() {
         }
       }
     });
+
+    (debts || []).forEach((debt) => {
+      if (debt.type !== 'payable') return;
+      (debt.payments || []).forEach((p) => {
+        if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
+        const pd = parseLocalDay(p.date);
+        if (pd.getFullYear() === activeYear && pd.getMonth() === activeMonth) {
+          const day = pd.getDate();
+          expMap[day] = (expMap[day] || 0) + p.amount;
+        }
+      });
+    });
+
     return { dailyExpensesMap: expMap, dailyIncomeMap: incMap };
-  }, [transactions, activeYear, activeMonth]);
+  }, [transactions, debts, activeYear, activeMonth]);
 
   // Transactions for the selected calendar day
   const selectedDayTransactions = useMemo(() => {
     if (!selectedCalendarDay) return [];
     return transactionDetails.filter((detail) => {
-      const d = new Date(detail.transaction.date);
+      const d = parseLocalDay(detail.transaction.date);
       return (
         d.getFullYear() === activeYear &&
         d.getMonth() === activeMonth &&
@@ -132,11 +157,21 @@ export function DashboardTab() {
     });
   }, [transactionDetails, activeYear, activeMonth, selectedCalendarDay]);
 
-  const EN_MONTHS = [
-    'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE',
-    'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER',
+  const ID_MONTHS_UPPER = [
+    'JANUARI',
+    'FEBRUARI',
+    'MARET',
+    'APRIL',
+    'MEI',
+    'JUNI',
+    'JULI',
+    'AGUSTUS',
+    'SEPTEMBER',
+    'OKTOBER',
+    'NOVEMBER',
+    'DESEMBER',
   ];
-  const monthLabel = `${EN_MONTHS[activeMonth] || 'JANUARY'} ${activeYear}`;
+  const monthLabel = `${ID_MONTHS_UPPER[activeMonth] || 'JANUARI'} ${activeYear}`;
 
   const handlePrevMonth = () => {
     const today = new Date();
@@ -174,8 +209,31 @@ export function DashboardTab() {
     setSelectedDayState({ monthKey: `${y}-${mIdx}`, day: today.getDate() });
   };
 
-  // Dynamic 50/30/20 percentages (supports 0% for any group)
-  const { needsPct, wantsPct, savingsPct, savingsBudgetCfgPct } = useMemo(() => {
+  // Format percentage helper so small positive values (< 1%) show 1 decimal instead of 0%
+  const formatPctDisplay = (spent: number, limit: number): string => {
+    if (spent <= 0 || limit <= 0) return '0%';
+    const raw = (spent / limit) * 100;
+    if (raw > 0 && raw < 1) {
+      return `${raw.toFixed(1).replace('.', ',')}%`;
+    }
+    return `${Math.round(raw)}%`;
+  };
+
+  // Dynamic 50/30/20 percentages & nominal breakdown (supports 0% for any group & includes standalone debt payments)
+  const {
+    needsPct,
+    wantsPct,
+    savingsPct,
+    needsCfgPct,
+    wantsCfgPct,
+    savingsBudgetCfgPct,
+    needsBudget,
+    wantsBudget,
+    savingsBudget,
+    nSpent,
+    wSpent,
+    sSpent,
+  } = useMemo(() => {
     const { effectiveIncome: estIncome } = resolveEffectivePeriodIncome(
       budgetConfig,
       transactions,
@@ -183,106 +241,249 @@ export function DashboardTab() {
     );
     const nCfgPct = typeof budgetConfig?.needsPercent === 'number' ? budgetConfig.needsPercent : 50;
     const wCfgPct = typeof budgetConfig?.wantsPercent === 'number' ? budgetConfig.wantsPercent : 30;
-    const sCfgPct = typeof budgetConfig?.savingsPercent === 'number' ? budgetConfig.savingsPercent : 20;
+    const sCfgPct =
+      typeof budgetConfig?.savingsPercent === 'number' ? budgetConfig.savingsPercent : 20;
 
-    const needsBudget = (estIncome * nCfgPct) / 100;
-    const wantsBudget = (estIncome * wCfgPct) / 100;
-    const savingsBudget = (estIncome * sCfgPct) / 100;
+    const nLimit = Math.round((estIncome * nCfgPct) / 100);
+    const wLimit = Math.round((estIncome * wCfgPct) / 100);
+    const sLimit = Math.round((estIncome * sCfgPct) / 100);
 
-    let nSpent = 0;
-    let wSpent = 0;
-    let sSpent = 0;
+    let needsTotal = 0;
+    let wantsTotal = 0;
+    let savingsTotal = 0;
 
-    const catMap = new Map<string, string | undefined>(
-      categories.map((c) => [c.id, c.budgetGroup])
-    );
+    const catMap = new Map(categories.map((c) => [c.id, c]));
+    const recordedTxIds = new Set<string>();
 
     transactions.forEach((tx) => {
-      const d = new Date(tx.date);
+      recordedTxIds.add(tx.id);
+      const d = parseLocalDay(tx.date);
       if (isDateInBudgetPeriod(d, budgetPeriod)) {
-        const group =
-          tx.expenseNature === 'savings'
-            ? 'tabungan'
-            : tx.budgetGroup || (tx.categoryId ? catMap.get(tx.categoryId) : undefined);
+        const cat = tx.categoryId ? catMap.get(tx.categoryId) || null : null;
+        const group = isSavingsExpense(tx, cat)
+          ? 'tabungan'
+          : tx.budgetGroup || cat?.budgetGroup || 'kebutuhan';
         if (tx.type === 'expense') {
-          if (group === 'kebutuhan') nSpent += tx.amount;
-          else if (group === 'keinginan') wSpent += tx.amount;
-          else if (group === 'tabungan') sSpent += tx.amount;
-          else nSpent += tx.amount;
+          if (group === 'kebutuhan') needsTotal += tx.amount;
+          else if (group === 'keinginan') wantsTotal += tx.amount;
+          else if (group === 'tabungan') savingsTotal += tx.amount;
+          else needsTotal += tx.amount;
         } else if (tx.type === 'transfer' && group === 'tabungan') {
-          sSpent += tx.amount;
+          savingsTotal += tx.amount;
         }
       }
     });
 
-    return {
-      needsPct: needsBudget > 0 ? Math.min(100, Math.round((nSpent / needsBudget) * 100)) : 0,
-      wantsPct: wantsBudget > 0 ? Math.min(100, Math.round((wSpent / wantsBudget) * 100)) : 0,
-      savingsPct: savingsBudget > 0 ? Math.min(100, Math.round((sSpent / savingsBudget) * 100)) : 0,
-      savingsBudgetCfgPct: sCfgPct,
-    };
-  }, [transactions, budgetConfig, categories, budgetPeriod]);
+    (debts || []).forEach((debt) => {
+      if (debt.type !== 'payable') return;
+      (debt.payments || []).forEach((p) => {
+        if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
+        const pd = parseLocalDay(p.date);
+        if (isDateInBudgetPeriod(pd, budgetPeriod)) {
+          needsTotal += p.amount;
+        }
+      });
+    });
 
-  // Dynamic top expense categories
-  const topExpenses = useMemo(() => {
-    const catTotalMap = new Map<string, number>();
+    return {
+      needsPct: nLimit > 0 ? Math.min(100, Math.round((needsTotal / nLimit) * 100)) : 0,
+      wantsPct: wLimit > 0 ? Math.min(100, Math.round((wantsTotal / wLimit) * 100)) : 0,
+      savingsPct: sLimit > 0 ? Math.min(100, Math.round((savingsTotal / sLimit) * 100)) : 0,
+      needsCfgPct: nCfgPct,
+      wantsCfgPct: wCfgPct,
+      savingsBudgetCfgPct: sCfgPct,
+      needsBudget: nLimit,
+      wantsBudget: wLimit,
+      savingsBudget: sLimit,
+      nSpent: needsTotal,
+      wSpent: wantsTotal,
+      sSpent: savingsTotal,
+    };
+  }, [transactions, debts, budgetConfig, categories, budgetPeriod]);
+
+  // Previous Period Comparison for Income & Expense Cards (Replaces hardcoded "+100% vs periode lalu")
+  const prevPeriodComparison = useMemo(() => {
+    const rawPayday = budgetConfig?.paydayDay || budgetConfig?.settings?.paydayDay || 1;
+    const customPeriodCfg = {
+      periodMode: budgetConfig?.periodMode || budgetConfig?.settings?.periodMode,
+      customPeriodStart:
+        budgetConfig?.customPeriodStart || budgetConfig?.settings?.customPeriodStart,
+      customNextPayday: budgetConfig?.customNextPayday || budgetConfig?.settings?.customNextPayday,
+    };
+    const prevDateIso = getAdjacentPeriodDateStr(
+      activeYear,
+      activeMonth,
+      activeDay,
+      rawPayday,
+      -1,
+      customPeriodCfg
+    );
+    const prevDate = parseLocalDay(prevDateIso);
+    const prevPeriod = getBudgetPeriodInfo(
+      prevDate.getFullYear(),
+      prevDate.getMonth(),
+      prevDate.getDate(),
+      rawPayday,
+      customPeriodCfg
+    );
+
+    let prevIncome = 0;
+    let prevExpense = 0;
+    const catMap = new Map(categories.map((c) => [c.id, c]));
 
     transactions.forEach((tx) => {
+      const d = parseLocalDay(tx.date);
+      if (isDateInBudgetPeriod(d, prevPeriod)) {
+        if (tx.type === 'income') {
+          const isLoan = Boolean(tx.note && /^pencairan utang:/i.test(tx.note.trim()));
+          if (!isLoan) prevIncome += tx.amount;
+        } else if (tx.type === 'expense') {
+          const cat = tx.categoryId ? catMap.get(tx.categoryId) || null : null;
+          if (!isSavingsExpense(tx, cat)) {
+            prevExpense += tx.amount;
+          }
+        }
+      }
+    });
+
+    const incDeltaPct =
+      prevIncome > 0
+        ? Math.round(((dashboardSummary.monthlyIncome - prevIncome) / prevIncome) * 100)
+        : null;
+    const expDeltaPct =
+      prevExpense > 0
+        ? Math.round(((dashboardSummary.monthlyExpense - prevExpense) / prevExpense) * 100)
+        : null;
+
+    return {
+      prevIncome,
+      prevExpense,
+      incDeltaPct,
+      expDeltaPct,
+    };
+  }, [
+    transactions,
+    categories,
+    budgetConfig,
+    activeYear,
+    activeMonth,
+    activeDay,
+    dashboardSummary.monthlyIncome,
+    dashboardSummary.monthlyExpense,
+  ]);
+
+  // Dynamic top expense categories (including standalone debt payments, excluding savings transfers)
+  const topExpenses = useMemo(() => {
+    const catTotalMap = new Map<string, number>();
+    const catInfoMap = new Map(categories.map((c) => [c.id, c]));
+    const recordedTxIds = new Set<string>();
+
+    transactions.forEach((tx) => {
+      recordedTxIds.add(tx.id);
       if (tx.type === 'expense') {
-        const d = new Date(tx.date);
+        const d = parseLocalDay(tx.date);
         if (isDateInBudgetPeriod(d, budgetPeriod)) {
+          const cat = tx.categoryId ? catInfoMap.get(tx.categoryId) || null : null;
+          if (isSavingsExpense(tx, cat)) return;
           const key = tx.categoryId || 'cat-lainnya';
           catTotalMap.set(key, (catTotalMap.get(key) || 0) + tx.amount);
         }
       }
     });
 
-    const catInfoMap = new Map(categories.map((c) => [c.id, c]));
+    (debts || []).forEach((debt) => {
+      if (debt.type !== 'payable') return;
+      (debt.payments || []).forEach((p) => {
+        if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
+        const pd = parseLocalDay(p.date);
+        if (isDateInBudgetPeriod(pd, budgetPeriod)) {
+          catTotalMap.set('cat-tagihan', (catTotalMap.get('cat-tagihan') || 0) + p.amount);
+        }
+      });
+    });
 
-    const list = Array.from(catTotalMap.entries())
+    return Array.from(catTotalMap.entries())
       .map(([catId, amount]) => {
         const cat = catInfoMap.get(catId);
         return {
           id: catId,
-          name: cat?.name || 'Lainnya',
+          name: cat?.name || (catId === 'cat-tagihan' ? 'Cicilan & Tagihan' : 'Lainnya'),
           group: (cat?.groupName || 'KEBUTUHAN').toUpperCase(),
           emoji: cat?.emoji || '💳',
           amount,
         };
       })
+      .filter((item) => item.amount > 0)
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
-
-    if (list.length === 0) {
-      return [
-        { id: '1', name: 'Makan', group: 'KEBUTUHAN', emoji: '🍽️', amount: 0 },
-        { id: '2', name: 'Belanja Online', group: 'KEINGINAN', emoji: '🛍️', amount: 0 },
-      ];
-    }
-
-    return list;
-  }, [transactions, categories, budgetPeriod]);
+  }, [transactions, debts, categories, budgetPeriod]);
 
   const budgetLimit = dashboardSummary.budgetLimit ?? 0;
   const budgetSpent = dashboardSummary.budgetSpent || 0;
   const remainingBudget = Math.max(0, budgetLimit - budgetSpent);
+  const isOverTotalBudget = budgetLimit > 0 && budgetSpent > budgetLimit;
+
+  // Dynamic SVG Donut Calculations for "Realisasi Anggaran" (circumference = 2 * PI * 38 = 238.76)
+  const donutMetrics = useMemo(() => {
+    const circumference = 2 * Math.PI * 38; // 238.761
+    const baseTotal = Math.max(budgetLimit, nSpent + wSpent, 1);
+    const needsRatio = Math.min(1, nSpent / baseTotal);
+    const wantsRatio = Math.min(1 - needsRatio, wSpent / baseTotal);
+
+    const needsArc = Number((needsRatio * circumference).toFixed(2));
+    const wantsArc = Number((wantsRatio * circumference).toFixed(2));
+    const wantsOffset = -needsArc;
+
+    return {
+      circumference: Number(circumference.toFixed(2)),
+      needsArc,
+      wantsArc,
+      wantsOffset,
+      usedPctStr: formatPctDisplay(budgetSpent, budgetLimit),
+    };
+  }, [budgetLimit, budgetSpent, nSpent, wSpent]);
 
   const menuItems = [
     { id: 'scan', label: 'Scan SS', icon: Camera, action: () => openScanModal() },
     { id: 'budget', label: 'Budget', icon: PieChart, action: () => setActiveTab('budget') },
     { id: 'goals', label: 'Goals', icon: Target, action: () => setActiveTab('goals') },
     { id: 'aset', label: 'Aset', icon: Landmark, action: () => setActiveTab('assets') },
-    { id: 'subscriptions', label: 'Langganan', icon: CalendarClock, action: () => setActiveTab('subscriptions') },
+    {
+      id: 'subscriptions',
+      label: 'Langganan',
+      icon: CalendarClock,
+      action: () => setActiveTab('subscriptions'),
+    },
     { id: 'utang', label: 'Utang', icon: CreditCard, action: () => setActiveTab('debt') },
     { id: 'investasi', label: 'Investasi', icon: TrendingUp, action: () => setActiveTab('invest') },
-    { id: 'analytics', label: 'Analisis & Skor', icon: BarChart3, action: () => setActiveTab('analytics') },
-    { id: 'ai-advisor', label: 'AI Advisor', icon: Sparkles, action: () => setActiveTab('ai-advisor') },
+    {
+      id: 'analytics',
+      label: 'Analisis & Skor',
+      icon: BarChart3,
+      action: () => setActiveTab('analytics'),
+    },
+    {
+      id: 'ai-advisor',
+      label: 'AI Advisor',
+      icon: Sparkles,
+      action: () => setActiveTab('ai-advisor'),
+    },
     { id: 'laporan', label: 'Laporan', icon: FileText, action: () => setActiveTab('reports') },
   ];
 
   const SHORT_MONTHS_ID = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
-    'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des',
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'Mei',
+    'Jun',
+    'Jul',
+    'Agu',
+    'Sep',
+    'Okt',
+    'Nov',
+    'Des',
   ];
   const activePeriodLabel = budgetPeriod.periodShortLabel;
   const periodCurrentDay = budgetPeriod.currentDayOfPeriod;
@@ -303,9 +504,14 @@ export function DashboardTab() {
 
   const dayRingPct = Math.min(100, Math.round((periodCurrentDay / (periodTotalDays || 31)) * 100));
 
+  const todayNonDailyTotal =
+    (dashboardSummary.todayGroceryExpense || 0) +
+    (dashboardSummary.todayNonDailyExpense || 0) +
+    (dashboardSummary.todayFixedExpense || 0);
+
   return (
     <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-12">
-      {/* 1. Header Greeting + Active Period Pill (Symmetrical single-line layout on mobile) */}
+      {/* 1. Header Greeting + Active Period Control */}
       <div className="pt-1 lg:pt-1 px-0.5 flex items-center justify-between gap-2.5">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -313,9 +519,8 @@ export function DashboardTab() {
               Dashboard
             </h1>
             {user && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/20 whitespace-nowrap shrink-0">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                <span>Cloud Sync</span>
+              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold whitespace-nowrap shrink-0">
+                · Cloud Aktif
               </span>
             )}
           </div>
@@ -329,15 +534,15 @@ export function DashboardTab() {
           type="button"
           onClick={() => setActiveTab('budget')}
           title="Klik untuk mengatur Periode & Tanggal Gajian"
-          className="flex items-center gap-2 bg-white dark:bg-[#16181D] hover:border-[#D4F826] border border-gray-200/80 dark:border-gray-800 rounded-2xl px-3 py-2 sm:px-4 sm:py-2.5 shadow-2xs transition-colors cursor-pointer text-left shrink-0"
+          className="flex items-center gap-2.5 bg-white dark:bg-[#16181D] hover:border-[#D4F826] border border-gray-200/80 dark:border-gray-800 rounded-2xl px-3 py-2 sm:px-4 sm:py-2.5 shadow-2xs transition-colors cursor-pointer text-left shrink-0"
         >
-          <div className="w-7 h-7 rounded-full bg-[#D4F826]/30 flex items-center justify-center text-[#658500] dark:text-[#D4F826] shrink-0">
+          <div className="w-7 h-7 rounded-xl bg-[#D4F826]/25 flex items-center justify-center text-[#658500] dark:text-[#D4F826] shrink-0">
             <CalendarClock size={14} strokeWidth={2.5} />
           </div>
           <div className="whitespace-nowrap">
             <span className="text-[9px] font-extrabold uppercase tracking-wider text-gray-400 block leading-none">
               {budgetPeriod.isCustomFlexiblePeriod
-                ? `FLEKSIBEL (${budgetPeriod.totalDays}H)`
+                ? `FLEKSIBEL (${budgetPeriod.totalDays} HARI)`
                 : budgetPeriod.paydayDay > 1
                 ? `GAJIAN TGL ${budgetPeriod.paydayDay}`
                 : 'PERIODE AKTIF'}
@@ -349,7 +554,7 @@ export function DashboardTab() {
         </button>
       </div>
 
-      {/* Multi-user Cloud Sync Prompt Banner if in Guest mode (Mobile only or compact) */}
+      {/* Multi-user Cloud Sync Prompt Banner if in Guest mode */}
       {!user && (
         <div className="lg:hidden bg-gradient-to-r from-emerald-500/10 via-lime-500/10 to-teal-500/10 dark:from-emerald-950/40 dark:via-lime-950/30 dark:to-teal-950/40 border border-emerald-500/25 dark:border-emerald-500/30 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-xs">
           <div className="flex items-center gap-3">
@@ -358,10 +563,10 @@ export function DashboardTab() {
             </div>
             <div className="text-xs">
               <p className="font-black text-gray-900 dark:text-white">
-                Mau dipakai lebih dari 1 orang?
+                Simpan Data Aman di Cloud
               </p>
               <p className="text-gray-600 dark:text-gray-300 text-[11px]">
-                Masuk dengan Google agar tiap orang punya catatan & dompet sendiri yang terpisah.
+                Masuk akun agar catatan dompet & budget tersinkron di semua perangkat.
               </p>
             </div>
           </div>
@@ -375,18 +580,18 @@ export function DashboardTab() {
         </div>
       )}
 
-      {/* Responsive Grid Container: Stacked on Mobile (<lg), Full-width Black Hero + Bento on Desktop (lg+) */}
+      {/* Main Responsive Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 items-stretch">
-        {/* 2. Sekilas Hari Ini (Full-Width Dark Banner with Wallets-style Gradient Glow) */}
+        {/* 2. Sekilas Hari Ini (Full-Width Dark Hero Banner) */}
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[28px] lg:rounded-[32px] p-5 sm:p-7 lg:px-10 lg:py-8 bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white shadow-xl border border-white/10 flex flex-col justify-between"
+          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[28px] lg:rounded-[32px] p-5 sm:p-7 lg:px-9 lg:py-8 bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white shadow-xl border border-white/10 flex flex-col justify-between"
         >
-          {/* Ambient Mesh Gradient Glows (theme-adaptive: Neon Green, Orange, or Pink) */}
-          <div className="absolute -top-24 -right-16 w-80 h-80 lg:w-96 lg:h-96 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
+          {/* Ambient Mesh Gradient Glows */}
+          <div className="absolute -top-24 -right-16 w-80 h-80 lg:w-96 lg:h-96 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none" />
           <div
-            className={`absolute -bottom-24 -left-16 w-80 h-80 lg:w-96 lg:h-96 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
+            className={`absolute -bottom-24 -left-16 w-80 h-80 lg:w-96 lg:h-96 rounded-full blur-3xl pointer-events-none ${
               settings.accentColor === 'orange'
                 ? 'bg-[#FF6B2B]/15'
                 : settings.accentColor === 'pink'
@@ -394,98 +599,132 @@ export function DashboardTab() {
                 : 'bg-[#D4F826]/15'
             }`}
           />
-          <div
-            className={`absolute -top-20 -left-20 w-64 h-64 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
-              settings.accentColor === 'orange'
-                ? 'bg-[#FF6B2B]/10'
-                : settings.accentColor === 'pink'
-                ? 'bg-[#FFA4A4]/10'
-                : 'bg-[#D4F826]/10'
-            }`}
-          />
 
-          {/* Top Row: Sekilas Hari Ini • Kuota Operasional Harian | Hari X/Y + Eye */}
+          {/* Top Row: Sekilas Hari Ini • Sisa Kuota Harian | Hari X/Y + Eye */}
           <div className="relative z-10 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm min-w-0">
+            <div className="flex items-center gap-2 text-xs sm:text-sm min-w-0">
               <span className="font-extrabold text-[#D4F826] whitespace-nowrap shrink-0">
                 Sekilas Hari Ini
               </span>
-              <span className="text-slate-400 shrink-0">•</span>
+              <span className="text-slate-400 shrink-0">·</span>
               <span className="font-medium text-slate-300 truncate">
-                Kuota Harian
+                Sisa Jatah Kuota Harian
               </span>
             </div>
-            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-              <span className="text-xs sm:text-sm font-mono font-semibold text-slate-300 tracking-wide whitespace-nowrap">
-                Hari {periodCurrentDay}/{periodTotalDays}
+            <div className="flex items-center gap-2.5 shrink-0">
+              <span className="text-xs font-mono font-semibold text-slate-300 tracking-wide whitespace-nowrap tabular-nums">
+                Hari ke-{periodCurrentDay}/{periodTotalDays} ({budgetPeriod.daysRemainingUntilPayday}h lagi gajian)
               </span>
               <button
                 type="button"
                 onClick={toggleHideBalance}
-                className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer"
-                title={hide ? 'Tampilkan Saldo' : 'Sembunyikan Saldo'}
+                className="p-1.5 rounded-lg bg-white/5 text-slate-300 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                title={hide ? 'Tampilkan Nominal' : 'Sembunyikan Nominal'}
               >
                 {hide ? <Eye size={15} /> : <EyeOff size={15} />}
               </button>
             </div>
           </div>
 
-          {/* Middle Row: Left Big Monospace Balance + Right Outlined Cards */}
-          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 sm:gap-6 mt-4 sm:mt-5 lg:mt-6">
-            <div>
-              <div className="text-3xl sm:text-5xl lg:text-[54px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
-                {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.dailyBudgetRemaining, false)}
+          {/* Middle Row: Left Big Monospace Daily Remaining + Right 3 KPI Cards */}
+          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 mt-4 sm:mt-5">
+            <div className="space-y-1.5">
+              <div className="flex items-baseline gap-2.5 flex-wrap">
+                <div className="text-3xl sm:text-5xl lg:text-[52px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
+                  {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.dailyBudgetRemaining, false)}
+                </div>
+                {dashboardSummary.dailyBudgetQuota > 0 && (
+                  <span className="text-xs sm:text-sm font-semibold text-slate-400 tabular-nums">
+                    / {formatRupiah(dashboardSummary.dailyBudgetQuota, hide)} per hari
+                  </span>
+                )}
               </div>
+
               {dashboardSummary.dailyOverbudget ? (
-                <div className="mt-2.5 sm:mt-3 space-y-1">
+                <div className="pt-1 space-y-1">
                   <p className="text-xs sm:text-sm text-rose-400 font-semibold leading-snug">
-                    Melebihi kuota hari ini (+{formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari kuota {formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
+                    Melebihi kuota hari ini (+
+                    {formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari jatah{' '}
+                    {formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
                   </p>
                   {budgetPeriod.daysRemainingUntilPayday > 1 && (
                     <p className="text-[11px] sm:text-xs text-amber-300/95 font-medium leading-snug">
-                      ↳ Kuota mulai besok menyesuaikan jadi <strong>~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hari</strong> (-{formatRupiah(dashboardSummary.tomorrowQuotaDiff, hide)}/hari s/d gajian)
-                      {dashboardSummary.dailyBudgetQuota > dashboardSummary.dailyOverbudgetAmount && (
-                        <>
-                          {' '}• Atau belanja besok maks <strong>{formatRupiah(dashboardSummary.dailyBudgetQuota - dashboardSummary.dailyOverbudgetAmount, hide)}</strong> agar lusa kembali normal
-                        </>
-                      )}
+                      ↳ Kuota mulai besok menyesuaikan jadi{' '}
+                      <strong>~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hari</strong>{' '}
+                      (-{formatRupiah(dashboardSummary.tomorrowQuotaDiff, hide)}/hari s/d gajian)
                     </p>
                   )}
                 </div>
-              ) : dashboardSummary.dailyBudgetQuota > 0 && dashboardSummary.remainingVariableBudget <= 0 ? (
-                <p className="text-xs sm:text-sm text-amber-300 font-medium mt-2.5 sm:mt-3 leading-snug">
+              ) : dashboardSummary.dailyBudgetQuota > 0 &&
+                dashboardSummary.remainingVariableBudget <= 0 ? (
+                <p className="text-xs sm:text-sm text-amber-300 font-medium pt-1">
                   Sisa uang operasional periode ini telah habis terpakai
                 </p>
-              ) : null}
+              ) : (
+                <p className="text-xs text-slate-400 font-medium pt-0.5 tabular-nums">
+                  Sisa saldo pos harian:{' '}
+                  <strong className="text-slate-200">
+                    {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
+                  </strong>
+                  {todayNonDailyTotal > 0 && (
+                    <span>
+                      {' '}
+                      · Pengeluaran non-kuota hari ini:{' '}
+                      <strong className="text-amber-300">
+                        {formatRupiah(todayNonDailyTotal, hide)}
+                      </strong>
+                    </span>
+                  )}
+                </p>
+              )}
             </div>
 
-            {/* Right: 2 Symmetrical Outlined Box Cards (PEMASUKAN HARI INI & PENGELUARAN HARI INI) */}
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 shrink-0">
-              <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
-                <span className="text-[9px] sm:text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block whitespace-nowrap truncate">
+            {/* Right: 3 Symmetrical KPI Cards (Saldo Dompet, Pemasukan Hari Ini, Pengeluaran Hari Ini) */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 shrink-0">
+              <div
+                onClick={() => setActiveTab('wallets')}
+                className="col-span-2 sm:col-span-1 rounded-2xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 p-3.5 sm:px-4 sm:py-3.5 min-w-0 sm:min-w-[165px] cursor-pointer transition-colors"
+                title="Klik untuk kelola dompet"
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider truncate">
+                    SALDO DOMPET
+                  </span>
+                  <Wallet size={12} className="text-slate-400 shrink-0" />
+                </div>
+                <div className="text-base sm:text-lg font-mono font-bold text-white mt-1 tabular-nums truncate">
+                  {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.totalBalance, false)}
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-3.5 sm:px-4 sm:py-3.5 min-w-0 sm:min-w-[160px]">
+                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block truncate">
                   PEMASUKAN HARI INI
                 </span>
-                <div className="text-sm sm:text-xl font-mono font-bold text-[#D4F826] mt-1 sm:mt-1.5 tabular-nums truncate">
+                <div className="text-sm sm:text-lg font-mono font-bold text-[#D4F826] mt-1 tabular-nums truncate">
                   {hide ? 'Rp ••••••' : `+${formatRupiah(todayIncome, false)}`}
                 </div>
               </div>
 
-              <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
-                <span className="text-[9px] sm:text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block whitespace-nowrap truncate">
+              <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-3.5 sm:px-4 sm:py-3.5 min-w-0 sm:min-w-[160px]">
+                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block truncate">
                   PENGELUARAN HARI INI
                 </span>
-                <div className="text-sm sm:text-xl font-mono font-bold text-[#FB7185] mt-1 sm:mt-1.5 tabular-nums truncate">
+                <div className="text-sm sm:text-lg font-mono font-bold text-[#FB7185] mt-1 tabular-nums truncate">
                   {hide ? 'Rp ••••••' : `-${formatRupiah(todayExpense, false)}`}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Progress Section: Kapasitas Kuota Harian + Gradient Bar */}
-          <div className="relative z-10 mt-4 sm:mt-6 lg:mt-7">
-            <div className="flex items-center justify-between text-xs mb-1.5 sm:mb-2">
-              <span className="text-slate-400 font-medium">Kapasitas Kuota Harian</span>
-              <span className="text-white font-extrabold tabular-nums">{dailyCapacityPct}%</span>
+          {/* Progress Section: Kapasitas Kuota Harian */}
+          <div className="relative z-10 mt-5">
+            <div className="flex items-center justify-between text-xs mb-1.5">
+              <span className="text-slate-400 font-medium">
+                Kapasitas Kuota Operasional Hari Ini (Terpakai{' '}
+                {formatRupiah(dashboardSummary.todayVariableExpense, hide)})
+              </span>
+              <span className="text-white font-extrabold tabular-nums">Sisa {dailyCapacityPct}%</span>
             </div>
             <div className="w-full h-2 sm:h-2.5 bg-white/10 rounded-full overflow-hidden">
               <div
@@ -503,12 +742,12 @@ export function DashboardTab() {
             </div>
           </div>
 
-          {/* Bottom Action Buttons (Symmetrical 2-col grid on mobile) */}
-          <div className="relative z-10 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3 mt-4 sm:mt-6">
+          {/* Bottom Action Buttons */}
+          <div className="relative z-10 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3 mt-5">
             <button
               type="button"
               onClick={() => openAddTransaction()}
-              className="h-11 sm:h-12 px-4 sm:px-5 rounded-full bg-[#D4F826] hover:bg-[#c8ed1d] text-black font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 shadow-md transition-transform active:scale-95 cursor-pointer whitespace-nowrap"
+              className="h-11 px-4 sm:px-5 rounded-2xl bg-[#D4F826] hover:bg-[#c8ed1d] text-black font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md transition-transform active:scale-95 cursor-pointer whitespace-nowrap"
             >
               <Plus size={15} strokeWidth={2.6} className="shrink-0" />
               <span>Catat Transaksi</span>
@@ -517,19 +756,19 @@ export function DashboardTab() {
             <button
               type="button"
               onClick={() => openScanModal()}
-              className="h-11 sm:h-12 px-3.5 sm:px-4 rounded-full bg-white/10 hover:bg-white/15 border border-[#D4F826]/30 text-[#D4F826] font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
-              title="Ekstrak Otomatis Screenshot E-Wallet"
+              className="h-11 px-3.5 sm:px-4 rounded-2xl bg-white/10 hover:bg-white/15 border border-[#D4F826]/30 text-[#D4F826] font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+              title="Ekstrak Otomatis Screenshot Struk / E-Wallet"
             >
               <Camera size={15} strokeWidth={2.4} className="shrink-0" />
-              <span>Scan SS (Auto)</span>
+              <span>Scan Struk / SS</span>
             </button>
 
             <button
               type="button"
-              onClick={() => setActiveTab('wallets')}
-              className="col-span-2 sm:col-span-1 h-11 sm:h-12 px-4 sm:px-5 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/15 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 sm:gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              onClick={() => setActiveTab('budget')}
+              className="col-span-2 sm:col-span-1 h-11 px-4 sm:px-5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/15 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
             >
-              <span>Lihat Saldo Dompet</span>
+              <span>Atur Budget & Gajian</span>
               <ArrowUpRight size={15} className="text-slate-400 shrink-0" />
             </button>
           </div>
@@ -538,7 +777,7 @@ export function DashboardTab() {
         {/* 3. Menu Utama (Mobile Only - Symmetrical 5x2 Grid of 10 Features) */}
         <div className="order-2 lg:hidden bg-white dark:bg-[#16181D] rounded-[28px] p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">Menu Utama</h3>
+            <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">Menu Pintasan</h3>
             <button
               type="button"
               onClick={() => setActiveTab('settings')}
@@ -581,9 +820,7 @@ export function DashboardTab() {
                   <div className="w-6 h-6 rounded-lg bg-black text-[#D4F826] flex items-center justify-center shrink-0">
                     <ShieldCheck size={13} strokeWidth={2.5} />
                   </div>
-                  <span className="truncate">
-                    Dashboard Admin (Kelola User & Laporan)
-                  </span>
+                  <span className="truncate">Dashboard Admin (Kelola User & Laporan)</span>
                 </div>
                 <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded bg-black/15">
                   {managedUsers.filter((u) => u.status === 'pending').length} Pending
@@ -623,156 +860,202 @@ export function DashboardTab() {
           </div>
         </div>
 
-        {/* 4. Progres Pengeluaran (Full-width horizontal bar card on Desktop matching screenshot) */}
-        <div className="order-3 lg:order-2 lg:col-span-12 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:px-8 lg:py-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col lg:flex-row lg:items-center justify-between gap-5 lg:gap-12">
+        {/* 4. Progres Pengeluaran & Alokasi (Full-width horizontal card) */}
+        <div className="order-3 lg:order-2 lg:col-span-12 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:px-8 lg:py-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col lg:flex-row lg:items-center justify-between gap-5 lg:gap-10">
           {/* Left: Ring + Title */}
-          <div className="flex items-center gap-4 shrink-0">
-            <div className="relative w-14 h-14 flex items-center justify-center shrink-0">
-              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 60 60">
-                <circle
-                  cx="30"
-                  cy="30"
-                  r="24"
-                  fill="transparent"
-                  stroke="#E5E7EB"
-                  strokeWidth="5"
-                  className="dark:stroke-gray-800"
-                />
-                <circle
-                  cx="30"
-                  cy="30"
-                  r="24"
-                  fill="transparent"
-                  stroke="#9CA3AF"
-                  strokeWidth="5"
-                  strokeDasharray="150.8"
-                  strokeDashoffset={150.8 - (dayRingPct / 100) * 150.8}
-                  strokeLinecap="round"
-                />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-[7px] font-black uppercase text-gray-400 leading-none">
-                  HARI
-                </span>
-                <span className="text-sm font-black text-gray-900 dark:text-white leading-tight">
-                  {periodCurrentDay}
-                </span>
-              </div>
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
-                  Progres Pengeluaran
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab('analytics')}
-                  className="hidden lg:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-white/10 hover:bg-[#D4F826] hover:text-black dark:hover:bg-[#D4F826] dark:hover:text-black text-[11px] font-bold text-slate-600 dark:text-slate-300 transition-colors cursor-pointer"
-                  title="Buka Analisis Keuangan Lengkap"
-                >
-                  <BarChart3 size={12} className="shrink-0" />
-                  <span>Analisis Lengkap</span>
-                </button>
-              </div>
-              <p className="text-xs text-gray-400 mt-0.5">
-                Hari {periodCurrentDay} dari {periodTotalDays} ({activePeriodLabel})
-              </p>
-            </div>
-          </div>
-
-          {/* Right: 3 Wide Horizontal Bars */}
-          <div className="flex-1 space-y-3.5">
-            {/* Kebutuhan */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-extrabold text-[#8B5CF6] text-[10px] uppercase tracking-wider">
-                    KEBUTUHAN
+          <div className="flex items-center justify-between lg:justify-start gap-4 shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="relative w-14 h-14 flex items-center justify-center shrink-0">
+                <svg className="w-full h-full transform -rotate-90" viewBox="0 0 60 60">
+                  <circle
+                    cx="30"
+                    cy="30"
+                    r="24"
+                    fill="transparent"
+                    stroke="#E5E7EB"
+                    strokeWidth="5"
+                    className="dark:stroke-gray-800"
+                  />
+                  <circle
+                    cx="30"
+                    cy="30"
+                    r="24"
+                    fill="transparent"
+                    stroke="#A594F9"
+                    strokeWidth="5"
+                    strokeDasharray="150.8"
+                    strokeDashoffset={150.8 - (dayRingPct / 100) * 150.8}
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <span className="text-[7px] font-black uppercase text-gray-400 leading-none">
+                    HARI
                   </span>
-                  <span className="text-gray-400 text-[10px]">
-                    {needsPct >= 100
-                      ? 'Melebihi budget'
-                      : needsPct >= 80
-                      ? 'Masih aman'
-                      : 'Masih aman'}
+                  <span className="text-sm font-black text-gray-900 dark:text-white leading-tight tabular-nums">
+                    {periodCurrentDay}
                   </span>
                 </div>
-                <span className="font-extrabold text-gray-700 dark:text-gray-300 text-[11px]">
-                  {needsPct}%
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
+                  Progres Porsi Anggaran
+                </h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 tabular-nums">
+                  Hari ke-{periodCurrentDay} dari {periodTotalDays} ({activePeriodLabel})
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('analytics')}
+              className="px-3 py-1.5 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-[#D4F826] hover:text-black dark:hover:bg-[#D4F826] dark:hover:text-black text-[11px] font-bold text-gray-700 dark:text-gray-300 transition-colors cursor-pointer flex items-center gap-1.5 shrink-0"
+            >
+              <BarChart3 size={13} className="shrink-0" />
+              <span>Analisis</span>
+            </button>
+          </div>
+
+          {/* Right: 3 Wide Horizontal Bars with Nominal + Percentage */}
+          <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-6">
+            {/* Kebutuhan */}
+            <div
+              onClick={() => setActiveTab('budget')}
+              className="p-3.5 rounded-2xl bg-gray-50/70 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800/80 hover:border-violet-400/50 transition-colors cursor-pointer space-y-2"
+            >
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-extrabold text-[#8B5CF6] text-[11px] uppercase tracking-wider">
+                  Kebutuhan ({needsCfgPct}%)
+                </span>
+                <span className="font-black text-gray-900 dark:text-white text-xs tabular-nums">
+                  {formatPctDisplay(nSpent, needsBudget)}
                 </span>
               </div>
-              <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+              <div className="w-full h-1.5 rounded-full bg-gray-200/80 dark:bg-gray-800 overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-[#A78BFA] transition-all duration-300"
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    nSpent > needsBudget && needsBudget > 0 ? 'bg-rose-500' : 'bg-[#A78BFA]'
+                  }`}
                   style={{ width: `${needsPct}%` }}
                 />
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">
+                <span>
+                  {formatRupiah(nSpent, hide)} / {formatRupiah(needsBudget, hide)}
+                </span>
+                <span
+                  className={
+                    nSpent > needsBudget && needsBudget > 0
+                      ? 'text-rose-500 font-bold'
+                      : needsPct >= 85
+                      ? 'text-amber-500 font-bold'
+                      : 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                  }
+                >
+                  {needsCfgPct === 0
+                    ? 'Porsi 0%'
+                    : nSpent > needsBudget
+                    ? 'Over Budget'
+                    : needsPct >= 85
+                    ? 'Hampir Penuh'
+                    : 'Aman'}
+                </span>
               </div>
             </div>
 
             {/* Keinginan */}
-            <div className="space-y-1.5">
+            <div
+              onClick={() => setActiveTab('budget')}
+              className="p-3.5 rounded-2xl bg-gray-50/70 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800/80 hover:border-orange-400/50 transition-colors cursor-pointer space-y-2"
+            >
               <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-extrabold text-[#F97316] text-[10px] uppercase tracking-wider">
-                    KEINGINAN
-                  </span>
-                  <span className="text-gray-400 text-[10px]">
-                    {wantsPct >= 100
-                      ? 'Melebihi budget'
-                      : wantsPct >= 80
-                      ? 'Perlu hemat'
-                      : 'Masih aman'}
-                  </span>
-                </div>
-                <span className="font-extrabold text-gray-700 dark:text-gray-300 text-[11px]">
-                  {wantsPct}%
+                <span className="font-extrabold text-[#F97316] text-[11px] uppercase tracking-wider">
+                  Keinginan ({wantsCfgPct}%)
+                </span>
+                <span className="font-black text-gray-900 dark:text-white text-xs tabular-nums">
+                  {wantsCfgPct === 0 && wSpent === 0
+                    ? '0%'
+                    : formatPctDisplay(wSpent, wantsBudget)}
                 </span>
               </div>
-              <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+              <div className="w-full h-1.5 rounded-full bg-gray-200/80 dark:bg-gray-800 overflow-hidden">
                 <div
-                  className="h-full rounded-full bg-[#FB923C] transition-all duration-300"
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    wSpent > wantsBudget && wantsBudget > 0 ? 'bg-rose-500' : 'bg-[#FB923C]'
+                  }`}
                   style={{ width: `${wantsPct}%` }}
                 />
+              </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">
+                <span>
+                  {formatRupiah(wSpent, hide)} / {formatRupiah(wantsBudget, hide)}
+                </span>
+                <span
+                  className={
+                    wSpent > wantsBudget && wantsBudget > 0
+                      ? 'text-rose-500 font-bold'
+                      : wantsPct >= 85
+                      ? 'text-amber-500 font-bold'
+                      : 'text-gray-400 font-semibold'
+                  }
+                >
+                  {wantsCfgPct === 0
+                    ? 'Nonaktif (0%)'
+                    : wSpent > wantsBudget
+                    ? 'Over Budget'
+                    : wantsPct >= 85
+                    ? 'Perlu Rem'
+                    : 'Aman'}
+                </span>
               </div>
             </div>
 
             {/* Tabungan */}
-            <div className="space-y-1.5">
+            <div
+              onClick={() => setActiveTab('budget')}
+              className="p-3.5 rounded-2xl bg-gray-50/70 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800/80 hover:border-sky-400/50 transition-colors cursor-pointer space-y-2"
+            >
               <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="font-extrabold text-[#38BDF8] text-[10px] uppercase tracking-wider">
-                    TABUNGAN
-                  </span>
-                  <span className="text-gray-400 text-[10px]">
-                    {savingsBudgetCfgPct === 0
-                      ? 'Alokasi budget 0% periode ini'
-                      : savingsPct >= 100
-                      ? 'Target tercapai!'
-                      : savingsPct > 50
-                      ? 'Sedang menabung'
-                      : 'Belum nabung nih?'}
-                  </span>
-                </div>
-                <span className="font-extrabold text-gray-700 dark:text-gray-300 text-[11px]">
-                  {savingsPct}%
+                <span className="font-extrabold text-[#38BDF8] text-[11px] uppercase tracking-wider">
+                  Tabungan ({savingsBudgetCfgPct}%)
+                </span>
+                <span className="font-black text-gray-900 dark:text-white text-xs tabular-nums">
+                  {savingsBudgetCfgPct === 0 && sSpent === 0
+                    ? '0%'
+                    : formatPctDisplay(sSpent, savingsBudget)}
                 </span>
               </div>
-              <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+              <div className="w-full h-1.5 rounded-full bg-gray-200/80 dark:bg-gray-800 overflow-hidden">
                 <div
                   className="h-full rounded-full bg-[#38BDF8] transition-all duration-300"
                   style={{ width: `${savingsPct}%` }}
                 />
               </div>
+              <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">
+                <span>
+                  {formatRupiah(sSpent, hide)} / {formatRupiah(savingsBudget, hide)}
+                </span>
+                <span className="text-sky-500 dark:text-sky-400 font-semibold">
+                  {savingsBudgetCfgPct === 0
+                    ? 'Alokasi 0% bulan ini'
+                    : savingsPct >= 100
+                    ? 'Target Tercapai!'
+                    : sSpent > 0
+                    ? 'Sedang Menabung'
+                    : 'Belum Disisihkan'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* 5. Aktivitas Bulan Ini (Left 6 Cols on Desktop matching screenshot) */}
+        {/* 5. Aktivitas Bulan Ini (Left 6 Cols on Desktop) */}
         <div className="order-4 lg:order-3 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
-                Aktivitas Bulan Ini
+                Kalender Aktivitas
               </h3>
               <div className="flex items-center gap-1.5 mt-1">
                 <span className="text-[10px] font-extrabold text-gray-400 tracking-wider uppercase">
@@ -802,7 +1085,7 @@ export function DashboardTab() {
                 onClick={handleTodayMonth}
                 className="text-[10px] font-extrabold px-2.5 py-1 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
               >
-                Bulan Ini
+                Hari Ini
               </button>
               <button
                 type="button"
@@ -836,7 +1119,7 @@ export function DashboardTab() {
               const exp = dailyExpensesMap[day];
               const inc = dailyIncomeMap[day];
               const isSelected = selectedCalendarDay === day;
-              const hasActivity = !!exp || !!inc;
+              const hasActivity = Boolean(exp || inc);
 
               return (
                 <button
@@ -851,14 +1134,16 @@ export function DashboardTab() {
                       : 'bg-gray-50/70 dark:bg-gray-800/40 hover:bg-gray-100 dark:hover:bg-gray-800'
                   }`}
                 >
-                  <span className="text-[10px] text-gray-700 dark:text-gray-300 font-bold self-start leading-none">
+                  <span className="text-[10px] text-gray-700 dark:text-gray-300 font-bold self-start leading-none tabular-nums">
                     {day}
                   </span>
                   {inc && (!exp || inc > exp) ? (
                     <span className="text-[8px] font-black text-emerald-500 self-end tabular-nums leading-none">
                       {hide
                         ? '+•••'
-                        : `+${formatCompactRupiah(inc - (exp || 0)).replace('+', '').replace('-', '')}`}
+                        : `+${formatCompactRupiah(inc - (exp || 0))
+                            .replace('+', '')
+                            .replace('-', '')}`}
                     </span>
                   ) : exp ? (
                     <span className="text-[8px] font-bold text-[#F472B6] self-end tabular-nums leading-none">
@@ -877,18 +1162,39 @@ export function DashboardTab() {
           {/* Selected day summary and transaction breakdown */}
           {selectedCalendarDay && (
             <div className="pt-3 border-t border-gray-100 dark:border-gray-800 space-y-2.5">
-              <div className="px-1 flex items-center justify-between text-xs">
-                <span className="text-gray-600 dark:text-gray-400 font-bold flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-[#D4F826]" />
-                  Pengeluaran Tgl {selectedCalendarDay} {SHORT_MONTHS_ID[activeMonth]}:
+              <div className="px-1 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="text-gray-600 dark:text-gray-400 font-bold">
+                  Aktivitas {selectedCalendarDay} {SHORT_MONTHS_ID[activeMonth]}:
                 </span>
-                <span className="font-extrabold text-red-500 dark:text-red-400 tabular-nums text-sm">
-                  {formatRupiah(dailyExpensesMap[selectedCalendarDay] || 0, hide)}
-                </span>
+                <div className="flex items-center gap-3 tabular-nums">
+                  {(dailyIncomeMap[selectedCalendarDay] || 0) > 0 && (
+                    <span className="font-extrabold text-emerald-600 dark:text-emerald-400">
+                      +{formatRupiah(dailyIncomeMap[selectedCalendarDay] || 0, hide)}
+                    </span>
+                  )}
+                  <span className="font-extrabold text-rose-500 dark:text-rose-400">
+                    -{formatRupiah(dailyExpensesMap[selectedCalendarDay] || 0, hide)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const dateStr = `${activeYear}-${String(activeMonth + 1).padStart(
+                        2,
+                        '0'
+                      )}-${String(selectedCalendarDay).padStart(2, '0')}`;
+                      setActiveDate(dateStr);
+                      openAddTransaction('expense');
+                    }}
+                    className="px-2 py-0.5 rounded-lg bg-[#D4F826] text-black font-black text-[10px] hover:bg-[#c6ec15] transition-colors flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <Plus size={11} strokeWidth={3} />
+                    <span>Catat</span>
+                  </button>
+                </div>
               </div>
 
               {selectedDayTransactions.length > 0 ? (
-                <div className="space-y-1.5 pt-0.5">
+                <div className="space-y-1.5 pt-0.5 max-h-[210px] overflow-y-auto pr-1">
                   {selectedDayTransactions.map((detail) => {
                     const { transaction, wallet, category } = detail;
                     const isExpense = transaction.type === 'expense';
@@ -909,7 +1215,7 @@ export function DashboardTab() {
                               {transaction.note || category?.name || 'Transaksi'}
                             </p>
                             <p className="text-[10px] text-gray-400 mt-0.5 truncate">
-                              {wallet.name} •{' '}
+                              {wallet.name} ·{' '}
                               {category?.name || (isIncome ? 'Pemasukan' : 'Transfer')}
                             </p>
                           </div>
@@ -919,7 +1225,7 @@ export function DashboardTab() {
                           <span
                             className={`text-xs font-black tabular-nums ${
                               isExpense
-                                ? 'text-red-500 dark:text-red-400'
+                                ? 'text-rose-500 dark:text-rose-400'
                                 : isIncome
                                 ? 'text-emerald-500 dark:text-emerald-400'
                                 : 'text-blue-500 dark:text-blue-400'
@@ -934,147 +1240,158 @@ export function DashboardTab() {
                   })}
                 </div>
               ) : (
-                <div className="py-2.5 px-3 text-center bg-gray-50/60 dark:bg-gray-800/30 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800/80 text-xs text-gray-400 flex items-center justify-between">
-                  <span>Tidak ada transaksi pada tanggal ini</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const dateStr = `${activeYear}-${String(activeMonth + 1).padStart(
-                        2,
-                        '0'
-                      )}-${String(selectedCalendarDay).padStart(2, '0')}`;
-                      setActiveDate(dateStr);
-                      openAddTransaction('expense');
-                    }}
-                    className="px-2.5 py-1 rounded-xl bg-[#D4F826] text-black font-extrabold text-[11px] hover:bg-[#c6ec15] transition-colors flex items-center gap-1 cursor-pointer"
-                  >
-                    <Plus size={12} strokeWidth={3} />
-                    <span>Catat</span>
-                  </button>
+                <div className="py-3 px-3 text-center bg-gray-50/60 dark:bg-gray-800/30 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800/80 text-xs text-gray-400">
+                  Belum ada catatan transaksi pada tanggal {selectedCalendarDay}{' '}
+                  {SHORT_MONTHS_ID[activeMonth]}
                 </div>
               )}
             </div>
           )}
         </div>
 
-        {/* 6. Transaksi Terbaru (Right 6 Cols on Desktop matching screenshot) */}
-        <div className="order-5 lg:order-4 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
-              Transaksi Terbaru
-            </h3>
-            <button
-              type="button"
-              onClick={() => setActiveTab('transactions')}
-              className="text-xs font-bold text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 cursor-pointer"
-            >
-              <span>Semua</span>
-              <ChevronRight size={14} />
-            </button>
-          </div>
+        {/* 6. Transaksi Terbaru (Right 6 Cols on Desktop) */}
+        <div className="order-5 lg:order-4 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between space-y-4">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
+                Transaksi Terbaru
+              </h3>
+              <button
+                type="button"
+                onClick={() => setActiveTab('transactions')}
+                className="text-xs font-bold text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 cursor-pointer"
+              >
+                <span>Semua</span>
+                <ChevronRight size={14} />
+              </button>
+            </div>
 
-          <div className="divide-y divide-gray-100 dark:divide-gray-800/60">
-            {transactionDetails.slice(0, 6).map((detail) => {
-              const { transaction, wallet, category, transferWallet } = detail;
-              const isExpanded = selectedTxId === transaction.id;
-              const isExpense = transaction.type === 'expense';
-              const isIncome = transaction.type === 'income';
-              const isTransfer = transaction.type === 'transfer';
-
-              return (
-                <div
-                  key={transaction.id}
-                  className="py-3.5 first:pt-1 last:pb-1 hover:bg-gray-50/40 dark:hover:bg-gray-800/20 transition-all cursor-pointer rounded-xl px-1"
-                  onClick={() => setSelectedTxId(isExpanded ? null : transaction.id)}
+            {transactionDetails.length === 0 ? (
+              <div className="py-12 text-center bg-gray-50/50 dark:bg-gray-800/20 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 space-y-3">
+                <p className="text-xs text-gray-400">Belum ada transaksi yang tercatat</p>
+                <button
+                  type="button"
+                  onClick={() => openAddTransaction()}
+                  className="px-4 py-2 rounded-xl bg-[#D4F826] text-black text-xs font-extrabold cursor-pointer hover:bg-[#c6ec15]"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3.5 min-w-0">
-                      <div className="w-10 h-10 rounded-full bg-[#FFE4E8] dark:bg-[#3D1E24] text-lg flex items-center justify-center shrink-0">
-                        {category?.emoji || (isTransfer ? '🔄' : isIncome ? '💰' : '☕')}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-xs lg:text-sm font-extrabold text-gray-900 dark:text-white truncate">
-                          {transaction.note || category?.name || (isTransfer ? 'Transfer Antar Dompet' : 'Transaksi')}
-                        </p>
-                        <p className="text-[10px] lg:text-[11px] text-gray-400 mt-0.5">
-                          {formatFullDateIndo(transaction.date)}
-                        </p>
-                      </div>
-                    </div>
+                  + Catat Transaksi Pertama
+                </button>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100 dark:divide-gray-800/60">
+                {transactionDetails.slice(0, 6).map((detail) => {
+                  const { transaction, wallet, category, transferWallet } = detail;
+                  const isExpanded = selectedTxId === transaction.id;
+                  const isExpense = transaction.type === 'expense';
+                  const isIncome = transaction.type === 'income';
+                  const isTransfer = transaction.type === 'transfer';
 
-                    <div className="text-right shrink-0">
-                      <span
-                        className={`text-xs lg:text-sm font-black tabular-nums ${
-                          isExpense
-                            ? 'text-gray-900 dark:text-white'
-                            : isIncome
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : 'text-blue-600 dark:text-blue-400'
-                        }`}
-                      >
-                        {isExpense ? '-' : isIncome ? '+' : ''}
-                        {hide ? 'Rp •••••••' : formatRupiah(transaction.amount, false)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Inline expansion on click */}
-                  {isExpanded && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: 'auto' }}
-                      className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800 text-xs space-y-2"
+                  return (
+                    <div
+                      key={transaction.id}
+                      className="py-3 first:pt-1 last:pb-1 hover:bg-gray-50/40 dark:hover:bg-gray-800/20 transition-all cursor-pointer rounded-xl px-1.5"
+                      onClick={() => setSelectedTxId(isExpanded ? null : transaction.id)}
                     >
-                      <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-600 dark:text-gray-400">
-                        <div>
-                          <span className="text-gray-400 block text-[9px] uppercase font-bold">
-                            DARI
-                          </span>
-                          <span className="font-extrabold text-gray-800 dark:text-gray-200">
-                            {wallet.name}
-                          </span>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div
+                            className={`w-10 h-10 rounded-2xl text-lg flex items-center justify-center shrink-0 ${
+                              isIncome
+                                ? 'bg-emerald-50 dark:bg-emerald-950/40'
+                                : isTransfer
+                                ? 'bg-sky-50 dark:bg-sky-950/40'
+                                : 'bg-rose-50 dark:bg-[#2B1920]'
+                            }`}
+                          >
+                            {category?.emoji || (isTransfer ? '🔄' : isIncome ? '💰' : '☕')}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs lg:text-sm font-extrabold text-gray-900 dark:text-white truncate">
+                              {transaction.note ||
+                                category?.name ||
+                                (isTransfer ? 'Transfer Antar Dompet' : 'Transaksi')}
+                            </p>
+                            <p className="text-[10px] lg:text-[11px] text-gray-400 mt-0.5 truncate">
+                              {wallet.name} · {formatFullDateIndo(transaction.date)}
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-gray-400 block text-[9px] uppercase font-bold">
-                            {isTransfer ? 'KE DOMPET' : 'KATEGORI'}
-                          </span>
-                          <span className="font-extrabold text-gray-800 dark:text-gray-200">
-                            {isTransfer
-                              ? transferWallet?.name || 'Dompet Tujuan'
-                              : `${category?.emoji || ''} ${category?.name || 'Lainnya'}`}
+
+                        <div className="text-right shrink-0">
+                          <span
+                            className={`text-xs lg:text-sm font-black tabular-nums ${
+                              isExpense
+                                ? 'text-gray-900 dark:text-white'
+                                : isIncome
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-blue-600 dark:text-blue-400'
+                            }`}
+                          >
+                            {isExpense ? '-' : isIncome ? '+' : ''}
+                            {hide ? 'Rp •••••••' : formatRupiah(transaction.amount, false)}
                           </span>
                         </div>
                       </div>
 
-                      <div className="flex gap-2 pt-2">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openEditTransaction(detail);
-                          }}
-                          className="flex-1 py-1.5 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-200 flex items-center justify-center gap-1 cursor-pointer"
+                      {/* Inline expansion on click */}
+                      {isExpanded && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: 'auto' }}
+                          className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800 text-xs space-y-2"
                         >
-                          <Pencil size={12} />
-                          <span>Ubah</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteTransaction(transaction.id);
-                          }}
-                          className="flex-1 py-1.5 rounded-xl bg-red-50 dark:bg-red-950/40 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-100 flex items-center justify-center gap-1 cursor-pointer"
-                        >
-                          <Trash2 size={12} />
-                          <span>Hapus</span>
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-                </div>
-              );
-            })}
+                          <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-600 dark:text-gray-400">
+                            <div>
+                              <span className="text-gray-400 block text-[9px] uppercase font-bold">
+                                DOMPET
+                              </span>
+                              <span className="font-extrabold text-gray-800 dark:text-gray-200">
+                                {wallet.name}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-gray-400 block text-[9px] uppercase font-bold">
+                                {isTransfer ? 'KE DOMPET' : 'KATEGORI'}
+                              </span>
+                              <span className="font-extrabold text-gray-800 dark:text-gray-200">
+                                {isTransfer
+                                  ? transferWallet?.name || 'Dompet Tujuan'
+                                  : `${category?.emoji || ''} ${category?.name || 'Lainnya'}`}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2 pt-2">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEditTransaction(detail);
+                              }}
+                              className="flex-1 py-1.5 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-200 hover:bg-gray-200 flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Pencil size={12} />
+                              <span>Ubah</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteTransaction(transaction.id);
+                              }}
+                              className="flex-1 py-1.5 rounded-xl bg-red-50 dark:bg-red-950/40 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-100 flex items-center justify-center gap-1 cursor-pointer"
+                            >
+                              <Trash2 size={12} />
+                              <span>Hapus</span>
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1082,17 +1399,34 @@ export function DashboardTab() {
         {/* Col 1: Total Pemasukan */}
         <div className="order-6 lg:order-6 lg:col-span-4 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between">
           <div>
-            <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
-              TOTAL PEMASUKAN
-            </span>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">
+                TOTAL PEMASUKAN ({activePeriodLabel})
+              </span>
+            </div>
             <div className="text-2xl lg:text-[28px] font-black text-gray-900 dark:text-white mt-1.5 tabular-nums truncate">
               {formatRupiah(dashboardSummary.monthlyIncome, hide)}
             </div>
           </div>
-          <div className="mt-3">
-            <span className="inline-block text-[10px] font-extrabold text-gray-900 bg-[#EBF998] px-2.5 py-0.5 rounded-md">
-              {dashboardSummary.monthlyIncome > 0 ? '+100% vs periode lalu' : 'Belum ada pemasukan'}
-            </span>
+          <div className="mt-3 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+            {prevPeriodComparison.incDeltaPct !== null ? (
+              <span>
+                <strong className="text-emerald-600 dark:text-emerald-400">
+                  {prevPeriodComparison.incDeltaPct >= 0 ? '+' : ''}
+                  {prevPeriodComparison.incDeltaPct}%
+                </strong>{' '}
+                vs periode lalu
+              </span>
+            ) : dashboardSummary.monthlyIncome > 0 ? (
+              <span>
+                Sisa kas berjalan:{' '}
+                <strong className="text-emerald-600 dark:text-emerald-400">
+                  {formatRupiah(Math.max(0, dashboardSummary.netCashflow), hide)}
+                </strong>
+              </span>
+            ) : (
+              <span>Belum ada pemasukan periode ini</span>
+            )}
           </div>
         </div>
 
@@ -1100,64 +1434,113 @@ export function DashboardTab() {
         <div className="order-7 lg:order-7 lg:col-span-4 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between">
           <div>
             <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
-              TOTAL PENGELUARAN
+              TOTAL PENGELUARAN ({activePeriodLabel})
             </span>
             <div className="text-2xl lg:text-[28px] font-black text-gray-900 dark:text-white mt-1.5 tabular-nums truncate">
               {formatRupiah(dashboardSummary.monthlyExpense, hide)}
             </div>
           </div>
-          <div className="mt-3">
-            <span className="inline-block text-[10px] font-extrabold text-rose-500 bg-rose-50 dark:bg-rose-950/40 dark:text-rose-400 px-2.5 py-0.5 rounded-md">
-              {dashboardSummary.monthlyExpense > 0 ? '+100% vs periode lalu' : 'Belum ada pengeluaran'}
-            </span>
+          <div className="mt-3 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+            {budgetLimit > 0 ? (
+              <span>
+                Terpakai{' '}
+                <strong className="text-rose-500 dark:text-rose-400">
+                  {formatPctDisplay(dashboardSummary.monthlyExpense, budgetLimit)}
+                </strong>{' '}
+                dari batas {formatRupiah(budgetLimit, hide)}
+              </span>
+            ) : prevPeriodComparison.expDeltaPct !== null ? (
+              <span>
+                <strong className="text-rose-500 dark:text-rose-400">
+                  {prevPeriodComparison.expDeltaPct >= 0 ? '+' : ''}
+                  {prevPeriodComparison.expDeltaPct}%
+                </strong>{' '}
+                vs periode lalu
+              </span>
+            ) : (
+              <span>Belum ada pengeluaran periode ini</span>
+            )}
           </div>
         </div>
 
         {/* Col 3: Runway Dana Darurat */}
-        <div className="order-8 lg:order-8 lg:col-span-4 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between space-y-2.5">
+        <div
+          onClick={() => setActiveTab('analytics')}
+          className="order-8 lg:order-8 lg:col-span-4 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 hover:border-amber-400/50 transition-colors cursor-pointer flex flex-col justify-between space-y-2.5"
+          title="Klik untuk lihat rincian Skor Kesehatan Finansial"
+        >
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-[10px] font-black text-rose-500 uppercase tracking-wider">
+            <div className="flex items-center gap-1.5 text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider">
               <AlertCircle size={13} />
               <span>RUNWAY DANA DARURAT</span>
             </div>
-            <span className="text-gray-400 dark:text-gray-500 text-xs cursor-pointer">ⓘ</span>
+            <ArrowUpRight size={14} className="text-gray-400" />
           </div>
           <div className="flex items-baseline gap-1.5">
             <span className="text-2xl lg:text-[28px] font-black text-gray-900 dark:text-white tabular-nums leading-none">
               {dashboardSummary.emergencyFundRunwayMonths}
             </span>
-            <span className="text-xs font-extrabold text-gray-400">Bulan</span>
+            <span className="text-xs font-extrabold text-gray-400">Bulan Bertahan</span>
           </div>
           <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
             <div
-              className="h-full rounded-full bg-amber-400 transition-all duration-500"
+              className={`h-full rounded-full transition-all duration-500 ${
+                dashboardSummary.emergencyFundRunwayMonths >= 6
+                  ? 'bg-emerald-500'
+                  : dashboardSummary.emergencyFundRunwayMonths >= 3
+                  ? 'bg-sky-400'
+                  : 'bg-amber-400'
+              }`}
               style={{
-                width: `${Math.min(100, Math.round((dashboardSummary.emergencyFundRunwayMonths / 12) * 100))}%`,
+                width: `${Math.min(
+                  100,
+                  Math.round((dashboardSummary.emergencyFundRunwayMonths / 6) * 100)
+                )}%`,
               }}
             />
           </div>
-          <p className="text-[10px] text-gray-400 font-semibold">
-            Termasuk {formatRupiah(dashboardSummary.liquidAssetsTotal, hide)} dana likuid
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 font-semibold tabular-nums">
+            Total dana likuid: {formatRupiah(dashboardSummary.liquidAssetsTotal, hide)} (Target ideal ≥ 6 bln)
           </p>
         </div>
 
         {/* 8. Row 4 on Desktop: Full-Width Tagihan Mendatang (lg:col-span-12) */}
         <div className="order-9 lg:order-9 lg:col-span-12 bg-[#0E0F12] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 text-white shadow-xl border border-white/5 space-y-4">
-          <div className="flex items-center gap-2">
-            <Calendar size={18} className="text-[#D4F826]" />
-            <h3 className="text-sm lg:text-base font-extrabold text-white">Tagihan Mendatang</h3>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Calendar size={18} className="text-[#D4F826]" />
+              <h3 className="text-sm lg:text-base font-extrabold text-white">
+                Jadwal Tagihan & Langganan Mendatang
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('subscriptions')}
+              className="text-xs font-bold text-gray-400 hover:text-[#D4F826] flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <span>Kelola Jadwal</span>
+              <ChevronRight size={14} />
+            </button>
           </div>
 
           {upcomingBills.length === 0 ? (
-            <div className="py-5 text-center bg-white/[0.04] rounded-2xl border border-dashed border-white/10 text-xs text-gray-400">
-              Belum ada tagihan mendatang yang tercatat
+            <div className="py-5 px-4 text-center bg-white/[0.04] rounded-2xl border border-dashed border-white/10 text-xs text-gray-400 flex flex-col sm:flex-row items-center justify-between gap-2">
+              <span>Belum ada tagihan mendatang yang terjadwal pada periode ini</span>
+              <button
+                type="button"
+                onClick={() => setActiveTab('subscriptions')}
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs cursor-pointer transition-colors"
+              >
+                + Tambah Tagihan Rutin
+              </button>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {upcomingBills.map((bill) => (
                 <div
                   key={bill.id}
-                  className="bg-[#1A1C20] rounded-2xl p-4 border border-white/[0.06] space-y-2.5"
+                  onClick={() => setActiveTab('subscriptions')}
+                  className="bg-[#1A1C20] hover:bg-[#21242B] rounded-2xl p-4 border border-white/[0.06] hover:border-[#D4F826]/40 space-y-2.5 cursor-pointer transition-all"
                 >
                   <span className="text-2xl block leading-none">{bill.iconEmoji}</span>
                   <div>
@@ -1179,90 +1562,166 @@ export function DashboardTab() {
 
         {/* 9. Row 5 on Desktop: Pengeluaran Terbesar (lg:col-span-6) & Realisasi Anggaran (lg:col-span-6) */}
         {/* Left Half: Pengeluaran Terbesar */}
-        <div className="order-10 lg:order-10 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
-          <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
-            Pengeluaran Terbesar
-          </h3>
+        <div className="order-10 lg:order-10 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
+              Kategori Pengeluaran Terbesar
+            </h3>
+            <span className="text-[11px] font-bold text-gray-400">{activePeriodLabel}</span>
+          </div>
 
-          <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1.5">
-            {topExpenses.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center justify-between px-4 py-3 rounded-2xl bg-[#F8F9FA] dark:bg-gray-800/50"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">{item.emoji}</span>
-                  <div>
-                    <p className="text-xs font-extrabold text-gray-900 dark:text-white leading-tight">
-                      {item.name}
-                    </p>
-                    <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider block mt-0.5">
-                      {item.group}
+          {topExpenses.length === 0 ? (
+            <div className="py-12 text-center bg-gray-50/60 dark:bg-gray-800/30 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 space-y-2 my-auto">
+              <p className="text-xs text-gray-400">
+                Belum ada pengeluaran pada periode {activePeriodLabel}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1">
+              {topExpenses.map((item) => {
+                const pctOfSpent =
+                  budgetSpent > 0 ? Math.min(100, Math.round((item.amount / budgetSpent) * 100)) : 0;
+                return (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between px-4 py-3 rounded-2xl bg-[#F8F9FA] dark:bg-gray-800/50 border border-gray-100/80 dark:border-gray-800"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-2xl shrink-0">{item.emoji}</span>
+                      <div className="min-w-0">
+                        <p className="text-xs font-extrabold text-gray-900 dark:text-white truncate">
+                          {item.name}
+                        </p>
+                        <span className="text-[10px] font-semibold text-gray-400 block mt-0.5">
+                          {item.group} · {pctOfSpent}% dari total pengeluaran
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-xs sm:text-sm font-black text-gray-900 dark:text-white tabular-nums shrink-0">
+                      {formatRupiah(item.amount, hide)}
                     </span>
                   </div>
-                </div>
-                <span className="text-xs font-black text-gray-900 dark:text-white tabular-nums">
-                  {formatRupiah(item.amount, hide)}
-                </span>
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        {/* Right Half: Realisasi Anggaran (Donut Gauge) */}
-        <div className="order-11 lg:order-11 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col items-center justify-between text-center min-h-[320px]">
-          <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white self-start">
-            Realisasi Anggaran
-          </h3>
-
-          <div className="relative w-48 h-48 flex items-center justify-center my-auto">
-            <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-              {/* Background Track */}
-              <circle
-                cx="50"
-                cy="50"
-                r="38"
-                fill="transparent"
-                stroke="#F3F4F6"
-                strokeWidth="11"
-                className="dark:stroke-gray-800"
-              />
-              {/* Lavender Segment (Needs / Main Budget) */}
-              <circle
-                cx="50"
-                cy="50"
-                r="38"
-                fill="transparent"
-                stroke="#B8A9F8"
-                strokeWidth="11"
-                strokeDasharray="130 238.76"
-                strokeDashoffset="0"
-                strokeLinecap="round"
-              />
-              {/* Peach/Orange Segment (Wants / Secondary) */}
-              <circle
-                cx="50"
-                cy="50"
-                r="38"
-                fill="transparent"
-                stroke="#F7B27A"
-                strokeWidth="11"
-                strokeDasharray="45 238.76"
-                strokeDashoffset="-142"
-                strokeLinecap="round"
-              />
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center px-3">
-              <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">
-                SISA
-              </span>
-              <span className="text-base lg:text-lg font-black text-gray-900 dark:text-white tabular-nums mt-0.5">
-                {formatRupiah(remainingBudget, hide)}
-              </span>
+        {/* Right Half: Realisasi Anggaran (Dynamic Donut Gauge + Legend) */}
+        <div className="order-11 lg:order-11 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between min-h-[320px] space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
+                Realisasi Anggaran Belanja
+              </h3>
+              <p className="text-[11px] text-gray-400">
+                Terpakai {donutMetrics.usedPctStr} dari batas {formatRupiah(budgetLimit, hide)}
+              </p>
             </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('budget')}
+              className="text-xs font-bold text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-0.5 cursor-pointer"
+            >
+              <span>Atur Budget</span>
+              <ChevronRight size={14} />
+            </button>
           </div>
 
-          <div className="h-2" />
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-6 my-auto py-2">
+            {/* Dynamic SVG Donut */}
+            <div className="relative w-44 h-44 flex items-center justify-center shrink-0">
+              <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                {/* Background Track (Remaining Budget) */}
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="38"
+                  fill="transparent"
+                  stroke="#F3F4F6"
+                  strokeWidth="11"
+                  className="dark:stroke-gray-800"
+                />
+                {/* Lavender Segment (Needs Spent) */}
+                {donutMetrics.needsArc > 0 && (
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="38"
+                    fill="transparent"
+                    stroke="#A78BFA"
+                    strokeWidth="11"
+                    strokeDasharray={`${donutMetrics.needsArc} ${donutMetrics.circumference}`}
+                    strokeDashoffset="0"
+                    strokeLinecap="round"
+                  />
+                )}
+                {/* Peach/Orange Segment (Wants Spent) */}
+                {donutMetrics.wantsArc > 0 && (
+                  <circle
+                    cx="50"
+                    cy="50"
+                    r="38"
+                    fill="transparent"
+                    stroke="#FB923C"
+                    strokeWidth="11"
+                    strokeDasharray={`${donutMetrics.wantsArc} ${donutMetrics.circumference}`}
+                    strokeDashoffset={String(donutMetrics.wantsOffset)}
+                    strokeLinecap="round"
+                  />
+                )}
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center px-3 text-center">
+                <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">
+                  {isOverTotalBudget ? 'LEWAT BATAS' : 'SISA ANGGARAN'}
+                </span>
+                <span
+                  className={`text-sm lg:text-base font-black tabular-nums mt-0.5 ${
+                    isOverTotalBudget
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-gray-900 dark:text-white'
+                  }`}
+                >
+                  {isOverTotalBudget
+                    ? `+${formatRupiah(budgetSpent - budgetLimit, hide)}`
+                    : formatRupiah(remainingBudget, hide)}
+                </span>
+              </div>
+            </div>
+
+            {/* Realisasi Legend Breakdown */}
+            <div className="w-full sm:flex-1 space-y-2.5 text-xs">
+              <div className="p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#A78BFA] shrink-0" />
+                  <span className="font-bold text-gray-700 dark:text-gray-300">Kebutuhan</span>
+                </div>
+                <span className="font-black text-gray-900 dark:text-white tabular-nums">
+                  {formatRupiah(nSpent, hide)}
+                </span>
+              </div>
+
+              <div className="p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#FB923C] shrink-0" />
+                  <span className="font-bold text-gray-700 dark:text-gray-300">Keinginan</span>
+                </div>
+                <span className="font-black text-gray-900 dark:text-white tabular-nums">
+                  {formatRupiah(wSpent, hide)}
+                </span>
+              </div>
+
+              <div className="p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
+                  <span className="font-bold text-gray-700 dark:text-gray-300">Sisa Anggaran</span>
+                </div>
+                <span className="font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
+                  {formatRupiah(remainingBudget, hide)}
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -3,22 +3,28 @@
 import React, { useState } from 'react';
 import {
   Plus,
-  Landmark,
-  Smartphone,
-  Banknote,
-  TrendingUp,
-  CreditCard,
-  Clock,
   Pencil,
   Trash2,
-  ShieldCheck,
   Eye,
   EyeOff,
+  ChevronDown,
+  ChevronUp,
+  Sparkles,
+  CheckCircle2,
+  CreditCard,
+  ShieldCheck,
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatRupiah } from '@/lib/formatters';
 import { WalletWithBalance } from '@/lib/types';
+import {
+  WALLET_BRANDS,
+  WALLET_BRAND_CATEGORIES,
+  WalletBrandDefinition,
+  WalletBrandLogo,
+  detectWalletBrand,
+} from '../WalletBrandLogo';
 
 export function WalletsTab() {
   const {
@@ -29,6 +35,7 @@ export function WalletsTab() {
     settings,
     openAddWallet,
     openEditWallet,
+    addWallet,
     deleteWallet,
     toggleHideBalance,
   } = useApp();
@@ -36,31 +43,15 @@ export function WalletsTab() {
   const [expandedWalletId, setExpandedWalletId] = useState<string | null>(
     () => walletsWithBalance[0]?.id || null
   );
-  const hide = settings.hideBalance;
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showBrandCatalog, setShowBrandCatalog] = useState<boolean>(false);
 
-  const getWalletIcon = (type: string) => {
-    switch (type) {
-      case 'bank':
-        return Landmark;
-      case 'ewallet':
-        return Smartphone;
-      case 'cash':
-        return Banknote;
-      case 'investment':
-        return TrendingUp;
-      case 'credit':
-        return CreditCard;
-      case 'paylater':
-        return Clock;
-      default:
-        return Landmark;
-    }
-  };
+  const hide = settings.hideBalance;
 
   const getWalletTypeLabel = (type: string) => {
     switch (type) {
       case 'bank':
-        return 'BANK';
+        return 'REKENING BANK';
       case 'ewallet':
         return 'E-WALLET';
       case 'cash':
@@ -71,8 +62,10 @@ export function WalletsTab() {
         return 'KARTU KREDIT';
       case 'paylater':
         return 'PAYLATER';
+      case 'savings':
+        return 'TABUNGAN';
       default:
-        return 'LAINNYA';
+        return 'DOMPET';
     }
   };
 
@@ -94,6 +87,25 @@ export function WalletsTab() {
 
   const totalCreditLiability = creditWalletsTotal + activePayableDebtsTotal;
 
+  // Quick-add or edit from the official brand showcase
+  const handleSelectBrandFromCatalog = (brand: WalletBrandDefinition) => {
+    const existing = walletsWithBalance.find(
+      (w) => detectWalletBrand(w.name, w.icon)?.id === brand.id
+    );
+    if (existing) {
+      openEditWallet(existing);
+      return;
+    }
+    addWallet({
+      name: brand.name,
+      type: brand.walletType,
+      initialBalance: 0,
+      reservedAmount: 0,
+      color: brand.primaryColor,
+      icon: `brand:${brand.id}`,
+    });
+  };
+
   return (
     <div className="space-y-5 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
@@ -103,10 +115,23 @@ export function WalletsTab() {
             Dompet & Rekening
           </h1>
           <p className="text-xs lg:text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-            Kelola rekening bank, e-wallet, dan dana cadangan.
+            Kelola rekening bank konvensional, bank digital, dan e-wallet resmi.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowBrandCatalog((prev) => !prev)}
+            className={`h-10 px-3 sm:px-3.5 rounded-full flex items-center justify-center gap-1.5 font-bold text-xs border cursor-pointer transition-all active:scale-95 ${
+              showBrandCatalog
+                ? 'bg-indigo-600 text-white border-indigo-500 shadow-xs'
+                : 'bg-slate-100 dark:bg-white/[0.08] hover:bg-slate-200 dark:hover:bg-white/[0.14] text-slate-700 dark:text-slate-200 border-slate-200/80 dark:border-white/10'
+            }`}
+            title="Lihat Katalog 17 Bank & E-Wallet Resmi"
+          >
+            <Sparkles size={15} className={showBrandCatalog ? 'text-[#D4F826]' : 'text-amber-500'} />
+            <span className="hidden sm:inline font-semibold">Katalog Bank & E-Wallet</span>
+          </button>
           <button
             type="button"
             onClick={toggleHideBalance}
@@ -119,7 +144,7 @@ export function WalletsTab() {
             ) : (
               <EyeOff size={16} />
             )}
-            <span className="hidden sm:inline font-semibold">
+            <span className="hidden md:inline font-semibold">
               {hide ? 'Buka Saldo' : 'Sembunyikan'}
             </span>
           </button>
@@ -175,7 +200,7 @@ export function WalletsTab() {
               </button>
             </div>
             <p className="text-xs text-slate-300/90 max-w-lg leading-relaxed">
-              Klik kartu dompet di bawah untuk melihat rincian saldo dan mutasi.
+              Mendukung logo resmi Bank Konvensional, Bank Syariah, Bank Digital, dan E-Wallet populer Indonesia.
             </p>
           </div>
 
@@ -209,13 +234,104 @@ export function WalletsTab() {
         </div>
       </div>
 
+      {/* Collapsible Official 17 Indonesian Bank & E-Wallet Brand Directory */}
+      <AnimatePresence>
+        {showBrandCatalog && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="bg-white dark:bg-[#11131E] rounded-[28px] p-5 sm:p-6 border border-slate-200/80 dark:border-white/10 shadow-sm space-y-5"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-3 border-b border-slate-100 dark:border-white/[0.08]">
+              <div>
+                <h2 className="font-display text-base sm:text-lg font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Sparkles size={18} className="text-amber-500" />
+                  <span>Katalog Resmi Bank & E-Wallet Indonesia</span>
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Klik salah satu logo di bawah untuk langsung menambahkan dompet dengan logo aslinya (atau mengedit jika sudah ada).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBrandCatalog(false)}
+                className="self-start sm:self-auto px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-white/[0.06] text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
+              >
+                Tutup Katalog
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              {WALLET_BRAND_CATEGORIES.map((category) => {
+                const brandsInCategory = WALLET_BRANDS.filter((b) => b.category === category);
+                return (
+                  <div
+                    key={category}
+                    className="rounded-2xl bg-slate-50/80 dark:bg-white/[0.02] border border-slate-200/70 dark:border-white/[0.06] p-4 space-y-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                        {category}
+                      </h3>
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-slate-200/80 dark:bg-white/10 text-slate-600 dark:text-slate-300">
+                        {brandsInCategory.length}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {brandsInCategory.map((brand) => {
+                        const existingWallet = walletsWithBalance.find(
+                          (w) => detectWalletBrand(w.name, w.icon)?.id === brand.id
+                        );
+                        return (
+                          <button
+                            key={brand.id}
+                            type="button"
+                            onClick={() => handleSelectBrandFromCatalog(brand)}
+                            className={`group flex items-center gap-2.5 p-2.5 rounded-2xl border text-left transition-all cursor-pointer ${
+                              existingWallet
+                                ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-500/40 hover:border-emerald-500'
+                                : 'bg-white dark:bg-[#161928] border-slate-200/80 dark:border-white/[0.08] hover:border-indigo-500/50 hover:shadow-xs'
+                            }`}
+                          >
+                            <WalletBrandLogo brandId={brand.id} size="sm" />
+                            <div className="min-w-0 flex-1">
+                              <span className="text-xs font-extrabold text-slate-900 dark:text-white block truncate">
+                                {brand.name}
+                              </span>
+                              {existingWallet ? (
+                                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 mt-0.5">
+                                  <CheckCircle2 size={10} />
+                                  Terdaftar
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-semibold text-slate-400 group-hover:text-indigo-500 dark:group-hover:text-[#D4F826] block truncate mt-0.5">
+                                  + Tambah
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Wallet Cards List: Single Column on Mobile (<lg), 3-Column Grid on Desktop (lg+) */}
-      <div className="space-y-3 lg:space-y-0 lg:grid lg:grid-cols-3 lg:gap-5 lg:items-start">
+      <div className="space-y-3.5 lg:space-y-0 lg:grid lg:grid-cols-3 lg:gap-5 lg:items-start">
         {walletsWithBalance.map((w: WalletWithBalance) => {
-          const Icon = getWalletIcon(w.type);
+          const detectedBrand = detectWalletBrand(w.name, w.icon);
           const isExpanded = expandedWalletId === w.id;
           const isDebtWallet = w.type === 'credit' || w.type === 'paylater';
           const isNegative = w.balance < 0 || (isDebtWallet && w.balance > 0);
+          const accentBarColor = detectedBrand?.primaryColor || w.color || '#312E81';
+
           const walletIdSet = new Set(walletsWithBalance.map((item) => item.id));
           const fallbackLiquidId =
             walletsWithBalance.find((item) => item.type !== 'credit' && item.type !== 'paylater')?.id ||
@@ -248,93 +364,174 @@ export function WalletsTab() {
                 ]
               : goalsBreakdown;
 
+          const totalWalletReserved = Math.max(w.reservedAmount || 0, goalsTotalForWallet);
+
           return (
             <div
               key={w.id}
-              className={`bg-white dark:bg-[#11131E] rounded-[28px] p-5 border transition-all cursor-pointer ${
+              className={`relative overflow-hidden bg-white dark:bg-[#11131E] rounded-[28px] p-5 border transition-all cursor-pointer ${
                 isExpanded
-                  ? 'border-[#D4F826] ring-1 ring-[#D4F826]'
-                  : 'border-slate-200/80 dark:border-white/[0.08] hover:border-indigo-500/40'
+                  ? 'border-[#D4F826] ring-1 ring-[#D4F826] shadow-md'
+                  : 'border-slate-200/80 dark:border-white/[0.08] hover:border-indigo-500/40 shadow-2xs'
               }`}
-              onClick={() => setExpandedWalletId(isExpanded ? null : w.id)}
+              onClick={() => {
+                setExpandedWalletId(isExpanded ? null : w.id);
+                setConfirmDeleteId(null);
+              }}
             >
+              {/* Brand Top Accent Strip */}
+              <div
+                className="absolute top-0 left-0 right-0 h-1.5"
+                style={{ backgroundColor: accentBarColor }}
+              />
+
+              {/* Subtle Ambient Brand Glow */}
+              <div
+                className="absolute -right-10 -top-10 w-28 h-28 rounded-full opacity-10 dark:opacity-15 blur-2xl pointer-events-none"
+                style={{ backgroundColor: accentBarColor }}
+              />
+
               {/* Header row */}
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div
-                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-xs shrink-0"
-                    style={{ backgroundColor: w.color || '#312E81' }}
-                  >
-                    <Icon size={20} strokeWidth={2.2} />
-                  </div>
+              <div className="relative z-10 flex items-start justify-between gap-3 pt-1">
+                <div className="flex items-center gap-3.5 min-w-0">
+                  <WalletBrandLogo
+                    brandId={detectedBrand?.id}
+                    walletName={w.name}
+                    walletType={w.type}
+                    walletIcon={w.icon}
+                    walletColor={w.color}
+                    size="md"
+                  />
                   <div className="min-w-0">
-                    <h3 className="font-display text-base font-bold text-slate-900 dark:text-white truncate">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span
+                        className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md border"
+                        style={{
+                          backgroundColor: `${accentBarColor}15`,
+                          borderColor: `${accentBarColor}35`,
+                          color: detectedBrand?.id === 'neobank' ? '#D97706' : accentBarColor,
+                        }}
+                      >
+                        {detectedBrand
+                          ? detectedBrand.category === 'Bank Digital'
+                            ? 'BANK DIGITAL'
+                            : detectedBrand.category === 'E-Wallet (Dompet Digital)'
+                            ? 'E-WALLET'
+                            : 'BANK UMUM'
+                          : getWalletTypeLabel(w.type)}
+                      </span>
+                    </div>
+                    <h3 className="font-display text-base font-extrabold text-slate-900 dark:text-white truncate mt-1">
                       {w.name}
                     </h3>
-                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      {getWalletTypeLabel(w.type)}
+                    <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 block truncate">
+                      {w.accountNumber
+                        ? `No. ${w.accountNumber}`
+                        : detectedBrand
+                        ? detectedBrand.badgeText
+                        : getWalletTypeLabel(w.type)}
                     </span>
                   </div>
                 </div>
 
                 <div className="text-right shrink-0">
                   <span
-                    className={`font-mono-num text-base font-bold block ${
+                    className={`font-mono-num text-base sm:text-lg font-extrabold block ${
                       isNegative
                         ? 'text-rose-500 dark:text-rose-400'
                         : 'text-slate-900 dark:text-white'
                     }`}
                   >
-                    {isDebtWallet && w.balance > 0 ? `Tagihan ${formatRupiah(w.balance, hide)}` : formatRupiah(w.balance, hide)}
+                    {isDebtWallet && w.balance > 0
+                      ? `Tagihan ${formatRupiah(w.balance, hide)}`
+                      : formatRupiah(w.balance, hide)}
                   </span>
-                  {w.expenseThisMonth > 0 && (
+                  {w.expenseThisMonth > 0 ? (
                     <span className="font-mono-num text-[11px] font-semibold text-[#FF6B2B] block mt-0.5">
                       Keluar: -{formatRupiah(w.expenseThisMonth, hide)}
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-medium text-slate-400 flex items-center justify-end gap-0.5 mt-0.5">
+                      <span>{ isExpanded ? 'Tutup rincian' : 'Lihat rincian' }</span>
+                      {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                     </span>
                   )}
                 </div>
               </div>
+
+              {/* Compact Footer Bar when collapsed: Available vs Reserved */}
+              {!isExpanded && !isDebtWallet && (
+                <div className="relative z-10 mt-4 pt-3 border-t border-slate-100 dark:border-white/[0.06] flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 font-medium">
+                    <span>Siap Pakai:</span>
+                    <span
+                      className={`font-mono-num font-bold ${
+                        w.availableBalance < 0
+                          ? 'text-rose-500'
+                          : 'text-emerald-600 dark:text-[#D4F826]'
+                      }`}
+                    >
+                      {formatRupiah(w.availableBalance, hide)}
+                    </span>
+                  </div>
+                  {totalWalletReserved > 0 ? (
+                    <div className="flex items-center gap-1 text-[11px] font-semibold text-indigo-600 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 px-2 py-0.5 rounded-lg">
+                      <ShieldCheck size={12} />
+                      <span>Cadangan {formatRupiah(totalWalletReserved, hide)}</span>
+                    </div>
+                  ) : (
+                    <span className="text-[11px] text-slate-400 font-medium">
+                      {w.transactionCount} transaksi bln ini
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Expandable Section */}
               {isExpanded && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
-                  className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800 text-xs space-y-3.5"
+                  className="relative z-10 mt-4 pt-4 border-t border-slate-100 dark:border-white/[0.08] text-xs space-y-3.5"
                 >
-                  {/* Account Number */}
-                  {w.accountNumber && (
+                  {/* Account Number / Brand Institution Info */}
+                  <div className="flex items-center justify-between bg-slate-50 dark:bg-white/[0.03] rounded-2xl p-3 border border-slate-200/60 dark:border-white/[0.06]">
                     <div>
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
-                        NOMOR REKENING
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                        {w.accountNumber ? 'NOMOR REKENING / ID' : 'INSTITUSI / TIPE'}
                       </span>
-                      <span className="text-sm font-extrabold text-gray-800 dark:text-gray-200 mt-0.5 block">
-                        {w.accountNumber}
+                      <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 mt-0.5 block">
+                        {w.accountNumber || detectedBrand?.badgeText || getWalletTypeLabel(w.type)}
                       </span>
                     </div>
-                  )}
+                    {detectedBrand && (
+                      <span className="text-[10px] font-bold px-2.5 py-1 rounded-xl bg-white dark:bg-white/10 text-slate-700 dark:text-slate-200 border border-slate-200/70 dark:border-white/10">
+                        {detectedBrand.category}
+                      </span>
+                    )}
+                  </div>
 
                   {/* Dicadangkan / Reserved Breakdown */}
-                  {((w.reservedAmount || 0) > 0 || breakdown.length > 0) && (
+                  {(totalWalletReserved > 0 || breakdown.length > 0) && (
                     <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs font-bold text-gray-400">
-                        <span>DICADANGKAN</span>
-                        <span className="text-gray-700 dark:text-gray-300 tabular-nums">
-                          {formatRupiah(w.reservedAmount || 0, hide)}
+                      <div className="flex items-center justify-between text-xs font-bold text-slate-400">
+                        <span>DANA DICADANGKAN</span>
+                        <span className="text-slate-700 dark:text-slate-300 font-mono-num">
+                          {formatRupiah(totalWalletReserved, hide)}
                         </span>
                       </div>
                       {breakdown.length > 0 && (
-                        <div className="bg-gray-50 dark:bg-gray-800/40 rounded-2xl p-3 space-y-2">
+                        <div className="bg-slate-50 dark:bg-white/[0.03] rounded-2xl p-3 space-y-2 border border-slate-200/60 dark:border-white/[0.06]">
                           {breakdown.map((item) => (
                             <div
                               key={item.name}
                               className="flex items-center justify-between text-xs"
                             >
-                              <span className="text-gray-700 dark:text-gray-300 flex items-center gap-1.5 font-medium">
+                              <span className="text-slate-700 dark:text-slate-300 flex items-center gap-1.5 font-medium">
                                 <span>{item.emoji}</span>
                                 <span>{item.name}</span>
                               </span>
-                              <span className="font-extrabold text-gray-900 dark:text-white tabular-nums">
+                              <span className="font-mono-num font-extrabold text-slate-900 dark:text-white">
                                 {formatRupiah(item.amount, hide)}
                               </span>
                             </div>
@@ -345,26 +542,30 @@ export function WalletsTab() {
                   )}
 
                   {/* Rincian Saldo Awal & Mutasi Transaksi */}
-                  <div className="bg-gray-50 dark:bg-gray-800/40 rounded-2xl p-3 space-y-1.5">
+                  <div className="bg-slate-50 dark:bg-white/[0.03] rounded-2xl p-3 space-y-1.5 border border-slate-200/60 dark:border-white/[0.06]">
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-gray-500 dark:text-gray-400 font-semibold">Saldo Awal</span>
-                      <span className="font-bold text-gray-800 dark:text-gray-200 tabular-nums">
+                      <span className="text-slate-500 dark:text-slate-400 font-semibold">
+                        Saldo Awal
+                      </span>
+                      <span className="font-mono-num font-bold text-slate-800 dark:text-slate-200">
                         {formatRupiah(w.initialBalance, hide)}
                       </span>
                     </div>
                     {w.incomeThisMonth > 0 && (
                       <div className="flex items-center justify-between text-[11px]">
-                        <span className="text-gray-500 dark:text-gray-400 font-semibold">Pemasukan Bulan Ini</span>
-                        <span className="font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                        <span className="text-slate-500 dark:text-slate-400 font-semibold">
+                          Pemasukan Bulan Ini
+                        </span>
+                        <span className="font-mono-num font-bold text-emerald-600 dark:text-emerald-400">
                           +{formatRupiah(w.incomeThisMonth, hide)}
                         </span>
                       </div>
                     )}
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-gray-500 dark:text-gray-400 font-semibold">
+                      <span className="text-slate-500 dark:text-slate-400 font-semibold">
                         Pengeluaran Bulan Ini ({w.transactionCount} transaksi)
                       </span>
-                      <span className="font-bold text-rose-500 tabular-nums">
+                      <span className="font-mono-num font-bold text-rose-500">
                         -{formatRupiah(w.expenseThisMonth, hide)}
                       </span>
                     </div>
@@ -372,14 +573,14 @@ export function WalletsTab() {
 
                   {/* Tersedia */}
                   <div className="flex items-center justify-between pt-1">
-                    <span className="text-xs font-black text-gray-400 uppercase tracking-wider">
-                      TERSEDIA
+                    <span className="text-xs font-black text-slate-400 uppercase tracking-wider">
+                      SALDO SIAP PAKAI
                     </span>
                     <span
-                      className={`text-base font-black tabular-nums ${
+                      className={`font-mono-num text-base font-black ${
                         w.availableBalance < 0
                           ? 'text-red-500 dark:text-red-400'
-                          : 'text-[#84CC16] dark:text-[#D4F826]'
+                          : 'text-emerald-600 dark:text-[#D4F826]'
                       }`}
                     >
                       {formatRupiah(w.availableBalance, hide)}
@@ -387,28 +588,37 @@ export function WalletsTab() {
                   </div>
 
                   {/* Action buttons */}
-                  <div className="flex gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+                  <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-white/[0.08]">
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         openEditWallet(w);
                       }}
-                      className="flex-1 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-800 dark:text-gray-200 hover:bg-gray-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-white/[0.08] text-xs font-bold text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-white/[0.14] flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
                     >
                       <Pencil size={13} />
-                      <span>Ubah</span>
+                      <span>Ubah & Pilih Logo</span>
                     </button>
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteWallet(w.id);
+                        if (confirmDeleteId === w.id) {
+                          deleteWallet(w.id);
+                          setConfirmDeleteId(null);
+                        } else {
+                          setConfirmDeleteId(w.id);
+                        }
                       }}
-                      className="flex-1 py-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-100 flex items-center justify-center gap-1.5 cursor-pointer"
+                      className={`py-2.5 px-3.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                        confirmDeleteId === w.id
+                          ? 'bg-red-600 text-white hover:bg-red-700'
+                          : 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100'
+                      }`}
                     >
                       <Trash2 size={13} />
-                      <span>Hapus</span>
+                      <span>{confirmDeleteId === w.id ? 'Yakin Hapus?' : 'Hapus'}</span>
                     </button>
                   </div>
                 </motion.div>

@@ -1,22 +1,19 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   Search,
-  SlidersHorizontal,
-  ChevronDown,
   Pencil,
   Trash2,
-  Calendar,
-  Wallet,
-  ArrowRightLeft,
   X,
   Plus,
   Camera,
+  RotateCcw,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useApp } from '../AppContext';
-import { formatFullDateIndo, formatRelativeDate, formatRupiah, formatTimeOnly } from '@/lib/formatters';
+import { formatRelativeDate, formatRupiah, formatTimeOnly } from '@/lib/formatters';
+import { parseLocalDay } from '@/lib/budgetUtils';
 import { TransactionDetail } from '@/lib/types';
 
 export function TransactionsTab() {
@@ -37,9 +34,48 @@ export function TransactionsTab() {
   const [selectedWalletId, setSelectedWalletId] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [expandedId, setExpandedId] = useState<string | null>('tx-1');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const hide = settings.hideBalance;
+
+  useEffect(() => {
+    if (!confirmDeleteId) return;
+    const timer = setTimeout(() => setConfirmDeleteId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [confirmDeleteId]);
+
+  const filterCategories = useMemo(() => {
+    if (selectedType === 'expense' || selectedType === 'income') {
+      return categories.filter((c) => c.type === selectedType);
+    }
+    return categories;
+  }, [categories, selectedType]);
+
+  const handleTypeFilterChange = (nextType: string) => {
+    setSelectedType(nextType);
+    if (nextType === 'transfer') {
+      setSelectedCategory('all');
+    } else if (nextType === 'expense' || nextType === 'income') {
+      const currentCat = categories.find((c) => c.id === selectedCategory);
+      if (currentCat && currentCat.type !== nextType) {
+        setSelectedCategory('all');
+      }
+    }
+  };
+
+  const hasActiveFilter =
+    Boolean(searchQuery.trim()) ||
+    selectedWalletId !== 'all' ||
+    selectedType !== 'all' ||
+    selectedCategory !== 'all';
+
+  const resetFilters = () => {
+    setSearchQuery('');
+    setSelectedWalletId('all');
+    setSelectedType('all');
+    setSelectedCategory('all');
+  };
 
   // Filter transactions
   const filteredTransactions = useMemo(() => {
@@ -86,13 +122,13 @@ export function TransactionsTab() {
     return { income: inc, expense: exp, net: inc - exp };
   }, [filteredTransactions]);
 
-  // Group by date
+  // Group by local date
   const groupedByDate = useMemo(() => {
     const groups: { dateKey: string; displayDate: string; items: TransactionDetail[] }[] = [];
     const map = new Map<string, TransactionDetail[]>();
 
     filteredTransactions.forEach((item) => {
-      const d = new Date(item.transaction.date);
+      const d = parseLocalDay(item.transaction.date);
       const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
         d.getDate()
       ).padStart(2, '0')}`;
@@ -110,6 +146,20 @@ export function TransactionsTab() {
     return groups;
   }, [filteredTransactions, activeDate]);
 
+  const getExpenseNatureLabel = (nature?: string) => {
+    switch (nature) {
+      case 'savings':
+        return 'Tabungan';
+      case 'fixed':
+        return 'Tagihan';
+      case 'non_daily':
+      case 'grocery':
+        return 'Pribadi';
+      default:
+        return 'Harian';
+    }
+  };
+
   return (
     <div className="space-y-5 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
@@ -119,33 +169,33 @@ export function TransactionsTab() {
             Riwayat Transaksi
           </h1>
           <p className="text-xs lg:text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5">
-            Telusuri, filter, dan pantau seluruh arus kas masuk maupun keluar.
+            Catatan pemasukan, pengeluaran & transfer
           </p>
         </div>
-        <div className="grid grid-cols-2 sm:flex items-center gap-2.5 w-full sm:w-auto shrink-0">
+        <div className="grid grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto shrink-0">
           <button
             type="button"
             onClick={() => openScanModal()}
-            className="h-10 px-4 rounded-full bg-white dark:bg-[#11131E] hover:bg-slate-50 dark:hover:bg-white/[0.06] border border-slate-200/90 dark:border-white/10 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-2 font-bold text-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
+            className="h-10 px-3.5 sm:px-4 rounded-full bg-white dark:bg-[#11131E] hover:bg-slate-50 dark:hover:bg-white/[0.06] border border-slate-200/90 dark:border-white/10 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1.5 font-bold text-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
             title="Scan Struk & Bukti Transfer"
           >
             <Camera size={15} className="text-indigo-600 dark:text-[#D4F826] shrink-0" />
-            <span>Scan Struk AI</span>
+            <span>Scan Struk</span>
           </button>
           <button
             type="button"
             onClick={() => openAddTransaction()}
-            className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-2 font-extrabold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
-            title="Catat Transaksi Manual"
+            className="h-10 px-4 rounded-full bg-[#D4F826] hover:bg-[#c6ec15] text-black flex items-center justify-center gap-1.5 font-extrabold text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
+            title="Catat Transaksi"
           >
             <Plus size={16} strokeWidth={2.8} className="shrink-0" />
-            <span>Catat Transaksi</span>
+            <span>Catat</span>
           </button>
         </div>
       </div>
 
       {/* Bespoke Deep Indigo & Obsidian Summary Card */}
-      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 sm:p-6 lg:px-9 lg:py-7 text-white border border-white/10">
+      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 sm:p-6 lg:px-8 lg:py-7 text-white border border-white/10">
         <div className="absolute -top-20 -right-16 w-64 h-64 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
         <div
           className={`absolute -bottom-24 -left-16 w-64 h-64 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
@@ -159,7 +209,7 @@ export function TransactionsTab() {
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-xs text-slate-300">
-              <span className="text-[#D4F826] font-semibold">Ringkasan Riwayat Terfilter</span>
+              <span className="text-[#D4F826] font-semibold">Arus Kas Bersih</span>
               <span aria-hidden="true">·</span>
               <span>{filteredTransactions.length} Transaksi</span>
             </div>
@@ -170,19 +220,19 @@ export function TransactionsTab() {
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:gap-4 shrink-0">
-            <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
+            <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3 sm:px-5 sm:py-3.5 min-w-0 sm:min-w-[165px]">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">
-                Total Pemasukan
+                Pemasukan
               </span>
-              <span className="font-mono-num text-sm sm:text-lg font-bold text-[#D4F826] mt-1 block truncate">
+              <span className="font-mono-num text-sm sm:text-lg font-bold text-[#D4F826] mt-0.5 block truncate">
                 +{formatRupiah(filteredSummary.income, hide)}
               </span>
             </div>
-            <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3.5 sm:px-5 sm:py-4 min-w-0 sm:min-w-[175px]">
+            <div className="rounded-2xl bg-white/[0.04] backdrop-blur-xs border border-white/10 p-3 sm:px-5 sm:py-3.5 min-w-0 sm:min-w-[165px]">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">
-                Total Pengeluaran
+                Pengeluaran
               </span>
-              <span className="font-mono-num text-sm sm:text-lg font-bold text-[#FF6B2B] mt-1 block truncate">
+              <span className="font-mono-num text-sm sm:text-lg font-bold text-[#FF6B2B] mt-0.5 block truncate">
                 -{formatRupiah(filteredSummary.expense, hide)}
               </span>
             </div>
@@ -190,39 +240,39 @@ export function TransactionsTab() {
         </div>
       </div>
 
-      {/* Search + Filter Bar (Symmetrical 3-column filter row on Mobile, Single Horizontal Row on Desktop) */}
+      {/* Search + Filter Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center gap-2.5 lg:gap-3">
         {/* Search Input */}
         <div className="relative lg:flex-1">
           <Search
             size={16}
-            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
           />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Cari catatan transaksi..."
-            className="w-full pl-10 pr-10 py-3 bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl text-xs font-semibold text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#D4F826] shadow-xs"
+            placeholder="Cari catatan, kategori, atau dompet..."
+            className="w-full pl-10 pr-10 py-2.5 sm:py-3 bg-white dark:bg-[#11131E] border border-slate-200/80 dark:border-white/[0.08] rounded-2xl text-xs font-semibold text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#D4F826] shadow-2xs"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery('')}
-              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-black dark:hover:text-white cursor-pointer"
+              className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-800 dark:hover:text-white cursor-pointer"
             >
               <X size={15} />
             </button>
           )}
         </div>
 
-        {/* Filter Chips Bar: 3 equal columns on mobile */}
-        <div className="grid grid-cols-3 lg:flex gap-2 text-xs font-bold text-gray-600 dark:text-gray-300 shrink-0">
+        {/* Filter Selects */}
+        <div className="grid grid-cols-3 lg:flex items-center gap-2 text-xs font-bold shrink-0">
           {/* Wallet filter */}
           <select
             value={selectedWalletId}
             onChange={(e) => setSelectedWalletId(e.target.value)}
-            className="w-full lg:w-auto bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-2.5 sm:px-3.5 py-3 text-[11px] sm:text-xs font-bold text-gray-800 dark:text-gray-200 shadow-xs focus:outline-none cursor-pointer truncate"
+            className="w-full lg:w-auto bg-white dark:bg-[#11131E] border border-slate-200/80 dark:border-white/[0.08] rounded-2xl px-2.5 sm:px-3.5 py-2.5 sm:py-3 text-[11px] sm:text-xs font-bold text-slate-800 dark:text-slate-200 shadow-2xs focus:outline-none cursor-pointer truncate"
           >
             <option value="all">Semua Dompet</option>
             {wallets.map((w) => (
@@ -235,8 +285,8 @@ export function TransactionsTab() {
           {/* Type filter */}
           <select
             value={selectedType}
-            onChange={(e) => setSelectedType(e.target.value)}
-            className="w-full lg:w-auto bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-2.5 sm:px-3.5 py-3 text-[11px] sm:text-xs font-bold text-gray-800 dark:text-gray-200 shadow-xs focus:outline-none cursor-pointer truncate"
+            onChange={(e) => handleTypeFilterChange(e.target.value)}
+            className="w-full lg:w-auto bg-white dark:bg-[#11131E] border border-slate-200/80 dark:border-white/[0.08] rounded-2xl px-2.5 sm:px-3.5 py-2.5 sm:py-3 text-[11px] sm:text-xs font-bold text-slate-800 dark:text-slate-200 shadow-2xs focus:outline-none cursor-pointer truncate"
           >
             <option value="all">Semua Tipe</option>
             <option value="expense">Pengeluaran</option>
@@ -248,39 +298,67 @@ export function TransactionsTab() {
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
-            className="w-full lg:w-auto bg-white dark:bg-[#16181D] border border-gray-100 dark:border-gray-800 rounded-2xl px-2.5 sm:px-3.5 py-3 text-[11px] sm:text-xs font-bold text-gray-800 dark:text-gray-200 shadow-xs focus:outline-none cursor-pointer truncate"
+            disabled={selectedType === 'transfer'}
+            className="w-full lg:w-auto bg-white dark:bg-[#11131E] border border-slate-200/80 dark:border-white/[0.08] rounded-2xl px-2.5 sm:px-3.5 py-2.5 sm:py-3 text-[11px] sm:text-xs font-bold text-slate-800 dark:text-slate-200 shadow-2xs focus:outline-none cursor-pointer truncate disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <option value="all">Semua Kategori</option>
-            {categories.map((c) => (
+            {filterCategories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.emoji || ''} {c.name}
               </option>
             ))}
           </select>
+
+          {hasActiveFilter && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="col-span-3 lg:col-span-1 px-3 py-2.5 rounded-2xl bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200 dark:hover:bg-white/[0.12] text-slate-700 dark:text-slate-300 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+              title="Reset Filter"
+            >
+              <RotateCcw size={13} />
+              <span>Reset</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* Transactions List Grouped by Date */}
       {groupedByDate.length === 0 ? (
-        <div className="py-16 text-center space-y-4 bg-white dark:bg-[#16181D] rounded-3xl p-6 border border-gray-100 dark:border-gray-800">
-          <p className="text-xs text-gray-400">Tidak ada transaksi yang cocok</p>
+        <div className="py-14 text-center space-y-3.5 bg-white dark:bg-[#11131E] rounded-[28px] p-6 border border-slate-200/80 dark:border-white/[0.08]">
+          <p className="text-xs font-semibold text-slate-400">
+            {hasActiveFilter ? 'Tidak ada transaksi yang cocok dengan filter' : 'Belum ada riwayat transaksi'}
+          </p>
           <div className="flex items-center justify-center gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => openScanModal()}
-              className="px-4 py-2 rounded-xl bg-white dark:bg-[#16181D] hover:bg-gray-50 dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5 cursor-pointer shadow-xs"
-            >
-              <Camera size={14} className="text-[#658500] dark:text-[#D4F826]" />
-              <span>Scan Struk</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => openAddTransaction()}
-              className="px-4 py-2 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs"
-            >
-              <Plus size={14} strokeWidth={2.8} />
-              <span>Catat Manual</span>
-            </button>
+            {hasActiveFilter ? (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-white/[0.08] text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
+              >
+                <RotateCcw size={13} />
+                <span>Reset Filter</span>
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => openScanModal()}
+                  className="px-4 py-2 rounded-xl bg-white dark:bg-white/[0.04] hover:bg-slate-50 border border-slate-200 dark:border-white/10 text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                >
+                  <Camera size={14} className="text-[#658500] dark:text-[#D4F826]" />
+                  <span>Scan Struk</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openAddTransaction()}
+                  className="px-4 py-2 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                >
+                  <Plus size={14} strokeWidth={2.8} />
+                  <span>Catat</span>
+                </button>
+              </>
+            )}
           </div>
         </div>
       ) : (
@@ -289,42 +367,44 @@ export function TransactionsTab() {
             <div key={group.dateKey} className="space-y-2">
               {/* Date Header */}
               {(() => {
-                const groupExpenseTotal = group.items.reduce((acc, it) => {
-                  if (it.transaction.type === 'expense') return acc + it.transaction.amount;
-                  return acc;
-                }, 0);
-                const groupIncomeTotal = group.items.reduce((acc, it) => {
-                  if (it.transaction.type === 'income') return acc + it.transaction.amount;
-                  return acc;
-                }, 0);
-                const groupTransferTotal = group.items.reduce((acc, it) => {
-                  if (it.transaction.type === 'transfer') return acc + it.transaction.amount;
-                  return acc;
-                }, 0);
+                let groupExpenseTotal = 0;
+                let groupIncomeTotal = 0;
+                let groupTransferTotal = 0;
 
-                let totalDisplay = '';
-                if (groupExpenseTotal > 0) {
-                  totalDisplay = `- ${formatRupiah(groupExpenseTotal, hide)}`;
-                } else if (groupIncomeTotal > 0) {
-                  totalDisplay = `+ ${formatRupiah(groupIncomeTotal, hide)}`;
-                } else if (groupTransferTotal > 0) {
-                  totalDisplay = formatRupiah(groupTransferTotal, hide);
-                }
+                group.items.forEach((it) => {
+                  if (it.transaction.type === 'expense') groupExpenseTotal += it.transaction.amount;
+                  else if (it.transaction.type === 'income') groupIncomeTotal += it.transaction.amount;
+                  else if (it.transaction.type === 'transfer') groupTransferTotal += it.transaction.amount;
+                });
 
                 return (
-                  <div className="flex items-center justify-between px-1">
-                    <span className="text-[11px] font-black uppercase tracking-wider text-gray-400">
-                      {group.displayDate.toUpperCase()}
+                  <div className="flex items-center justify-between px-1.5">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+                      {group.displayDate}
                     </span>
-                    <span className="text-[11px] font-bold text-gray-400 tabular-nums">
-                      {totalDisplay}
-                    </span>
+                    <div className="flex items-center gap-2.5 text-[11px] font-mono-num font-bold">
+                      {groupIncomeTotal > 0 && (
+                        <span className="text-emerald-600 dark:text-[#D4F826]">
+                          +{formatRupiah(groupIncomeTotal, hide)}
+                        </span>
+                      )}
+                      {groupExpenseTotal > 0 && (
+                        <span className="text-slate-500 dark:text-slate-400">
+                          -{formatRupiah(groupExpenseTotal, hide)}
+                        </span>
+                      )}
+                      {groupIncomeTotal === 0 && groupExpenseTotal === 0 && groupTransferTotal > 0 && (
+                        <span className="text-sky-500">
+                          {formatRupiah(groupTransferTotal, hide)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })()}
 
               {/* Transactions in Date Group */}
-              <div className="bg-white dark:bg-[#11131E] rounded-[28px] p-3.5 border border-slate-200/80 dark:border-white/[0.08] divide-y divide-slate-100 dark:divide-white/[0.06]">
+              <div className="bg-white dark:bg-[#11131E] rounded-[28px] p-3 border border-slate-200/80 dark:border-white/[0.08] divide-y divide-slate-100 dark:divide-white/[0.06]">
                 {group.items.map((item) => {
                   const { transaction, wallet, category, transferWallet } = item;
                   const isExpanded = expandedId === transaction.id;
@@ -335,12 +415,15 @@ export function TransactionsTab() {
                   return (
                     <div
                       key={transaction.id}
-                      className="py-3 px-2 hover:bg-slate-50/60 dark:hover:bg-white/[0.03] rounded-2xl cursor-pointer transition-colors"
-                      onClick={() => setExpandedId(isExpanded ? null : transaction.id)}
+                      className="py-2.5 px-2 hover:bg-slate-50/60 dark:hover:bg-white/[0.03] rounded-2xl cursor-pointer transition-colors"
+                      onClick={() => {
+                        setExpandedId(isExpanded ? null : transaction.id);
+                        setConfirmDeleteId(null);
+                      }}
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-white/[0.06] text-xl flex items-center justify-center shrink-0">
+                          <div className="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-white/[0.06] text-lg flex items-center justify-center shrink-0">
                             {category?.emoji || (isTransfer ? '🔄' : '☕')}
                           </div>
 
@@ -354,10 +437,13 @@ export function TransactionsTab() {
                               <span className="font-medium text-slate-600 dark:text-slate-300">
                                 {isTransfer ? `${wallet.name} → ${transferWallet?.name || 'Tujuan'}` : wallet.name}
                               </span>
-                              {isExpense && (transaction.expenseNature === 'non_daily' || transaction.expenseNature === 'grocery') && (
-                                <span className="px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-[10px] font-bold">
-                                  🛍️ Keperluan Pribadi
-                                </span>
+                              {isExpense && transaction.expenseNature && transaction.expenseNature !== 'variable' && (
+                                <>
+                                  <span aria-hidden="true">·</span>
+                                  <span className="font-semibold text-amber-600 dark:text-amber-400">
+                                    {getExpenseNatureLabel(transaction.expenseNature)}
+                                  </span>
+                                </>
                               )}
                             </div>
                           </div>
@@ -365,7 +451,7 @@ export function TransactionsTab() {
 
                         <div className="text-right shrink-0">
                           <span
-                            className={`font-mono-num text-xs sm:text-sm font-bold ${
+                            className={`font-mono-num text-xs sm:text-sm font-extrabold ${
                               isExpense
                                 ? 'text-slate-900 dark:text-white'
                                 : isIncome
@@ -384,23 +470,23 @@ export function TransactionsTab() {
                         <motion.div
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: 'auto' }}
-                          className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800 text-xs space-y-2.5"
+                          className="mt-3 pt-3 border-t border-slate-100 dark:border-white/[0.08] text-xs space-y-2.5"
                         >
-                          <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-600 dark:text-gray-400">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-50 dark:bg-white/[0.03] rounded-xl p-2.5 border border-slate-200/60 dark:border-white/[0.06] text-[11px]">
                             <div>
-                              <span className="text-gray-400 block text-[9px] uppercase font-bold">
-                                DARI
+                              <span className="text-slate-400 block text-[10px] font-bold uppercase tracking-wider">
+                                {isTransfer ? 'Dari' : 'Dompet'}
                               </span>
-                              <span className="font-extrabold text-gray-800 dark:text-gray-200">
+                              <span className="font-bold text-slate-800 dark:text-slate-200 truncate block mt-0.5">
                                 {wallet.name}
                               </span>
                             </div>
 
                             <div>
-                              <span className="text-gray-400 block text-[9px] uppercase font-bold">
-                                {isTransfer ? 'KE' : 'KATEGORI'}
+                              <span className="text-slate-400 block text-[10px] font-bold uppercase tracking-wider">
+                                {isTransfer ? 'Tujuan' : 'Kategori'}
                               </span>
-                              <span className="font-extrabold text-gray-800 dark:text-gray-200">
+                              <span className="font-bold text-slate-800 dark:text-slate-200 truncate block mt-0.5">
                                 {isTransfer
                                   ? transferWallet?.name || 'Tujuan'
                                   : `${category?.emoji || ''} ${category?.name || 'Lainnya'}`}
@@ -408,20 +494,22 @@ export function TransactionsTab() {
                             </div>
 
                             <div>
-                              <span className="text-gray-400 block text-[9px] uppercase font-bold">
-                                WAKTU
+                              <span className="text-slate-400 block text-[10px] font-bold uppercase tracking-wider">
+                                Waktu
                               </span>
-                              <span className="font-extrabold text-gray-800 dark:text-gray-200">
+                              <span className="font-mono-num font-bold text-slate-800 dark:text-slate-200 block mt-0.5">
                                 {formatTimeOnly(transaction.date)}
                               </span>
                             </div>
 
                             <div>
-                              <span className="text-gray-400 block text-[9px] uppercase font-bold">
-                                CATATAN
+                              <span className="text-slate-400 block text-[10px] font-bold uppercase tracking-wider">
+                                {isExpense ? 'Pos Anggaran' : 'Catatan'}
                               </span>
-                              <span className="font-extrabold text-gray-800 dark:text-gray-200">
-                                {transaction.note || '-'}
+                              <span className="font-bold text-slate-800 dark:text-slate-200 truncate block mt-0.5">
+                                {isExpense
+                                  ? getExpenseNatureLabel(transaction.expenseNature)
+                                  : transaction.note || '-'}
                               </span>
                             </div>
 
@@ -431,11 +519,11 @@ export function TransactionsTab() {
                               );
                               if (!linkedGoal) return null;
                               return (
-                                <div className="col-span-2 pt-1 border-t border-gray-100 dark:border-gray-800">
-                                  <span className="text-gray-400 block text-[9px] uppercase font-bold">
-                                    TERTAUT KE GOAL
+                                <div className="col-span-2 sm:col-span-4 pt-1.5 border-t border-slate-200/60 dark:border-white/[0.06] flex items-center justify-between">
+                                  <span className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">
+                                    Impian
                                   </span>
-                                  <span className="font-extrabold text-purple-600 dark:text-purple-400 flex items-center gap-1 mt-0.5">
+                                  <span className="font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
                                     <span>{linkedGoal.emoji}</span>
                                     <span>{linkedGoal.name}</span>
                                   </span>
@@ -444,28 +532,38 @@ export function TransactionsTab() {
                             })()}
                           </div>
 
-                          <div className="flex gap-2 pt-2">
+                          <div className="flex gap-2">
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 openEditTransaction(item);
                               }}
-                              className="flex-1 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-black uppercase tracking-wider text-gray-800 dark:text-gray-200 hover:bg-gray-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                              className="flex-1 py-2 rounded-xl bg-slate-100 dark:bg-white/[0.08] text-xs font-bold text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-white/[0.14] flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
                             >
-                              <Pencil size={12} />
-                              <span>UBAH</span>
+                              <Pencil size={13} />
+                              <span>Edit</span>
                             </button>
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                deleteTransaction(transaction.id);
+                                if (confirmDeleteId === transaction.id) {
+                                  deleteTransaction(transaction.id);
+                                  setConfirmDeleteId(null);
+                                  setExpandedId(null);
+                                } else {
+                                  setConfirmDeleteId(transaction.id);
+                                }
                               }}
-                              className="flex-1 py-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-xs font-black uppercase tracking-wider text-red-600 dark:text-red-400 hover:bg-red-100 flex items-center justify-center gap-1.5 cursor-pointer"
+                              className={`py-2 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                                confirmDeleteId === transaction.id
+                                  ? 'bg-red-600 text-white hover:bg-red-700'
+                                  : 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100'
+                              }`}
                             >
-                              <Trash2 size={12} />
-                              <span>HAPUS</span>
+                              <Trash2 size={13} />
+                              <span>{confirmDeleteId === transaction.id ? 'Hapus?' : 'Hapus'}</span>
                             </button>
                           </div>
                         </motion.div>

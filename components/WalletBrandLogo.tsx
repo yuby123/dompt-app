@@ -292,6 +292,14 @@ export function detectWalletBrand(
   ];
 
   for (const brand of orderedBrands) {
+    if (
+      brand.id === 'dana' &&
+      /\bdana\s+(darurat|cadangan|pensiun|pendidikan|tunai|usaha|nikah|liburan|operasional|sosial|kesehatan|investasi|tabungan|kas|siaga|talangan)\b/i.test(
+        normalized
+      )
+    ) {
+      continue;
+    }
     for (const kw of brand.keywords) {
       // Match whole word or exact substring for distinct brand names
       const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

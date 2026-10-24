@@ -27,21 +27,45 @@ const WALLET_TYPE_OPTIONS: { type: WalletType; label: string; icon: string; defa
 ];
 
 function WalletModalForm() {
-  const { setIsWalletModalOpen, editingWallet, addWallet, updateWallet, deleteWallet } = useApp();
+  const {
+    setIsWalletModalOpen,
+    editingWallet,
+    walletsWithBalance,
+    addWallet,
+    updateWallet,
+    deleteWallet,
+  } = useApp();
 
   const initialDetectedBrand = detectWalletBrand(editingWallet?.name, editingWallet?.icon);
+  const currentWalletWithBalance = editingWallet
+    ? walletsWithBalance.find((w) => w.id === editingWallet.id)
+    : undefined;
+  const netTxDelta = currentWalletWithBalance && editingWallet
+    ? currentWalletWithBalance.balance - Math.max(0, Number(editingWallet.initialBalance) || 0)
+    : 0;
 
   const [name, setName] = useState(() => editingWallet?.name || '');
   const [type, setType] = useState<WalletType>(() => editingWallet?.type || 'bank');
   const [selectedBrandId, setSelectedBrandId] = useState<string | null>(
     () => initialDetectedBrand?.id || null
   );
+  const [manualLogoCleared, setManualLogoCleared] = useState(false);
   const [activeBrandTab, setActiveBrandTab] = useState<WalletBrandCategory>(
     () => initialDetectedBrand?.category || 'Bank Konvensional & Syariah'
   );
   const [accountNumber, setAccountNumber] = useState(() => editingWallet?.accountNumber || '');
+  const [balanceEditMode, setBalanceEditMode] = useState<'current' | 'initial'>(() =>
+    editingWallet && netTxDelta !== 0 ? 'current' : 'initial'
+  );
   const [initialBalance, setInitialBalance] = useState<string>(() =>
     editingWallet ? formatNominalInput(Math.abs(editingWallet.initialBalance)) : '0'
+  );
+  const [currentBalanceInput, setCurrentBalanceInput] = useState<string>(() =>
+    currentWalletWithBalance
+      ? formatNominalInput(Math.abs(currentWalletWithBalance.balance))
+      : editingWallet
+      ? formatNominalInput(Math.abs(editingWallet.initialBalance))
+      : '0'
   );
   const [reservedAmount, setReservedAmount] = useState<string>(() =>
     editingWallet && editingWallet.reservedAmount
@@ -55,18 +79,21 @@ function WalletModalForm() {
 
   const isDebtType = type === 'credit' || type === 'paylater';
 
-  const currentBrand =
-    (selectedBrandId ? WALLET_BRANDS.find((b) => b.id === selectedBrandId) : null) ||
-    detectWalletBrand(name, selectedBrandId ? `brand:${selectedBrandId}` : undefined);
+  const currentBrand = selectedBrandId
+    ? WALLET_BRANDS.find((b) => b.id === selectedBrandId) || null
+    : null;
 
   const handleSelectBrand = (brand: WalletBrandDefinition) => {
+    setManualLogoCleared(false);
     setSelectedBrandId(brand.id);
     setType(brand.walletType);
     setColor(brand.primaryColor);
 
     const trimmed = name.trim();
     const isPreviousBrandName = WALLET_BRANDS.some(
-      (b) => b.name.toLowerCase() === trimmed.toLowerCase() || b.shortName.toLowerCase() === trimmed.toLowerCase()
+      (b) =>
+        b.name.toLowerCase() === trimmed.toLowerCase() ||
+        b.shortName.toLowerCase() === trimmed.toLowerCase()
     );
     if (!trimmed || isPreviousBrandName) {
       setName(brand.name);
@@ -75,32 +102,43 @@ function WalletModalForm() {
 
   const handleNameChange = (val: string) => {
     setName(val);
-    const autoBrand = detectWalletBrand(val);
-    if (autoBrand) {
-      setSelectedBrandId(autoBrand.id);
-      setType(autoBrand.walletType);
-      setColor(autoBrand.primaryColor);
-      setActiveBrandTab(autoBrand.category);
+    if (!manualLogoCleared) {
+      const autoBrand = detectWalletBrand(val);
+      if (autoBrand) {
+        setSelectedBrandId(autoBrand.id);
+        setType(autoBrand.walletType);
+        setColor(autoBrand.primaryColor);
+        setActiveBrandTab(autoBrand.category);
+      }
     }
   };
+
+  const resolvedInitialBalanceNum =
+    editingWallet && balanceEditMode === 'current'
+      ? Math.max(0, parseNominalInput(currentBalanceInput) - netTxDelta)
+      : Math.max(0, parseNominalInput(initialBalance));
+
+  const previewBalance =
+    editingWallet && balanceEditMode === 'current'
+      ? Math.max(0, parseNominalInput(currentBalanceInput))
+      : Math.max(0, resolvedInitialBalanceNum + netTxDelta);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
-    const rawNum = parseNominalInput(initialBalance);
-    const balanceNum = Math.max(0, rawNum);
+    const balanceNum = resolvedInitialBalanceNum;
     const reservedNum = isDebtType ? 0 : Math.max(0, parseNominalInput(reservedAmount));
     const selectedOption = WALLET_TYPE_OPTIONS.find((o) => o.type === type);
 
-    const resolvedBrand =
-      (selectedBrandId ? WALLET_BRANDS.find((b) => b.id === selectedBrandId) : null) ||
-      detectWalletBrand(name.trim());
+    const resolvedBrand = selectedBrandId
+      ? WALLET_BRANDS.find((b) => b.id === selectedBrandId) || null
+      : null;
 
     const resolvedIcon =
       resolvedBrand && (type === 'bank' || type === 'ewallet' || type === 'savings')
         ? `brand:${resolvedBrand.id}`
-        : selectedOption?.icon || editingWallet?.icon || 'Wallet';
+        : selectedOption?.icon || 'Wallet';
 
     const payload = {
       name: name.trim(),
@@ -133,18 +171,16 @@ function WalletModalForm() {
     }
   };
 
-  const previewBalance = Math.max(0, parseNominalInput(initialBalance));
-
   return (
     <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto bg-white dark:bg-[#11131E] rounded-[30px] p-5 sm:p-6 shadow-2xl border border-slate-200/80 dark:border-white/10">
       {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-white/[0.08]">
+      <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 dark:border-white/[0.08]">
         <div>
-          <h2 className="font-display text-lg font-extrabold text-slate-900 dark:text-white">
-            {editingWallet ? 'Edit Dompet & Rekening' : 'Tambah Dompet & Rekening'}
+          <h2 className="font-display text-base sm:text-lg font-extrabold text-slate-900 dark:text-white">
+            {editingWallet ? 'Edit Dompet' : 'Tambah Dompet'}
           </h2>
-          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mt-0.5">
-            Pilih logo resmi bank atau e-wallet agar tampilan kartu lebih rapi.
+          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            Pilih logo resmi bank atau e-wallet.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -159,8 +195,8 @@ function WalletModalForm() {
               }`}
               title="Hapus dompet"
             >
-              <Trash2 size={15} />
-              {confirmDelete && <span>Yakin Hapus?</span>}
+              <Trash2 size={14} />
+              {confirmDelete && <span>Hapus?</span>}
             </button>
           )}
           <button
@@ -168,12 +204,12 @@ function WalletModalForm() {
             onClick={() => setIsWalletModalOpen(false)}
             className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-full cursor-pointer"
           >
-            <X size={20} />
+            <X size={18} />
           </button>
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+      <form onSubmit={handleSubmit} className="mt-4 space-y-3.5">
         {/* Live Card Preview */}
         <div
           className={`relative overflow-hidden rounded-2xl p-4 text-white border border-white/15 shadow-md transition-all bg-gradient-to-br ${
@@ -204,7 +240,7 @@ function WalletModalForm() {
                   )}
                 </div>
                 <p className="font-display text-base font-extrabold text-white truncate mt-1">
-                  {name.trim() || currentBrand?.name || 'Nama Dompet Baru'}
+                  {name.trim() || currentBrand?.name || 'Nama Dompet'}
                 </p>
                 {accountNumber.trim() && (
                   <p className="font-mono-num text-[11px] text-white/80 tracking-wider truncate">
@@ -215,7 +251,7 @@ function WalletModalForm() {
             </div>
             <div className="text-right shrink-0">
               <span className="text-[10px] font-semibold text-white/75 block">
-                {isDebtType ? 'Tagihan' : 'Saldo Awal'}
+                {isDebtType ? 'Tagihan' : editingWallet ? 'Saldo' : 'Saldo Awal'}
               </span>
               <span className="font-mono-num text-sm sm:text-base font-extrabold text-white block">
                 {formatRupiah(previewBalance)}
@@ -225,16 +261,19 @@ function WalletModalForm() {
         </div>
 
         {/* Official Bank & E-Wallet Logo Selector */}
-        <div className="rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200/80 dark:border-white/[0.08] p-3.5 space-y-3">
+        <div className="rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200/80 dark:border-white/[0.08] p-3.5 space-y-2.5">
           <div className="flex items-center justify-between">
             <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
               <Sparkles size={14} className="text-amber-500" />
-              Pilih Logo Bank / E-Wallet Resmi
+              Pilih Logo Resmi
             </span>
             {selectedBrandId && (
               <button
                 type="button"
-                onClick={() => setSelectedBrandId(null)}
+                onClick={() => {
+                  setSelectedBrandId(null);
+                  setManualLogoCleared(true);
+                }}
                 className="text-[11px] font-semibold text-slate-400 hover:text-rose-500 cursor-pointer"
               >
                 Reset Logo
@@ -242,12 +281,12 @@ function WalletModalForm() {
             )}
           </div>
 
-          {/* 3 Category Tabs matching user request */}
+          {/* 3 Category Tabs */}
           <div className="grid grid-cols-3 gap-1.5 bg-slate-200/70 dark:bg-white/[0.05] p-1 rounded-xl">
             {WALLET_BRAND_CATEGORIES.map((cat) => {
               const shortTab =
                 cat === 'Bank Konvensional & Syariah'
-                  ? 'Bank Umum & Syariah'
+                  ? 'Bank Umum'
                   : cat === 'Bank Digital'
                   ? 'Bank Digital'
                   : 'E-Wallet';
@@ -270,7 +309,7 @@ function WalletModalForm() {
           </div>
 
           {/* Brand Grid */}
-          <div className="grid grid-cols-3 sm:grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             {WALLET_BRANDS.filter((b) => b.category === activeBrandTab).map((brand) => {
               const isSelected = currentBrand?.id === brand.id;
               return (
@@ -308,27 +347,27 @@ function WalletModalForm() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1">
-              Nama Dompet / Rekening
+              Nama Dompet *
             </label>
             <input
               type="text"
-              placeholder="Misal: BCA Tahapan, GoPay, SeaBank"
+              placeholder="BCA, GoPay, SeaBank"
               value={name}
               onChange={(e) => handleNameChange(e.target.value)}
               required
-              className="w-full p-3 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-sm font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-teal-500 outline-none"
+              className="w-full p-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-teal-500 outline-none"
             />
           </div>
           <div>
             <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1">
-              No. Rekening / No. HP <span className="font-normal text-slate-400">(Opsional)</span>
+              No. Rekening / HP <span className="font-normal text-slate-400">(Opsional)</span>
             </label>
             <input
               type="text"
-              placeholder="Contoh: 1234567890"
+              placeholder="1234567890"
               value={accountNumber}
               onChange={(e) => setAccountNumber(e.target.value)}
-              className="w-full p-3 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-sm font-semibold text-slate-900 dark:text-white focus:ring-2 focus:ring-teal-500 outline-none"
+              className="w-full p-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-teal-500 outline-none"
             />
           </div>
         </div>
@@ -336,7 +375,7 @@ function WalletModalForm() {
         {/* Tipe Dompet */}
         <div>
           <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1.5">
-            Kategori Dompet
+            Kategori
           </label>
           <div className="grid grid-cols-4 gap-2">
             {WALLET_TYPE_OPTIONS.map((opt) => (
@@ -348,7 +387,12 @@ function WalletModalForm() {
                   if (!currentBrand) {
                     setColor(opt.defaultColor);
                   }
-                  if (opt.type === 'cash' || opt.type === 'investment' || opt.type === 'credit' || opt.type === 'paylater') {
+                  if (
+                    opt.type === 'cash' ||
+                    opt.type === 'investment' ||
+                    opt.type === 'credit' ||
+                    opt.type === 'paylater'
+                  ) {
                     setSelectedBrandId(null);
                   }
                 }}
@@ -364,26 +408,56 @@ function WalletModalForm() {
           </div>
         </div>
 
-        {/* Saldo Awal & Dana Dicadangkan */}
+        {/* Saldo & Dana Dicadangkan */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className={isDebtType ? 'sm:col-span-2' : ''}>
-            <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1">
-              {isDebtType ? 'Tagihan Berjalan / Saldo Tagihan (Rp)' : 'Saldo Awal (Rp)'}
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                {isDebtType
+                  ? 'Tagihan (Rp)'
+                  : editingWallet && balanceEditMode === 'current'
+                  ? 'Saldo Saat Ini (Rp)'
+                  : 'Saldo Awal (Rp)'}
+              </label>
+              {editingWallet && netTxDelta !== 0 && !isDebtType && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (balanceEditMode === 'current') {
+                      setInitialBalance(formatNominalInput(resolvedInitialBalanceNum));
+                      setBalanceEditMode('initial');
+                    } else {
+                      setCurrentBalanceInput(formatNominalInput(previewBalance));
+                      setBalanceEditMode('current');
+                    }
+                  }}
+                  className="text-[10px] font-bold text-teal-600 dark:text-[#D4F826] hover:underline cursor-pointer"
+                >
+                  {balanceEditMode === 'current' ? 'Ubah Saldo Awal' : 'Ubah Saldo Saat Ini'}
+                </button>
+              )}
+            </div>
             <input
               type="text"
               inputMode="numeric"
               placeholder="0"
-              value={initialBalance}
-              onChange={(e) => setInitialBalance(formatNominalInput(e.target.value))}
-              className="w-full p-3 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-base font-extrabold text-teal-700 dark:text-[#D4F826] focus:ring-2 focus:ring-teal-500 outline-none"
+              value={editingWallet && balanceEditMode === 'current' ? currentBalanceInput : initialBalance}
+              onChange={(e) => {
+                const formatted = formatNominalInput(e.target.value);
+                if (editingWallet && balanceEditMode === 'current') {
+                  setCurrentBalanceInput(formatted);
+                } else {
+                  setInitialBalance(formatted);
+                }
+              }}
+              className="w-full p-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-sm font-extrabold font-mono-num text-teal-700 dark:text-[#D4F826] focus:ring-2 focus:ring-teal-500 outline-none"
             />
           </div>
 
           {!isDebtType && (
             <div>
               <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                Dana Dicadangkan (Rp) <span className="font-normal text-slate-400">(Opsional)</span>
+                Dicadangkan (Rp) <span className="font-normal text-slate-400">(Opsional)</span>
               </label>
               <input
                 type="text"
@@ -391,7 +465,7 @@ function WalletModalForm() {
                 placeholder="0"
                 value={reservedAmount}
                 onChange={(e) => setReservedAmount(formatNominalInput(e.target.value))}
-                className="w-full p-3 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-base font-bold text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-teal-500 outline-none"
+                className="w-full p-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-sm font-bold font-mono-num text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-teal-500 outline-none"
               />
             </div>
           )}
@@ -400,7 +474,7 @@ function WalletModalForm() {
         {/* Pilihan Warna Aksen */}
         <div>
           <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1.5">
-            Warna Aksen Kartu
+            Warna Aksen
           </label>
           <div className="flex flex-wrap gap-2">
             {[
@@ -430,19 +504,19 @@ function WalletModalForm() {
           </div>
         </div>
 
-        <div className="pt-2 flex gap-3">
+        <div className="pt-2 flex gap-2.5">
           <button
             type="button"
             onClick={() => setIsWalletModalOpen(false)}
-            className="flex-1 py-3 text-sm font-bold rounded-2xl bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-white/[0.1]"
+            className="flex-1 py-2.5 text-xs font-bold rounded-2xl bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200 dark:hover:bg-white/[0.1]"
           >
             Batal
           </button>
           <button
             type="submit"
-            className="flex-2 py-3 px-6 text-sm font-black rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black shadow-md cursor-pointer transition-transform active:scale-98"
+            className="flex-2 py-2.5 px-6 text-xs font-black rounded-2xl bg-[#D4F826] hover:bg-[#c6ec15] text-black shadow-md cursor-pointer transition-transform active:scale-98"
           >
-            {editingWallet ? 'Simpan Perubahan' : 'Tambah Dompet'}
+            Simpan
           </button>
         </div>
       </form>

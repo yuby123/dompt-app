@@ -2100,20 +2100,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const isThisMonth = isDateInBudgetPeriod(txDate, budgetPeriod);
 
         if (effectiveWalletId === wallet.id) {
-          txCount++;
+          if (isThisMonth) txCount++;
           if (tx.type === 'expense') {
-            balance = Math.max(0, balance - tx.amount);
+            balance = isDebtWallet ? balance + tx.amount : Math.max(0, balance - tx.amount);
             if (isThisMonth) expenseThisMonth += tx.amount;
           } else if (tx.type === 'income') {
             balance = isDebtWallet ? Math.max(0, balance - tx.amount) : balance + tx.amount;
             if (isThisMonth) incomeThisMonth += tx.amount;
           } else if (tx.type === 'transfer') {
-            balance = Math.max(0, balance - tx.amount);
+            balance = isDebtWallet ? balance + tx.amount : Math.max(0, balance - tx.amount);
           }
         }
 
         if (tx.type === 'transfer' && tx.transferWalletId === wallet.id) {
-          txCount++;
+          if (isThisMonth) txCount++;
           // Paying a credit card / paylater bill via transfer reduces its outstanding bill
           balance = isDebtWallet ? Math.max(0, balance - tx.amount) : balance + tx.amount;
         }
@@ -2168,17 +2168,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     const oldTx = transactions.find((t) => t.id === excludeTxId);
-    const oldEffectiveWalletId = oldTx
-      ? resolvedWalletIdMap.get(oldTx.id) || oldTx.walletId
-      : undefined;
-    const refundedBalance =
-      oldTx &&
-      oldEffectiveWalletId === targetWallet.id &&
-      (oldTx.type === 'expense' || oldTx.type === 'transfer')
-        ? targetWallet.balance + oldTx.amount
-        : targetWallet.balance;
+    if (!oldTx) {
+      return Math.max(0, targetWallet.balance);
+    }
 
-    return Math.max(0, refundedBalance);
+    const oldEffectiveWalletId = resolvedWalletIdMap.get(oldTx.id) || oldTx.walletId;
+    const isTargetDebt = targetWallet.type === 'credit' || targetWallet.type === 'paylater';
+    let adjustedBalance = targetWallet.balance;
+
+    if (!isTargetDebt) {
+      if (oldEffectiveWalletId === targetWallet.id) {
+        if (oldTx.type === 'expense' || oldTx.type === 'transfer') {
+          adjustedBalance += oldTx.amount;
+        } else if (oldTx.type === 'income') {
+          adjustedBalance -= oldTx.amount;
+        }
+      } else if (oldTx.type === 'transfer' && oldTx.transferWalletId === targetWallet.id) {
+        adjustedBalance -= oldTx.amount;
+      }
+    }
+
+    return Math.max(0, adjustedBalance);
   };
 
   const triggerInsufficientBalanceAlert = (
@@ -2641,8 +2651,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       walletsWithBalance[0];
     const effectiveWalletId = resolvedTargetWallet?.id || data.walletId;
 
-    // Prevent negative wallet balance on any expense or transfer payment
-    if (data.type === 'expense' || data.type === 'transfer') {
+    // Prevent negative wallet balance on any expense or transfer payment from liquid wallets
+    const isTargetDebtWallet =
+      resolvedTargetWallet?.type === 'credit' || resolvedTargetWallet?.type === 'paylater';
+    if ((data.type === 'expense' || data.type === 'transfer') && !isTargetDebtWallet) {
       const currentWalletBalance = resolvedTargetWallet ? Math.max(0, resolvedTargetWallet.balance) : 0;
       if (!resolvedTargetWallet || data.amount > currentWalletBalance) {
         triggerInsufficientBalanceAlert(
@@ -2724,7 +2736,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const nextAmount = data.amount ?? existingTx?.amount ?? 0;
     const nextWalletId = data.walletId ?? existingTx?.walletId;
 
-    if (nextType === 'expense' || nextType === 'transfer') {
+    const nextTargetWallet = nextWalletId
+      ? walletsWithBalance.find((w) => w.id === nextWalletId)
+      : walletsWithBalance[0];
+    const isNextDebtWallet =
+      nextTargetWallet?.type === 'credit' || nextTargetWallet?.type === 'paylater';
+
+    if ((nextType === 'expense' || nextType === 'transfer') && !isNextDebtWallet) {
       const availableForUpdate = getWalletBalance(nextWalletId, id);
       if (nextAmount > availableForUpdate) {
         triggerInsufficientBalanceAlert(
@@ -4963,11 +4981,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     note?: string,
     date?: string
   ): boolean => {
+    if (!amount || amount <= 0 || fromWalletId === toWalletId) {
+      return false;
+    }
     const fromW = walletsWithBalance.find((w) => w.id === fromWalletId);
     const toW = wallets.find((w) => w.id === toWalletId);
+    const isFromDebtWallet = fromW?.type === 'credit' || fromW?.type === 'paylater';
     const currentFromBalance = fromW ? Math.max(0, fromW.balance) : 0;
 
-    if (!fromW || amount > currentFromBalance) {
+    if (!fromW || (!isFromDebtWallet && amount > currentFromBalance)) {
       triggerInsufficientBalanceAlert(
         fromWalletId,
         amount,
@@ -5176,7 +5198,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const openEditWallet = (wallet: Wallet) => {
-    setEditingWallet(wallet);
+    const rawWallet = wallets.find((w) => w.id === wallet.id) || wallet;
+    setEditingWallet(rawWallet);
     setIsWalletModalOpen(true);
   };
 

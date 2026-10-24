@@ -7,12 +7,14 @@ import { useApp } from './AppContext';
 import { ExpenseNature, TransactionType } from '@/lib/types';
 import { CategoryIcon } from './CategoryIcon';
 import { formatNumberOnly, formatRupiah } from '@/lib/formatters';
-import { detectExpenseNature, isDateInBudgetPeriod, isGrocerySubcategory } from '@/lib/budgetUtils';
+import { detectExpenseNature, isDateInBudgetPeriod, isGrocerySubcategory, parseLocalDay } from '@/lib/budgetUtils';
 
 function AddTransactionForm() {
   const {
     setIsAddTransactionOpen,
     editingTransaction,
+    preselectedTransactionType,
+    preselectedTransactionDate,
     categories,
     wallets,
     walletsWithBalance,
@@ -34,13 +36,14 @@ function AddTransactionForm() {
 
   const amountInputRef = useRef<HTMLInputElement>(null);
 
-  const [type, setType] = useState<TransactionType>(() => editingTransaction?.transaction.type || 'expense');
+  const initialType = editingTransaction?.transaction.type || preselectedTransactionType || 'expense';
+  const [type, setType] = useState<TransactionType>(() => initialType);
   const [amountStr, setAmountStr] = useState<string>(() =>
     editingTransaction ? String(editingTransaction.transaction.amount) : ''
   );
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>(() => {
     if (editingTransaction?.transaction.categoryId) return editingTransaction.transaction.categoryId;
-    const match = categories.find((c) => c.type === (editingTransaction?.transaction.type === 'income' ? 'income' : 'expense'));
+    const match = categories.find((c) => c.type === (initialType === 'income' ? 'income' : 'expense'));
     return match ? match.id : categories[0]?.id || '';
   });
   const [selectedWalletId, setSelectedWalletId] = useState<string>(() => {
@@ -61,11 +64,15 @@ function AddTransactionForm() {
   });
   const [selectedDate, setSelectedDate] = useState<string>(() => {
     if (editingTransaction) {
-      const d = new Date(editingTransaction.transaction.date);
+      const d = parseLocalDay(editingTransaction.transaction.date);
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     }
-    if (activeDate) return activeDate;
+    if (preselectedTransactionDate) return preselectedTransactionDate;
     const now = new Date();
+    if (isDateInBudgetPeriod(now, budgetPeriod)) {
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    }
+    if (activeDate) return activeDate;
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   });
   const [note, setNote] = useState<string>(() => editingTransaction?.transaction.note || '');

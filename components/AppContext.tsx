@@ -94,6 +94,7 @@ import {
   isDateInBudgetPeriod,
   isDebtScheduledForBudgetPeriod,
   isFixedExpense,
+  isSavingsExpense,
   parseLocalDay,
   resolveEffectivePeriodIncome,
 } from '@/lib/budgetUtils';
@@ -216,7 +217,9 @@ interface AppContextType {
   setIsAddTransactionOpen: (open: boolean) => void;
   editingTransaction: TransactionDetail | null;
   setEditingTransaction: (tx: TransactionDetail | null) => void;
-  openAddTransaction: (preselectedType?: TransactionType) => void;
+  preselectedTransactionType: TransactionType;
+  preselectedTransactionDate: string | null;
+  openAddTransaction: (preselectedType?: TransactionType, initialDate?: string) => void;
   openEditTransaction: (tx: TransactionDetail) => void;
 
   isScanModalOpen: boolean;
@@ -292,6 +295,7 @@ interface AppContextType {
     id: string,
     options?: { walletId?: string; amount?: number; date?: string; note?: string }
   ) => boolean;
+  cancelSubscriptionPayment: (id: string, txIdsToRemove?: string[]) => boolean;
   syncSubscriptionsToBudget: () => void;
 
   addAsset: (type: 'liquid' | 'fixed', item: Omit<AssetItem, 'id'>) => void;
@@ -514,6 +518,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // Modals & dialog states
   const [isAddTransactionOpen, setIsAddTransactionOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<TransactionDetail | null>(null);
+  const [preselectedTransactionType, setPreselectedTransactionType] = useState<TransactionType>('expense');
+  const [preselectedTransactionDate, setPreselectedTransactionDate] = useState<string | null>(null);
   const [isScanModalOpen, setIsScanModalOpen] = useState(false);
   const [scanInitialImage, setScanInitialImage] = useState<{ base64: string; mimeType: string; autoSave?: boolean } | null>(null);
   const [isTransferOpen, setIsTransferOpen] = useState(false);
@@ -769,7 +775,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               : rec.isActive,
           walletId: matchedSub.walletId || rec.walletId,
           categoryId: matchedSub.categoryId || rec.categoryId,
-          lastRecordedPeriod: matchedSub.lastRecordedPeriod || rec.lastRecordedPeriod,
+          lastRecordedPeriod:
+            rec.lastRecordedPeriod !== undefined
+              ? rec.lastRecordedPeriod
+              : matchedSub.lastRecordedPeriod,
         });
       }
     }
@@ -2237,21 +2246,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let todayInc = 0;
     let todayExp = 0;
     const txIdSet = new Set<string>();
+    const catMap = new Map<string, Category>(categories.map((c) => [c.id, c]));
+
+    const effectiveTodayDate = new Date(
+      budgetPeriod.startDate.getFullYear(),
+      budgetPeriod.startDate.getMonth(),
+      budgetPeriod.startDate.getDate() + Math.max(0, budgetPeriod.currentDayOfPeriod - 1),
+      12,
+      0,
+      0
+    );
+    const effTodayYear = effectiveTodayDate.getFullYear();
+    const effTodayMonth = effectiveTodayDate.getMonth();
+    const effTodayDay = effectiveTodayDate.getDate();
 
     transactions.forEach((tx) => {
       txIdSet.add(tx.id);
       const txDate = parseLocalDay(tx.date);
+      const isLoanDisbursement = Boolean(tx.note && /^pencairan utang:/i.test(tx.note.trim()));
+      const cat = tx.categoryId ? catMap.get(tx.categoryId) || null : null;
+      const isSavings = tx.type === 'expense' && isSavingsExpense(tx, cat);
+
       if (isDateInBudgetPeriod(txDate, budgetPeriod)) {
-        if (tx.type === 'income') inc += tx.amount;
-        if (tx.type === 'expense') exp += tx.amount;
+        if (tx.type === 'income' && !isLoanDisbursement) inc += tx.amount;
+        if (tx.type === 'expense' && !isSavings) exp += tx.amount;
       }
       if (
-        txDate.getFullYear() === activeYear &&
-        txDate.getMonth() === activeMonth &&
-        txDate.getDate() === activeDay
+        txDate.getFullYear() === effTodayYear &&
+        txDate.getMonth() === effTodayMonth &&
+        txDate.getDate() === effTodayDay
       ) {
-        if (tx.type === 'income') todayInc += tx.amount;
-        if (tx.type === 'expense') todayExp += tx.amount;
+        if (tx.type === 'income' && !isLoanDisbursement) todayInc += tx.amount;
+        if (tx.type === 'expense' && !isSavings) todayExp += tx.amount;
       }
     });
 
@@ -2264,9 +2290,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           exp += p.amount;
         }
         if (
-          pd.getFullYear() === activeYear &&
-          pd.getMonth() === activeMonth &&
-          pd.getDate() === activeDay
+          pd.getFullYear() === effTodayYear &&
+          pd.getMonth() === effTodayMonth &&
+          pd.getDate() === effTodayDay
         ) {
           todayExp += p.amount;
         }
@@ -2274,34 +2300,91 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
 
     return { totalIncome: inc, totalExpense: exp, todayIncome: todayInc, todayExpense: todayExp };
-  }, [transactions, debts, budgetPeriod, activeYear, activeMonth, activeDay]);
+  }, [transactions, debts, categories, budgetPeriod]);
 
   // Dynamic upcoming bills derived from negative credit/paylater wallets, active subscriptions, and scheduled budget subcategories
   const upcomingBills = useMemo<UpcomingBill[]>(() => {
-    const bills: UpcomingBill[] = [];
+    const billsWithOrder: { bill: UpcomingBill; daysUntil: number }[] = [];
     const seenNames = new Set<string>();
     const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
-    const curMonthShort = shortMonths[activeMonth] || 'Jan';
-    const nextMonthShort = shortMonths[(activeMonth + 1) % 12] || 'Feb';
     const currentCalendarKey = `${activeYear}-${String(activeMonth + 1).padStart(2, '0')}`;
     const activePeriodKey = budgetPeriod.periodKey;
 
-    const periodExpenseNotes = transactions
-      .filter((tx) => tx.type === 'expense' && isDateInBudgetPeriod(tx.date, budgetPeriod))
-      .map((tx) => (tx.note || '').toLowerCase().trim());
+    const effectiveToday = new Date(
+      budgetPeriod.startDate.getFullYear(),
+      budgetPeriod.startDate.getMonth(),
+      budgetPeriod.startDate.getDate() + Math.max(0, budgetPeriod.currentDayOfPeriod - 1),
+      12,
+      0,
+      0
+    );
+    const effYear = effectiveToday.getFullYear();
+    const effMonth = effectiveToday.getMonth();
+    const effDay = effectiveToday.getDate();
+    const msPerDay = 1000 * 60 * 60 * 24;
+
+    const resolveDueDateAndDays = (rawDay: number): { dueDate: string; daysUntil: number } => {
+      const safeDay = Math.max(1, Math.min(31, Math.round(rawDay) || 1));
+      const maxCur = new Date(effYear, effMonth + 1, 0).getDate();
+      const curCandidate = new Date(effYear, effMonth, Math.min(safeDay, maxCur), 12, 0, 0);
+      const nextMonthObj = new Date(effYear, effMonth + 1, 1);
+      const ny = nextMonthObj.getFullYear();
+      const nm = nextMonthObj.getMonth();
+      const maxNext = new Date(ny, nm + 1, 0).getDate();
+      const nextCandidate = new Date(ny, nm, Math.min(safeDay, maxNext), 12, 0, 0);
+
+      const targetDate = effDay > Math.min(safeDay, maxCur) ? nextCandidate : curCandidate;
+      const daysUntil = Math.round((targetDate.getTime() - effectiveToday.getTime()) / msPerDay);
+      const mLabel = shortMonths[targetDate.getMonth()] || 'Jan';
+      return {
+        dueDate: `${String(targetDate.getDate()).padStart(2, '0')} ${mLabel}`,
+        daysUntil,
+      };
+    };
+
+    const periodExpenses = transactions.filter(
+      (tx) => tx.type === 'expense' && isDateInBudgetPeriod(tx.date, budgetPeriod)
+    );
+
+    const hasMatchingExpenseInPeriod = (targetNameLower: string, minAmount?: number): boolean => {
+      const cleanTarget = targetNameLower.replace(/^cicilan\s+/i, '').trim();
+      if (!cleanTarget) return false;
+      let matchedSum = 0;
+      for (const tx of periodExpenses) {
+        const rawNote = (tx.note || '').toLowerCase().trim();
+        const cleanNote = rawNote
+          .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)|bayar cicilan utang:|cicilan utang:/gi, '')
+          .trim();
+        const isMatch =
+          cleanNote === targetNameLower ||
+          cleanNote === cleanTarget ||
+          (cleanTarget.length >= 4 && cleanNote.includes(cleanTarget)) ||
+          (targetNameLower.length >= 4 && rawNote.includes(targetNameLower));
+        if (isMatch) {
+          matchedSum += tx.amount;
+        }
+      }
+      if (minAmount && minAmount > 0) {
+        return matchedSum >= minAmount * 0.9;
+      }
+      return matchedSum > 0;
+    };
 
     walletsWithBalance.forEach((w) => {
       if ((w.type === 'credit' || w.type === 'paylater') && Math.abs(w.balance) > 0) {
         const dueDay = w.type === 'credit' ? 10 : 14;
-        const mLabel = activeDay > dueDay ? nextMonthShort : curMonthShort;
+        const { dueDate, daysUntil } = resolveDueDateAndDays(dueDay);
         seenNames.add(w.name.toLowerCase().trim());
-        bills.push({
-          id: `bill-wallet-${w.id}`,
-          name: w.name,
-          dueDate: `${dueDay} ${mLabel}`,
-          amount: Math.abs(w.balance),
-          iconEmoji: w.type === 'credit' ? '💳' : '⏰',
-          category: w.type === 'credit' ? 'Kartu Kredit' : 'Paylater',
+        billsWithOrder.push({
+          daysUntil,
+          bill: {
+            id: `bill-wallet-${w.id}`,
+            name: w.name,
+            dueDate,
+            amount: Math.abs(w.balance),
+            iconEmoji: w.type === 'credit' ? '💳' : '⏰',
+            category: w.type === 'credit' ? 'Kartu Kredit' : 'Paylater',
+          },
         });
       }
     });
@@ -2309,23 +2392,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     subscriptions.forEach((item) => {
       if (!item.isActive || item.type !== 'expense') return;
       const cleanName = item.name.toLowerCase().trim();
+      const targetPeriodAmt =
+        item.frequency === 'weekly'
+          ? getMonthlySubscriptionAmount(item.amount, item.frequency)
+          : item.amount;
       const alreadyPaidInPeriod =
         item.lastRecordedPeriod === activePeriodKey ||
         item.lastRecordedPeriod === currentCalendarKey ||
-        (cleanName.length >= 2 && periodExpenseNotes.some((n) => n.includes(cleanName)));
+        hasMatchingExpenseInPeriod(cleanName, targetPeriodAmt);
       if (alreadyPaidInPeriod) {
         seenNames.add(cleanName);
         return;
       }
-      const mLabel = activeDay > item.billingDay ? nextMonthShort : curMonthShort;
+      const { dueDate, daysUntil } = resolveDueDateAndDays(item.billingDay);
       seenNames.add(cleanName);
-      bills.push({
-        id: `bill-rec-${item.id}`,
-        name: item.name,
-        dueDate: `${String(item.billingDay).padStart(2, '0')} ${mLabel}`,
-        amount: item.amount,
-        iconEmoji: item.emoji || '🔁',
-        category: (item.budgetGroup || 'KEBUTUHAN').toUpperCase(),
+      billsWithOrder.push({
+        daysUntil,
+        bill: {
+          id: `bill-rec-${item.id}`,
+          name: item.name,
+          dueDate,
+          amount: item.amount,
+          iconEmoji: item.emoji || '🔁',
+          category: (item.budgetGroup || 'KEBUTUHAN').toUpperCase(),
+        },
       });
     });
 
@@ -2345,24 +2435,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               cleanName === dClean
             );
           });
-          if (matchedDebt && !isDebtScheduledForBudgetPeriod(matchedDebt, budgetPeriod)) {
-            return;
+          if (matchedDebt) {
+            if (!isDebtScheduledForBudgetPeriod(matchedDebt, budgetPeriod)) return;
+            const paidInDebtTab = (matchedDebt.payments || []).some((p) =>
+              isDateInBudgetPeriod(p.date, budgetPeriod)
+            );
+            if (paidInDebtTab || matchedDebt.status === 'paid') {
+              seenNames.add(cleanName);
+              return;
+            }
           }
           if (seenNames.has(cleanName)) return;
           const alreadyPaidSub =
             sub.lastRecordedPeriod === activePeriodKey ||
             sub.lastRecordedPeriod === currentCalendarKey ||
-            (cleanName.length >= 2 && periodExpenseNotes.some((n) => n.includes(cleanName)));
-          if (alreadyPaidSub) return;
+            hasMatchingExpenseInPeriod(cleanName, sub.allocatedAmount);
+          if (alreadyPaidSub) {
+            seenNames.add(cleanName);
+            return;
+          }
           seenNames.add(cleanName);
-          const mLabel = activeDay > sub.dueDateDay ? nextMonthShort : curMonthShort;
-          bills.push({
-            id: `bill-sub-${sub.id}`,
-            name: sub.name,
-            dueDate: `${String(sub.dueDateDay).padStart(2, '0')} ${mLabel}`,
-            amount: sub.allocatedAmount,
-            iconEmoji: sub.emoji || '📅',
-            category: sub.group.toUpperCase(),
+          const { dueDate, daysUntil } = resolveDueDateAndDays(sub.dueDateDay);
+          billsWithOrder.push({
+            daysUntil,
+            bill: {
+              id: `bill-sub-${sub.id}`,
+              name: sub.name,
+              dueDate,
+              amount: sub.allocatedAmount,
+              iconEmoji: sub.emoji || '📅',
+              category: sub.group.toUpperCase(),
+            },
           });
         }
       });
@@ -2381,41 +2484,52 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       if (seenNames.has(cleanDebtName) || seenNames.has(subDisplayName.toLowerCase())) return;
 
-      const alreadyPaidInPeriod = periodExpenseNotes.some(
-        (n) => n.includes(cleanDebtName) || n.includes(subDisplayName.toLowerCase())
+      const paidInDebtTab = (debt.payments || []).some((p) =>
+        isDateInBudgetPeriod(p.date, budgetPeriod)
       );
+      const installmentAmt = getMonthlyDebtInstallmentAmount(debt);
+      const alreadyPaidInPeriod =
+        paidInDebtTab ||
+        hasMatchingExpenseInPeriod(cleanDebtName, installmentAmt) ||
+        hasMatchingExpenseInPeriod(subDisplayName.toLowerCase(), installmentAmt);
       if (alreadyPaidInPeriod) {
         seenNames.add(cleanDebtName);
+        seenNames.add(subDisplayName.toLowerCase());
         return;
       }
 
       let dueDay = debt.dueDayOfMonth || 15;
       if (!debt.dueDayOfMonth && debt.dueDate) {
-        const pd = new Date(debt.dueDate);
+        const pd = parseLocalDay(debt.dueDate);
         if (!isNaN(pd.getTime())) dueDay = pd.getDate();
       }
 
       seenNames.add(cleanDebtName);
       seenNames.add(subDisplayName.toLowerCase());
-      const mLabel = activeDay > dueDay ? nextMonthShort : curMonthShort;
-      bills.push({
-        id: `bill-debt-${debt.id}`,
-        name: subDisplayName,
-        dueDate: `${String(dueDay).padStart(2, '0')} ${mLabel}`,
-        amount: getMonthlyDebtInstallmentAmount(debt),
-        iconEmoji: /kpr|rumah|kost|kontrak/i.test(debt.name)
-          ? '🏠'
-          : /motor/i.test(debt.name)
-          ? '🛵'
-          : /mobil/i.test(debt.name)
-          ? '🚗'
-          : '💳',
-        category: 'KEBUTUHAN (CICILAN)',
+      const { dueDate, daysUntil } = resolveDueDateAndDays(dueDay);
+      billsWithOrder.push({
+        daysUntil,
+        bill: {
+          id: `bill-debt-${debt.id}`,
+          name: subDisplayName,
+          dueDate,
+          amount: installmentAmt,
+          iconEmoji: /kpr|rumah|kost|kontrak/i.test(debt.name)
+            ? '🏠'
+            : /motor/i.test(debt.name)
+            ? '🛵'
+            : /mobil/i.test(debt.name)
+            ? '🚗'
+            : '💳',
+          category: 'KEBUTUHAN (CICILAN)',
+        },
       });
     });
 
-    return bills;
-  }, [walletsWithBalance, subscriptions, budgetConfig, debts, transactions, budgetPeriod, activeYear, activeMonth, activeDay]);
+    return billsWithOrder
+      .sort((a, b) => a.daysUntil - b.daysUntil)
+      .map((entry) => entry.bill);
+  }, [walletsWithBalance, subscriptions, budgetConfig, debts, transactions, budgetPeriod, activeYear, activeMonth]);
 
   // Dashboard summary metrics
   const dashboardSummary = useMemo<DashboardSummary>(() => {
@@ -2770,6 +2884,49 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    // If this deleted transaction was a recorded subscription payment, revert its lastRecordedPeriod
+    let nextSubs = subscriptions;
+    if (deletedTx && deletedTx.note) {
+      const cleanNote = deletedTx.note
+        .toLowerCase()
+        .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)/gi, '')
+        .trim();
+      const matchedRec = subscriptions.find(
+        (rec) => rec.type === deletedTx.type && rec.name.toLowerCase().trim() === cleanNote
+      );
+      if (matchedRec && matchedRec.lastRecordedPeriod) {
+        const nowStr = new Date().toISOString();
+        const updatedRec: RecurringItem = {
+          ...matchedRec,
+          lastRecordedPeriod: '',
+          updatedAt: nowStr,
+        };
+        nextSubs = subscriptions.map((r) => (r.id === matchedRec.id ? updatedRec : r));
+        setSubscriptions(nextSubs);
+        saveStoredSubscriptions(nextSubs, localScopeUid);
+        if (mirrorUid) saveStoredSubscriptions(nextSubs, mirrorUid);
+        if (isCloudUser && user?.uid) {
+          saveUserSubscription(user.uid, updatedRec).catch(() => {});
+          if (mirrorUid) saveUserSubscription(mirrorUid, updatedRec).catch(() => {});
+        }
+        const updatedSubs = (nextBudgetConfig.subcategories || []).map((s) =>
+          s.id === matchedRec.subcategoryId ||
+          s.subscriptionId === matchedRec.id ||
+          s.name.toLowerCase().trim() === cleanNote
+            ? { ...s, lastRecordedPeriod: '' }
+            : s
+        );
+        nextBudgetConfig = {
+          ...nextBudgetConfig,
+          subcategories: updatedSubs,
+          subscriptions: nextSubs,
+          deletedIds: nextDeleted,
+          updatedAt: nowStr,
+        };
+        budgetChanged = true;
+      }
+    }
+
     if (budgetChanged) {
       setBudgetConfig(nextBudgetConfig);
       saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
@@ -2785,6 +2942,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
       persistExtendedBudgetToCloud(user.uid, mirrorUid, {
         budgetConfig: nextBudgetConfig,
+        subscriptions: nextSubs,
         deletedIds: nextDeleted,
       });
     }
@@ -3166,46 +3324,59 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const itemToSync = nextDebts.find((d) => d.id === id);
 
     let nextBudgetConfig = budgetConfig;
-    if (itemToSync && itemToSync.type === 'payable') {
+    if (itemToSync) {
       const debtSubId = `sub-debt-${id}`;
       const cleanDebtName = itemToSync.name.toLowerCase().trim();
       const subDisplayName = itemToSync.name.toLowerCase().startsWith('cicilan')
         ? itemToSync.name
         : `Cicilan ${itemToSync.name}`;
 
-      let dueDay: number | undefined = itemToSync.dueDayOfMonth;
-      if (dueDay === undefined && itemToSync.dueDate) {
-        const pd = new Date(itemToSync.dueDate);
-        if (!isNaN(pd.getTime())) dueDay = pd.getDate();
-      }
-
-      const allocated = getMonthlyDebtInstallmentAmount(itemToSync);
-      const isStillActive =
-        itemToSync.status === 'active' &&
-        itemToSync.remainingAmount > 0 &&
-        isDebtScheduledForBudgetPeriod(itemToSync, budgetPeriod);
-
-      let changedSub = false;
-      const updatedSubs = (budgetConfig.subcategories || []).map((s) => {
-        const sLower = s.name.toLowerCase().trim();
-        if (
-          s.id === debtSubId ||
-          sLower === subDisplayName.toLowerCase() ||
-          sLower === cleanDebtName
-        ) {
-          changedSub = true;
-          return {
-            ...s,
-            name: subDisplayName,
-            allocatedAmount: allocated,
-            dueDateDay: dueDay !== undefined ? dueDay : s.dueDateDay,
-            isSubscriptionActive: isStillActive,
-          };
+      if (itemToSync.type === 'payable') {
+        let dueDay: number | undefined = itemToSync.dueDayOfMonth;
+        if (dueDay === undefined && itemToSync.dueDate) {
+          const pd = parseLocalDay(itemToSync.dueDate);
+          if (!isNaN(pd.getTime())) dueDay = pd.getDate();
         }
-        return s;
-      });
 
-      if (changedSub) {
+        const allocated = getMonthlyDebtInstallmentAmount(itemToSync);
+        const isStillActive =
+          itemToSync.status === 'active' &&
+          itemToSync.remainingAmount > 0 &&
+          isDebtScheduledForBudgetPeriod(itemToSync, budgetPeriod);
+
+        let foundExistingSub = false;
+        const updatedSubs = (budgetConfig.subcategories || []).map((s) => {
+          const sLower = s.name.toLowerCase().trim();
+          if (
+            s.id === debtSubId ||
+            s.subscriptionId === id ||
+            sLower === subDisplayName.toLowerCase() ||
+            sLower === cleanDebtName
+          ) {
+            foundExistingSub = true;
+            return {
+              ...s,
+              name: subDisplayName,
+              allocatedAmount: allocated,
+              dueDateDay: dueDay,
+              isSubscriptionActive: isStillActive,
+            };
+          }
+          return s;
+        });
+
+        if (!foundExistingSub) {
+          updatedSubs.push({
+            id: debtSubId,
+            name: subDisplayName,
+            group: 'kebutuhan',
+            allocatedAmount: allocated,
+            emoji: '💳',
+            dueDateDay: dueDay,
+            isSubscriptionActive: isStillActive,
+          });
+        }
+
         nextBudgetConfig = {
           ...budgetConfig,
           subcategories: updatedSubs,
@@ -3214,6 +3385,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setBudgetConfig(nextBudgetConfig);
         saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
         if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
+      } else {
+        // Switched to receivable: remove any leftover payable subcategory
+        const filteredSubs = (budgetConfig.subcategories || []).filter(
+          (s) => s.id !== debtSubId && s.subscriptionId !== id
+        );
+        if (filteredSubs.length !== (budgetConfig.subcategories || []).length) {
+          nextBudgetConfig = {
+            ...budgetConfig,
+            subcategories: filteredSubs,
+            updatedAt: now,
+          };
+          setBudgetConfig(nextBudgetConfig);
+          saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+          if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
+        }
       }
     }
 
@@ -3391,7 +3577,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         payD.getFullYear(),
         payD.getMonth(),
         payD.getDate(),
-        effectivePaydayDay
+        effectivePaydayDay,
+        {
+          periodMode: budgetConfig.periodMode,
+          customPeriodStart: budgetConfig.customPeriodStart,
+          customNextPayday: budgetConfig.customNextPayday,
+        }
       );
       const totalPaidInMonth = allPayments.reduce((sum, p) => {
         const d = parseLocalDay(p.date);
@@ -3402,7 +3593,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }, 0);
 
       const debtSubId = `sub-debt-${debt.id}`;
-      const subDisplayName = `Cicilan ${debt.name}`;
+      const subDisplayName = debt.name.toLowerCase().startsWith('cicilan')
+        ? debt.name
+        : `Cicilan ${debt.name}`;
       const cleanDebtName = debt.name.toLowerCase().trim();
 
       let updatedSubcategories = [...(budgetConfig.subcategories || [])];
@@ -3410,16 +3603,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const sLower = s.name.toLowerCase().trim();
         return (
           s.id === debtSubId ||
+          s.subscriptionId === debt.id ||
           sLower === subDisplayName.toLowerCase() ||
           sLower === cleanDebtName
         );
       });
 
-      const monthlyTarget = getMonthlyDebtInstallmentAmount({
-        ...debt,
-        remainingAmount: newRemaining,
-        status: newStatus,
-      });
+      const remAtPeriodStart = Math.max(0, newRemaining + totalPaidInMonth);
+      const monthlyTarget =
+        remAtPeriodStart > 0
+          ? getMonthlyDebtInstallmentAmount({
+              ...debt,
+              remainingAmount: remAtPeriodStart,
+              status: 'active',
+            })
+          : 0;
       const targetSubAllocation = Math.max(monthlyTarget, totalPaidInMonth);
 
       if (existingSub) {
@@ -3587,7 +3785,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         payD.getFullYear(),
         payD.getMonth(),
         payD.getDate(),
-        effectivePaydayDay
+        effectivePaydayDay,
+        {
+          periodMode: budgetConfig.periodMode,
+          customPeriodStart: budgetConfig.customPeriodStart,
+          customNextPayday: budgetConfig.customNextPayday,
+        }
       );
       const totalPaidInMonth = nextPayments.reduce((sum, p) => {
         const d = parseLocalDay(p.date);
@@ -3603,7 +3806,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         : `Cicilan ${debt.name}`;
       const cleanDebtName = debt.name.toLowerCase().trim();
 
-      const monthlyTarget = getMonthlyDebtInstallmentAmount(updatedDebt);
+      const remAtPeriodStart = Math.max(0, restoredRemaining + totalPaidInMonth);
+      const monthlyTarget =
+        remAtPeriodStart > 0
+          ? getMonthlyDebtInstallmentAmount({
+              ...updatedDebt,
+              remainingAmount: remAtPeriodStart,
+              status: 'active',
+            })
+          : 0;
       const targetSubAllocation = Math.max(monthlyTarget, totalPaidInMonth);
 
       const updatedSubcategories = (budgetConfig.subcategories || []).map((s) => {
@@ -4464,6 +4675,102 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return true;
   };
 
+  const cancelSubscriptionPayment = (id: string, txIdsToRemove?: string[]): boolean => {
+    const item = subscriptions.find((i) => i.id === id);
+    if (!item) return false;
+
+    markLocalMutation();
+    const now = new Date().toISOString();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
+
+    const txIds = txIdsToRemove && txIdsToRemove.length > 0 ? txIdsToRemove : [];
+    const txIdSet = new Set(txIds);
+
+    let nextDeleted = deletedIds;
+    let remainingTxs = transactions;
+
+    if (txIdSet.size > 0) {
+      nextDeleted = recordDeletedId(txIds);
+      if (mirrorUid) saveStoredDeletedIds(nextDeleted, mirrorUid);
+
+      remainingTxs = transactions.filter((t) => !txIdSet.has(t.id));
+      setTransactions(remainingTxs);
+      saveStoredTransactions(remainingTxs, localScopeUid);
+      if (mirrorUid) saveStoredTransactions(remainingTxs, mirrorUid);
+
+      if (isCloudUser && user?.uid) {
+        txIds.forEach((txId) => {
+          deleteUserTransaction(user.uid, txId).catch(() => {});
+          if (mirrorUid) deleteUserTransaction(mirrorUid, txId).catch(() => {});
+        });
+      }
+    }
+
+    const updatedItem: RecurringItem = {
+      ...item,
+      lastRecordedPeriod: '',
+      updatedAt: now,
+    };
+    const nextSubs = subscriptions.map((i) => (i.id === id ? updatedItem : i));
+    setSubscriptions(nextSubs);
+    saveStoredSubscriptions(nextSubs, localScopeUid);
+    if (mirrorUid) saveStoredSubscriptions(nextSubs, mirrorUid);
+
+    const cleanItemName = item.name.toLowerCase().trim();
+    const updatedSubcategories = (budgetConfig.subcategories || []).map((s) => {
+      const sName = s.name.toLowerCase().trim();
+      if (
+        s.id === item.subcategoryId ||
+        s.subscriptionId === item.id ||
+        sName === cleanItemName
+      ) {
+        return { ...s, lastRecordedPeriod: '' };
+      }
+      return s;
+    });
+
+    let nextEstimatedIncome = budgetConfig.estimatedIncome;
+    if (item.type === 'income' && txIdSet.size > 0) {
+      const { periodRecordedIncome } = resolveEffectivePeriodIncome(
+        budgetConfig,
+        remainingTxs,
+        budgetPeriod
+      );
+      nextEstimatedIncome = periodRecordedIncome;
+    }
+
+    const nextBudgetConfig: BudgetConfig = {
+      ...budgetConfig,
+      estimatedIncome: nextEstimatedIncome,
+      subcategories: updatedSubcategories,
+      subscriptions: nextSubs,
+      deletedIds: nextDeleted,
+      updatedAt: now,
+    };
+    setBudgetConfig(nextBudgetConfig);
+    saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+    if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
+
+    if (isCloudUser && user?.uid) {
+      saveUserSubscription(user.uid, updatedItem).catch(() => {});
+      if (mirrorUid) saveUserSubscription(mirrorUid, updatedItem).catch(() => {});
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+        subscriptions: nextSubs,
+        deletedIds: nextDeleted,
+      });
+    }
+
+    addToast(
+      'Pencatatan Dibatalkan',
+      txIdSet.size > 0
+        ? `Pembayaran ${item.name} dibatalkan & saldo dompet dikembalikan.`
+        : `Status ${item.name} dikembalikan ke belum dicatat.`,
+      'info'
+    );
+    return true;
+  };
+
   const syncSubscriptionsToBudget = () => {
     markLocalMutation();
     const now = new Date().toISOString();
@@ -4833,13 +5140,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Open modals
-  const openAddTransaction = (preselectedType: TransactionType = 'expense') => {
+  const openAddTransaction = (preselectedType: TransactionType = 'expense', initialDate?: string) => {
     setEditingTransaction(null);
+    setPreselectedTransactionType(preselectedType);
+    setPreselectedTransactionDate(initialDate || null);
     setIsAddTransactionOpen(true);
   };
 
   const openEditTransaction = (tx: TransactionDetail) => {
     setEditingTransaction(tx);
+    setPreselectedTransactionDate(null);
     setIsAddTransactionOpen(true);
   };
 
@@ -4981,6 +5291,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setIsAddTransactionOpen,
         editingTransaction,
         setEditingTransaction,
+        preselectedTransactionType,
+        preselectedTransactionDate,
         openAddTransaction,
         openEditTransaction,
         isScanModalOpen,
@@ -5040,6 +5352,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         deleteSubscription,
         toggleSubscriptionActive,
         recordSubscriptionPayment,
+        cancelSubscriptionPayment,
         syncSubscriptionsToBudget,
         addAsset,
         deleteAsset,

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   PieChart,
   Camera,
@@ -26,7 +26,6 @@ import {
   ShieldCheck,
   Bug,
   Wallet,
-  CheckCircle2,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -68,6 +67,19 @@ export function DashboardTab() {
   } = useApp();
 
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
+  const [confirmDeleteTxId, setConfirmDeleteTxId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!confirmDeleteTxId) return;
+    const handleOutsideClick = () => setConfirmDeleteTxId(null);
+    const timer = setTimeout(() => {
+      document.addEventListener('click', handleOutsideClick);
+    }, 10);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('click', handleOutsideClick);
+    };
+  }, [confirmDeleteTxId]);
 
   const hide = settings.hideBalance;
   const userName = settings.userName || 'Trisna';
@@ -82,7 +94,6 @@ export function DashboardTab() {
     () => '☀️'
   );
 
-  const currentDay = activeDay;
   const daysInMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
   const firstDayOfWeek = new Date(activeYear, activeMonth, 1).getDay();
   // Monday-based offset (Mon=0..Sun=6)
@@ -95,6 +106,15 @@ export function DashboardTab() {
     calendarCells.push(d);
   }
 
+  // Default calendar selection to real today when viewing current month, otherwise activeDay
+  const defaultCalendarDay = useMemo(() => {
+    const now = new Date();
+    if (now.getFullYear() === activeYear && now.getMonth() === activeMonth) {
+      return now.getDate();
+    }
+    return Math.max(1, Math.min(daysInMonth, activeDay));
+  }, [activeYear, activeMonth, activeDay, daysInMonth]);
+
   const currentMonthKey = `${activeYear}-${activeMonth}`;
   const [selectedDayState, setSelectedDayState] = useState<{ monthKey: string; day: number } | null>(
     null
@@ -102,7 +122,7 @@ export function DashboardTab() {
   const selectedCalendarDay =
     selectedDayState && selectedDayState.monthKey === currentMonthKey
       ? selectedDayState.day
-      : currentDay;
+      : defaultCalendarDay;
   const setSelectedCalendarDay = (day: number) => {
     setSelectedDayState({ monthKey: currentMonthKey, day });
   };
@@ -115,6 +135,7 @@ export function DashboardTab() {
     const expMap: Record<number, number> = {};
     const incMap: Record<number, number> = {};
     const recordedTxIds = new Set<string>();
+    const catMap = new Map(categories.map((c) => [c.id, c]));
 
     transactions.forEach((tx) => {
       recordedTxIds.add(tx.id);
@@ -122,9 +143,15 @@ export function DashboardTab() {
       if (d.getFullYear() === activeYear && d.getMonth() === activeMonth) {
         const day = d.getDate();
         if (tx.type === 'expense') {
-          expMap[day] = (expMap[day] || 0) + tx.amount;
+          const cat = tx.categoryId ? catMap.get(tx.categoryId) || null : null;
+          if (!isSavingsExpense(tx, cat)) {
+            expMap[day] = (expMap[day] || 0) + tx.amount;
+          }
         } else if (tx.type === 'income') {
-          incMap[day] = (incMap[day] || 0) + tx.amount;
+          const isLoan = Boolean(tx.note && /^pencairan utang:/i.test(tx.note.trim()));
+          if (!isLoan) {
+            incMap[day] = (incMap[day] || 0) + tx.amount;
+          }
         }
       }
     });
@@ -142,12 +169,15 @@ export function DashboardTab() {
     });
 
     return { dailyExpensesMap: expMap, dailyIncomeMap: incMap };
-  }, [transactions, debts, activeYear, activeMonth]);
+  }, [transactions, debts, categories, activeYear, activeMonth]);
 
-  // Transactions for the selected calendar day
-  const selectedDayTransactions = useMemo(() => {
-    if (!selectedCalendarDay) return [];
-    return transactionDetails.filter((detail) => {
+  // Transactions + standalone debt payments for the selected calendar day
+  const { selectedDayTransactions, selectedDayDebtPayments } = useMemo(() => {
+    if (!selectedCalendarDay) {
+      return { selectedDayTransactions: [], selectedDayDebtPayments: [] };
+    }
+    const recordedTxIds = new Set(transactions.map((t) => t.id));
+    const dayTxs = transactionDetails.filter((detail) => {
       const d = parseLocalDay(detail.transaction.date);
       return (
         d.getFullYear() === activeYear &&
@@ -155,7 +185,30 @@ export function DashboardTab() {
         d.getDate() === selectedCalendarDay
       );
     });
-  }, [transactionDetails, activeYear, activeMonth, selectedCalendarDay]);
+
+    const dayDebtPays: { id: string; debtName: string; amount: number; note?: string }[] = [];
+    (debts || []).forEach((debt) => {
+      if (debt.type !== 'payable') return;
+      (debt.payments || []).forEach((p) => {
+        if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
+        const pd = parseLocalDay(p.date);
+        if (
+          pd.getFullYear() === activeYear &&
+          pd.getMonth() === activeMonth &&
+          pd.getDate() === selectedCalendarDay
+        ) {
+          dayDebtPays.push({
+            id: p.id || `${debt.id}-${p.date}`,
+            debtName: debt.name,
+            amount: p.amount,
+            note: p.note,
+          });
+        }
+      });
+    });
+
+    return { selectedDayTransactions: dayTxs, selectedDayDebtPayments: dayDebtPays };
+  }, [transactionDetails, transactions, debts, activeYear, activeMonth, selectedCalendarDay]);
 
   const ID_MONTHS_UPPER = [
     'JANUARI',
@@ -211,7 +264,8 @@ export function DashboardTab() {
 
   // Format percentage helper so small positive values (< 1%) show 1 decimal instead of 0%
   const formatPctDisplay = (spent: number, limit: number): string => {
-    if (spent <= 0 || limit <= 0) return '0%';
+    if (spent <= 0) return '0%';
+    if (limit <= 0) return '100%';
     const raw = (spent / limit) * 100;
     if (raw > 0 && raw < 1) {
       return `${raw.toFixed(1).replace('.', ',')}%`;
@@ -286,9 +340,24 @@ export function DashboardTab() {
     });
 
     return {
-      needsPct: nLimit > 0 ? Math.min(100, Math.round((needsTotal / nLimit) * 100)) : 0,
-      wantsPct: wLimit > 0 ? Math.min(100, Math.round((wantsTotal / wLimit) * 100)) : 0,
-      savingsPct: sLimit > 0 ? Math.min(100, Math.round((savingsTotal / sLimit) * 100)) : 0,
+      needsPct:
+        nLimit > 0
+          ? Math.min(100, Math.round((needsTotal / nLimit) * 100))
+          : needsTotal > 0
+          ? 100
+          : 0,
+      wantsPct:
+        wLimit > 0
+          ? Math.min(100, Math.round((wantsTotal / wLimit) * 100))
+          : wantsTotal > 0
+          ? 100
+          : 0,
+      savingsPct:
+        sLimit > 0
+          ? Math.min(100, Math.round((savingsTotal / sLimit) * 100))
+          : savingsTotal > 0
+          ? 100
+          : 0,
       needsCfgPct: nCfgPct,
       wantsCfgPct: wCfgPct,
       savingsBudgetCfgPct: sCfgPct,
@@ -301,7 +370,7 @@ export function DashboardTab() {
     };
   }, [transactions, debts, budgetConfig, categories, budgetPeriod]);
 
-  // Previous Period Comparison for Income & Expense Cards (Replaces hardcoded "+100% vs periode lalu")
+  // Previous Period Comparison for Income & Expense Cards
   const prevPeriodComparison = useMemo(() => {
     const rawPayday = budgetConfig?.paydayDay || budgetConfig?.settings?.paydayDay || 1;
     const customPeriodCfg = {
@@ -330,8 +399,10 @@ export function DashboardTab() {
     let prevIncome = 0;
     let prevExpense = 0;
     const catMap = new Map(categories.map((c) => [c.id, c]));
+    const recordedTxIds = new Set<string>();
 
     transactions.forEach((tx) => {
+      recordedTxIds.add(tx.id);
       const d = parseLocalDay(tx.date);
       if (isDateInBudgetPeriod(d, prevPeriod)) {
         if (tx.type === 'income') {
@@ -344,6 +415,17 @@ export function DashboardTab() {
           }
         }
       }
+    });
+
+    (debts || []).forEach((debt) => {
+      if (debt.type !== 'payable') return;
+      (debt.payments || []).forEach((p) => {
+        if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
+        const pd = parseLocalDay(p.date);
+        if (isDateInBudgetPeriod(pd, prevPeriod)) {
+          prevExpense += p.amount;
+        }
+      });
     });
 
     const incDeltaPct =
@@ -363,6 +445,7 @@ export function DashboardTab() {
     };
   }, [
     transactions,
+    debts,
     categories,
     budgetConfig,
     activeYear,
@@ -408,7 +491,7 @@ export function DashboardTab() {
         return {
           id: catId,
           name: cat?.name || (catId === 'cat-tagihan' ? 'Cicilan & Tagihan' : 'Lainnya'),
-          group: (cat?.groupName || 'KEBUTUHAN').toUpperCase(),
+          group: cat?.groupName || 'Kebutuhan',
           emoji: cat?.emoji || '💳',
           amount,
         };
@@ -423,7 +506,7 @@ export function DashboardTab() {
   const remainingBudget = Math.max(0, budgetLimit - budgetSpent);
   const isOverTotalBudget = budgetLimit > 0 && budgetSpent > budgetLimit;
 
-  // Dynamic SVG Donut Calculations for "Realisasi Anggaran" (circumference = 2 * PI * 38 = 238.76)
+  // Dynamic SVG Donut Calculations for "Realisasi Budget" (circumference = 2 * PI * 38 = 238.76)
   const donutMetrics = useMemo(() => {
     const circumference = 2 * Math.PI * 38; // 238.761
     const baseTotal = Math.max(budgetLimit, nSpent + wSpent, 1);
@@ -439,18 +522,18 @@ export function DashboardTab() {
       needsArc,
       wantsArc,
       wantsOffset,
-      usedPctStr: formatPctDisplay(budgetSpent, budgetLimit),
+      usedPctStr: budgetLimit > 0 ? formatPctDisplay(budgetSpent, budgetLimit) : '0%',
     };
   }, [budgetLimit, budgetSpent, nSpent, wSpent]);
 
   const menuItems = [
-    { id: 'scan', label: 'Scan SS', icon: Camera, action: () => openScanModal() },
+    { id: 'scan', label: 'Scan', icon: Camera, action: () => openScanModal() },
     { id: 'budget', label: 'Budget', icon: PieChart, action: () => setActiveTab('budget') },
     { id: 'goals', label: 'Goals', icon: Target, action: () => setActiveTab('goals') },
     { id: 'aset', label: 'Aset', icon: Landmark, action: () => setActiveTab('assets') },
     {
       id: 'subscriptions',
-      label: 'Langganan',
+      label: 'Tagihan',
       icon: CalendarClock,
       action: () => setActiveTab('subscriptions'),
     },
@@ -458,7 +541,7 @@ export function DashboardTab() {
     { id: 'investasi', label: 'Investasi', icon: TrendingUp, action: () => setActiveTab('invest') },
     {
       id: 'analytics',
-      label: 'Analisis & Skor',
+      label: 'Analisis',
       icon: BarChart3,
       action: () => setActiveTab('analytics'),
     },
@@ -512,7 +595,7 @@ export function DashboardTab() {
   return (
     <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-12">
       {/* 1. Header Greeting + Active Period Control */}
-      <div className="pt-1 lg:pt-1 px-0.5 flex items-center justify-between gap-2.5">
+      <div className="pt-1 px-0.5 flex items-center justify-between gap-2.5">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h1 className="text-2xl lg:text-[28px] font-black text-gray-900 dark:text-white tracking-tight leading-none truncate">
@@ -520,34 +603,34 @@ export function DashboardTab() {
             </h1>
             {user && (
               <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold whitespace-nowrap shrink-0">
-                · Cloud Aktif
+                · Cloud
               </span>
             )}
           </div>
-          <p className="text-xs lg:text-sm font-semibold text-gray-500 dark:text-gray-400 mt-1 whitespace-nowrap truncate">
+          <p className="text-xs lg:text-sm font-medium text-gray-500 dark:text-gray-400 mt-1 whitespace-nowrap truncate">
             Halo, {userName} {greetingEmoji}
           </p>
         </div>
 
-        {/* Active Period Pill Badge (clickable to open Budget Period settings) */}
+        {/* Active Period Control */}
         <button
           type="button"
           onClick={() => setActiveTab('budget')}
-          title="Klik untuk mengatur Periode & Tanggal Gajian"
-          className="flex items-center gap-2.5 bg-white dark:bg-[#16181D] hover:border-[#D4F826] border border-gray-200/80 dark:border-gray-800 rounded-2xl px-3 py-2 sm:px-4 sm:py-2.5 shadow-2xs transition-colors cursor-pointer text-left shrink-0"
+          title="Atur Periode & Gajian"
+          className="flex items-center gap-2.5 bg-white dark:bg-[#16181D] hover:border-[#D4F826] border border-gray-200/80 dark:border-gray-800 rounded-2xl px-3 py-2 sm:px-3.5 sm:py-2 shadow-2xs transition-colors cursor-pointer text-left shrink-0"
         >
           <div className="w-7 h-7 rounded-xl bg-[#D4F826]/25 flex items-center justify-center text-[#658500] dark:text-[#D4F826] shrink-0">
-            <CalendarClock size={14} strokeWidth={2.5} />
+            <CalendarClock size={14} strokeWidth={2.4} />
           </div>
           <div className="whitespace-nowrap">
-            <span className="text-[9px] font-extrabold uppercase tracking-wider text-gray-400 block leading-none">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-gray-400 block leading-none">
               {budgetPeriod.isCustomFlexiblePeriod
-                ? `FLEKSIBEL (${budgetPeriod.totalDays} HARI)`
+                ? `Fleksibel (${budgetPeriod.totalDays}h)`
                 : budgetPeriod.paydayDay > 1
-                ? `GAJIAN TGL ${budgetPeriod.paydayDay}`
-                : 'PERIODE AKTIF'}
+                ? `Gajian Tgl ${budgetPeriod.paydayDay}`
+                : 'Periode'}
             </span>
-            <span className="text-xs font-black text-gray-900 dark:text-white mt-1 block leading-none">
+            <span className="text-xs font-extrabold text-gray-900 dark:text-white mt-0.5 block leading-none">
               {activePeriodLabel}
             </span>
           </div>
@@ -556,24 +639,24 @@ export function DashboardTab() {
 
       {/* Multi-user Cloud Sync Prompt Banner if in Guest mode */}
       {!user && (
-        <div className="lg:hidden bg-gradient-to-r from-emerald-500/10 via-lime-500/10 to-teal-500/10 dark:from-emerald-950/40 dark:via-lime-950/30 dark:to-teal-950/40 border border-emerald-500/25 dark:border-emerald-500/30 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#D4F826] text-black flex items-center justify-center shrink-0 font-black text-base shadow-xs">
-              👥
+        <div className="lg:hidden bg-white dark:bg-[#16181D] border border-emerald-500/25 dark:border-emerald-500/30 rounded-2xl p-3.5 flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-[#D4F826] text-black flex items-center justify-center shrink-0 font-black text-sm">
+              ☁️
             </div>
-            <div className="text-xs">
-              <p className="font-black text-gray-900 dark:text-white">
-                Simpan Data Aman di Cloud
+            <div className="text-xs min-w-0">
+              <p className="font-extrabold text-gray-900 dark:text-white truncate">
+                Sinkronisasi Cloud
               </p>
-              <p className="text-gray-600 dark:text-gray-300 text-[11px]">
-                Masuk akun agar catatan dompet & budget tersinkron di semua perangkat.
+              <p className="text-gray-500 dark:text-gray-400 text-[11px] truncate">
+                Masuk akun agar data tersimpan aman.
               </p>
             </div>
           </div>
           <button
             type="button"
             onClick={openLoginModal}
-            className="px-3 py-1.5 rounded-xl bg-[#D4F826] hover:bg-[#cbf11e] text-black font-black text-xs shrink-0 transition-transform active:scale-95 shadow-xs cursor-pointer"
+            className="px-3 py-1.5 rounded-xl bg-[#D4F826] hover:bg-[#cbf11e] text-black font-extrabold text-xs shrink-0 transition-transform active:scale-95 cursor-pointer"
           >
             Masuk
           </button>
@@ -582,16 +665,16 @@ export function DashboardTab() {
 
       {/* Main Responsive Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 items-stretch">
-        {/* 2. Sekilas Hari Ini (Full-Width Dark Hero Banner) */}
+        {/* 2. Kuota Harian (Full-Width Dark Hero Banner) */}
         <motion.div
-          initial={{ opacity: 0, y: 10 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[28px] lg:rounded-[32px] p-5 sm:p-7 lg:px-9 lg:py-8 bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white shadow-xl border border-white/10 flex flex-col justify-between"
+          className="order-1 lg:order-1 lg:col-span-12 relative overflow-hidden rounded-[28px] lg:rounded-[32px] p-5 sm:p-6 lg:px-8 lg:py-7 bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] text-white shadow-xl border border-white/10 flex flex-col justify-between"
         >
-          {/* Ambient Mesh Gradient Glows */}
-          <div className="absolute -top-24 -right-16 w-80 h-80 lg:w-96 lg:h-96 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none" />
+          {/* Ambient Glows */}
+          <div className="absolute -top-24 -right-16 w-80 h-80 rounded-full bg-[#8B5CF6]/15 blur-3xl pointer-events-none" />
           <div
-            className={`absolute -bottom-24 -left-16 w-80 h-80 lg:w-96 lg:h-96 rounded-full blur-3xl pointer-events-none ${
+            className={`absolute -bottom-24 -left-16 w-80 h-80 rounded-full blur-3xl pointer-events-none ${
               settings.accentColor === 'orange'
                 ? 'bg-[#FF6B2B]/15'
                 : settings.accentColor === 'pink'
@@ -600,20 +683,18 @@ export function DashboardTab() {
             }`}
           />
 
-          {/* Top Row: Sekilas Hari Ini • Sisa Kuota Harian | Hari X/Y + Eye */}
+          {/* Top Row */}
           <div className="relative z-10 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs sm:text-sm min-w-0">
               <span className="font-extrabold text-[#D4F826] whitespace-nowrap shrink-0">
-                Sekilas Hari Ini
+                Kuota Harian
               </span>
-              <span className="text-slate-400 shrink-0">·</span>
-              <span className="font-medium text-slate-300 truncate">
-                Sisa Jatah Kuota Harian
-              </span>
+              <span className="text-slate-500 shrink-0">·</span>
+              <span className="font-medium text-slate-300 truncate">Jatah Hari Ini</span>
             </div>
-            <div className="flex items-center gap-2.5 shrink-0">
-              <span className="text-xs font-mono font-semibold text-slate-300 tracking-wide whitespace-nowrap tabular-nums">
-                Hari ke-{periodCurrentDay}/{periodTotalDays} ({budgetPeriod.daysRemainingUntilPayday}h lagi gajian)
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-mono font-semibold text-slate-300 tabular-nums whitespace-nowrap">
+                Hari {periodCurrentDay}/{periodTotalDays} · {budgetPeriod.daysRemainingUntilPayday}h lagi
               </span>
               <button
                 type="button"
@@ -626,50 +707,45 @@ export function DashboardTab() {
             </div>
           </div>
 
-          {/* Middle Row: Left Big Monospace Daily Remaining + Right 3 KPI Cards */}
-          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 mt-4 sm:mt-5">
+          {/* Middle Row: Big Monospace Daily Remaining + Right 3 KPI Cards */}
+          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 mt-4">
             <div className="space-y-1.5">
-              <div className="flex items-baseline gap-2.5 flex-wrap">
-                <div className="text-3xl sm:text-5xl lg:text-[52px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <div className="text-3xl sm:text-5xl lg:text-[48px] font-mono font-bold tracking-tight tabular-nums text-white leading-none">
                   {hide ? 'Rp ••••••' : formatRupiah(dashboardSummary.dailyBudgetRemaining, false)}
                 </div>
                 {dashboardSummary.dailyBudgetQuota > 0 && (
-                  <span className="text-xs sm:text-sm font-semibold text-slate-400 tabular-nums">
-                    / {formatRupiah(dashboardSummary.dailyBudgetQuota, hide)} per hari
+                  <span className="text-xs sm:text-sm font-medium text-slate-400 tabular-nums">
+                    / {formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}
                   </span>
                 )}
               </div>
 
               {dashboardSummary.dailyOverbudget ? (
-                <div className="pt-1 space-y-1">
-                  <p className="text-xs sm:text-sm text-rose-400 font-semibold leading-snug">
-                    Melebihi kuota hari ini (+
-                    {formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}) dari jatah{' '}
-                    {formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
-                  </p>
+                <p className="text-xs text-rose-400 font-semibold pt-0.5 tabular-nums">
+                  Lewat +{formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}
                   {budgetPeriod.daysRemainingUntilPayday > 1 && (
-                    <p className="text-[11px] sm:text-xs text-amber-300/95 font-medium leading-snug">
-                      ↳ Kuota mulai besok menyesuaikan jadi{' '}
-                      <strong>~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hari</strong>{' '}
-                      (-{formatRupiah(dashboardSummary.tomorrowQuotaDiff, hide)}/hari s/d gajian)
-                    </p>
+                    <span className="text-amber-300 font-medium">
+                      {' '}
+                      · Kuota besok ~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hr
+                    </span>
                   )}
-                </div>
+                </p>
               ) : dashboardSummary.dailyBudgetQuota > 0 &&
                 dashboardSummary.remainingVariableBudget <= 0 ? (
-                <p className="text-xs sm:text-sm text-amber-300 font-medium pt-1">
-                  Sisa uang operasional periode ini telah habis terpakai
+                <p className="text-xs text-amber-300 font-medium pt-0.5">
+                  Saldo pos harian periode ini habis
                 </p>
               ) : (
                 <p className="text-xs text-slate-400 font-medium pt-0.5 tabular-nums">
-                  Sisa saldo pos harian:{' '}
+                  Saldo pos harian:{' '}
                   <strong className="text-slate-200">
                     {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
                   </strong>
                   {todayNonDailyTotal > 0 && (
                     <span>
                       {' '}
-                      · Pengeluaran non-kuota hari ini:{' '}
+                      · Non-kuota:{' '}
                       <strong className="text-amber-300">
                         {formatRupiah(todayNonDailyTotal, hide)}
                       </strong>
@@ -679,16 +755,16 @@ export function DashboardTab() {
               )}
             </div>
 
-            {/* Right: 3 Symmetrical KPI Cards (Saldo Dompet, Pemasukan Hari Ini, Pengeluaran Hari Ini) */}
+            {/* Right: 3 Symmetrical KPI Cards */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3 shrink-0">
               <div
                 onClick={() => setActiveTab('wallets')}
-                className="col-span-2 sm:col-span-1 rounded-2xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 p-3.5 sm:px-4 sm:py-3.5 min-w-0 sm:min-w-[165px] cursor-pointer transition-colors"
-                title="Klik untuk kelola dompet"
+                className="col-span-2 sm:col-span-1 rounded-2xl bg-white/[0.05] hover:bg-white/[0.09] border border-white/10 p-3.5 sm:px-4 sm:py-3 min-w-0 sm:min-w-[160px] cursor-pointer transition-colors"
+                title="Kelola dompet"
               >
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider truncate">
-                    SALDO DOMPET
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider truncate">
+                    Saldo Dompet
                   </span>
                   <Wallet size={12} className="text-slate-400 shrink-0" />
                 </div>
@@ -697,18 +773,18 @@ export function DashboardTab() {
                 </div>
               </div>
 
-              <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-3.5 sm:px-4 sm:py-3.5 min-w-0 sm:min-w-[160px]">
-                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block truncate">
-                  PEMASUKAN HARI INI
+              <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-3.5 sm:px-4 sm:py-3 min-w-0 sm:min-w-[150px]">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+                  Masuk Hari Ini
                 </span>
                 <div className="text-sm sm:text-lg font-mono font-bold text-[#D4F826] mt-1 tabular-nums truncate">
                   {hide ? 'Rp ••••••' : `+${formatRupiah(todayIncome, false)}`}
                 </div>
               </div>
 
-              <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-3.5 sm:px-4 sm:py-3.5 min-w-0 sm:min-w-[160px]">
-                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block truncate">
-                  PENGELUARAN HARI INI
+              <div className="rounded-2xl bg-white/[0.04] border border-white/10 p-3.5 sm:px-4 sm:py-3 min-w-0 sm:min-w-[150px]">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block truncate">
+                  Keluar Hari Ini
                 </span>
                 <div className="text-sm sm:text-lg font-mono font-bold text-[#FB7185] mt-1 tabular-nums truncate">
                   {hide ? 'Rp ••••••' : `-${formatRupiah(todayExpense, false)}`}
@@ -718,17 +794,16 @@ export function DashboardTab() {
           </div>
 
           {/* Progress Section: Kapasitas Kuota Harian */}
-          <div className="relative z-10 mt-5">
-            <div className="flex items-center justify-between text-xs mb-1.5">
+          <div className="relative z-10 mt-4">
+            <div className="flex items-center justify-between text-xs mb-1.5 tabular-nums">
               <span className="text-slate-400 font-medium">
-                Kapasitas Kuota Operasional Hari Ini (Terpakai{' '}
-                {formatRupiah(dashboardSummary.todayVariableExpense, hide)})
+                Terpakai {formatRupiah(dashboardSummary.todayVariableExpense, hide)}
               </span>
-              <span className="text-white font-extrabold tabular-nums">Sisa {dailyCapacityPct}%</span>
+              <span className="text-white font-bold">Sisa {dailyCapacityPct}%</span>
             </div>
-            <div className="w-full h-2 sm:h-2.5 bg-white/10 rounded-full overflow-hidden">
+            <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full transition-all duration-500 ${
+                className={`h-full rounded-full transition-all duration-300 ${
                   dashboardSummary.dailyOverbudget
                     ? 'bg-[#FB7185]'
                     : settings.accentColor === 'orange'
@@ -743,11 +818,11 @@ export function DashboardTab() {
           </div>
 
           {/* Bottom Action Buttons */}
-          <div className="relative z-10 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 sm:gap-3 mt-5">
+          <div className="relative z-10 grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2.5 mt-4">
             <button
               type="button"
-              onClick={() => openAddTransaction()}
-              className="h-11 px-4 sm:px-5 rounded-2xl bg-[#D4F826] hover:bg-[#c8ed1d] text-black font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md transition-transform active:scale-95 cursor-pointer whitespace-nowrap"
+              onClick={() => openAddTransaction('expense')}
+              className="h-10 sm:h-11 px-4 sm:px-5 rounded-2xl bg-[#D4F826] hover:bg-[#c8ed1d] text-black font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 shadow-md transition-transform active:scale-95 cursor-pointer whitespace-nowrap"
             >
               <Plus size={15} strokeWidth={2.6} className="shrink-0" />
               <span>Catat Transaksi</span>
@@ -756,28 +831,28 @@ export function DashboardTab() {
             <button
               type="button"
               onClick={() => openScanModal()}
-              className="h-11 px-3.5 sm:px-4 rounded-2xl bg-white/10 hover:bg-white/15 border border-[#D4F826]/30 text-[#D4F826] font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
-              title="Ekstrak Otomatis Screenshot Struk / E-Wallet"
+              className="h-10 sm:h-11 px-3.5 sm:px-4 rounded-2xl bg-white/10 hover:bg-white/15 border border-[#D4F826]/30 text-[#D4F826] font-extrabold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+              title="Scan Struk / Screenshot"
             >
               <Camera size={15} strokeWidth={2.4} className="shrink-0" />
-              <span>Scan Struk / SS</span>
+              <span>Scan Struk</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('budget')}
-              className="col-span-2 sm:col-span-1 h-11 px-4 sm:px-5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/15 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
+              className="col-span-2 sm:col-span-1 h-10 sm:h-11 px-4 sm:px-5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/15 text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap"
             >
-              <span>Atur Budget & Gajian</span>
+              <span>Atur Budget</span>
               <ArrowUpRight size={15} className="text-slate-400 shrink-0" />
             </button>
           </div>
         </motion.div>
 
-        {/* 3. Menu Utama (Mobile Only - Symmetrical 5x2 Grid of 10 Features) */}
-        <div className="order-2 lg:hidden bg-white dark:bg-[#16181D] rounded-[28px] p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
+        {/* 3. Menu Pintasan (Mobile Only - Symmetrical 5x2 Grid) */}
+        <div className="order-2 lg:hidden bg-white dark:bg-[#16181D] rounded-[28px] p-4 sm:p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3.5">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">Menu Pintasan</h3>
+            <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">Pintasan</h3>
             <button
               type="button"
               onClick={() => setActiveTab('settings')}
@@ -788,7 +863,7 @@ export function DashboardTab() {
             </button>
           </div>
 
-          <div className="grid grid-cols-5 gap-y-4 gap-x-2 text-center">
+          <div className="grid grid-cols-5 gap-y-3.5 gap-x-2 text-center">
             {menuItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -798,8 +873,8 @@ export function DashboardTab() {
                   onClick={item.action}
                   className="flex flex-col items-center justify-start gap-1.5 group cursor-pointer min-w-0"
                 >
-                  <div className="w-12 h-12 rounded-2xl bg-gray-50 dark:bg-gray-800/80 border border-gray-100 dark:border-gray-700/60 flex items-center justify-center text-gray-800 dark:text-gray-200 group-hover:scale-105 group-hover:border-[#D4F826] transition-all shrink-0">
-                    <Icon size={20} strokeWidth={2.1} />
+                  <div className="w-11 h-11 rounded-2xl bg-gray-50 dark:bg-gray-800/80 border border-gray-100 dark:border-gray-700/60 flex items-center justify-center text-gray-800 dark:text-gray-200 group-hover:scale-105 group-hover:border-[#D4F826] transition-all shrink-0">
+                    <Icon size={19} strokeWidth={2.1} />
                   </div>
                   <span className="text-[10px] font-bold text-gray-700 dark:text-gray-300 leading-tight truncate w-full">
                     {item.label}
@@ -814,15 +889,13 @@ export function DashboardTab() {
               <button
                 type="button"
                 onClick={() => setActiveTab('admin')}
-                className="w-full py-2.5 px-3.5 rounded-2xl bg-[#D4F826] hover:bg-[#c8ec1c] text-black flex items-center justify-between text-xs font-extrabold transition-colors cursor-pointer"
+                className="w-full py-2 px-3 rounded-xl bg-[#D4F826] hover:bg-[#c8ec1c] text-black flex items-center justify-between text-xs font-extrabold transition-colors cursor-pointer"
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-6 h-6 rounded-lg bg-black text-[#D4F826] flex items-center justify-center shrink-0">
-                    <ShieldCheck size={13} strokeWidth={2.5} />
-                  </div>
-                  <span className="truncate">Dashboard Admin (Kelola User & Laporan)</span>
+                  <ShieldCheck size={14} strokeWidth={2.5} className="shrink-0" />
+                  <span className="truncate">Panel Admin</span>
                 </div>
-                <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded bg-black/15">
+                <span className="text-[10px] font-mono font-bold tabular-nums">
                   {managedUsers.filter((u) => u.status === 'pending').length} Pending
                 </span>
               </button>
@@ -832,40 +905,36 @@ export function DashboardTab() {
               <button
                 type="button"
                 onClick={() => setActiveTab('feedback')}
-                className="py-2.5 px-3 rounded-2xl bg-gray-50 dark:bg-gray-800/60 hover:bg-[#D4F826]/20 dark:hover:bg-[#D4F826]/15 border border-gray-100 dark:border-gray-700/60 flex items-center justify-between text-xs font-extrabold text-gray-800 dark:text-gray-200 transition-colors cursor-pointer"
+                className="py-2 px-3 rounded-xl bg-gray-50 dark:bg-gray-800/60 hover:bg-[#D4F826]/20 dark:hover:bg-[#D4F826]/15 border border-gray-100 dark:border-gray-700/60 flex items-center justify-between text-xs font-bold text-gray-800 dark:text-gray-200 transition-colors cursor-pointer"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-6 h-6 rounded-lg bg-rose-500/15 text-rose-500 flex items-center justify-center shrink-0">
-                    <Bug size={13} strokeWidth={2.5} />
-                  </div>
-                  <span className="truncate">Lapor Bug / Saran</span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <Bug size={13} className="text-rose-500 shrink-0" />
+                  <span className="truncate">Masukan</span>
                 </div>
-                <ChevronRight size={14} className="text-gray-400 shrink-0" />
+                <ChevronRight size={13} className="text-gray-400 shrink-0" />
               </button>
 
               <button
                 type="button"
                 onClick={() => setActiveTab('tutorial')}
-                className="py-2.5 px-3 rounded-2xl bg-gray-50 dark:bg-gray-800/60 hover:bg-[#D4F826]/20 dark:hover:bg-[#D4F826]/15 border border-gray-100 dark:border-gray-700/60 flex items-center justify-between text-xs font-extrabold text-gray-800 dark:text-gray-200 transition-colors cursor-pointer"
+                className="py-2 px-3 rounded-xl bg-gray-50 dark:bg-gray-800/60 hover:bg-[#D4F826]/20 dark:hover:bg-[#D4F826]/15 border border-gray-100 dark:border-gray-700/60 flex items-center justify-between text-xs font-bold text-gray-800 dark:text-gray-200 transition-colors cursor-pointer"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="w-6 h-6 rounded-lg bg-[#D4F826] text-black flex items-center justify-center shrink-0">
-                    <BookOpen size={13} strokeWidth={2.5} />
-                  </div>
-                  <span className="truncate">Panduan Fitur</span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <BookOpen size={13} className="text-lime-600 dark:text-[#D4F826] shrink-0" />
+                  <span className="truncate">Panduan</span>
                 </div>
-                <ChevronRight size={14} className="text-gray-400 shrink-0" />
+                <ChevronRight size={13} className="text-gray-400 shrink-0" />
               </button>
             </div>
           </div>
         </div>
 
-        {/* 4. Progres Pengeluaran & Alokasi (Full-width horizontal card) */}
-        <div className="order-3 lg:order-2 lg:col-span-12 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:px-8 lg:py-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col lg:flex-row lg:items-center justify-between gap-5 lg:gap-10">
+        {/* 4. Porsi Anggaran (Full-width horizontal card) */}
+        <div className="order-3 lg:order-2 lg:col-span-12 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:px-7 lg:py-5 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col lg:flex-row lg:items-center justify-between gap-4 lg:gap-8">
           {/* Left: Ring + Title */}
           <div className="flex items-center justify-between lg:justify-start gap-4 shrink-0">
-            <div className="flex items-center gap-4">
-              <div className="relative w-14 h-14 flex items-center justify-center shrink-0">
+            <div className="flex items-center gap-3.5">
+              <div className="relative w-13 h-13 flex items-center justify-center shrink-0">
                 <svg className="w-full h-full transform -rotate-90" viewBox="0 0 60 60">
                   <circle
                     cx="30"
@@ -889,20 +958,20 @@ export function DashboardTab() {
                   />
                 </svg>
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-[7px] font-black uppercase text-gray-400 leading-none">
+                  <span className="text-[7px] font-extrabold uppercase text-gray-400 leading-none">
                     HARI
                   </span>
-                  <span className="text-sm font-black text-gray-900 dark:text-white leading-tight tabular-nums">
+                  <span className="text-xs font-black text-gray-900 dark:text-white leading-tight tabular-nums">
                     {periodCurrentDay}
                   </span>
                 </div>
               </div>
               <div className="min-w-0">
                 <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
-                  Progres Porsi Anggaran
+                  Porsi Anggaran
                 </h3>
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 tabular-nums">
-                  Hari ke-{periodCurrentDay} dari {periodTotalDays} ({activePeriodLabel})
+                  {activePeriodLabel} · Hari {periodCurrentDay}/{periodTotalDays}
                 </p>
               </div>
             </div>
@@ -917,12 +986,12 @@ export function DashboardTab() {
             </button>
           </div>
 
-          {/* Right: 3 Wide Horizontal Bars with Nominal + Percentage */}
-          <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 lg:gap-6">
+          {/* Right: 3 Wide Horizontal Bars */}
+          <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3 lg:gap-4">
             {/* Kebutuhan */}
             <div
               onClick={() => setActiveTab('budget')}
-              className="p-3.5 rounded-2xl bg-gray-50/70 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800/80 hover:border-violet-400/50 transition-colors cursor-pointer space-y-2"
+              className="p-3.5 rounded-2xl bg-gray-50/70 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800/80 hover:border-violet-400/50 transition-colors cursor-pointer space-y-1.5"
             >
               <div className="flex items-center justify-between text-xs">
                 <span className="font-extrabold text-[#8B5CF6] text-[11px] uppercase tracking-wider">
@@ -935,30 +1004,30 @@ export function DashboardTab() {
               <div className="w-full h-1.5 rounded-full bg-gray-200/80 dark:bg-gray-800 overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-300 ${
-                    nSpent > needsBudget && needsBudget > 0 ? 'bg-rose-500' : 'bg-[#A78BFA]'
+                    nSpent > needsBudget ? 'bg-rose-500' : 'bg-[#A78BFA]'
                   }`}
                   style={{ width: `${needsPct}%` }}
                 />
               </div>
               <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">
-                <span>
+                <span className="truncate">
                   {formatRupiah(nSpent, hide)} / {formatRupiah(needsBudget, hide)}
                 </span>
                 <span
-                  className={
-                    nSpent > needsBudget && needsBudget > 0
+                  className={`shrink-0 ml-1 ${
+                    nSpent > needsBudget
                       ? 'text-rose-500 font-bold'
                       : needsPct >= 85
                       ? 'text-amber-500 font-bold'
                       : 'text-emerald-600 dark:text-emerald-400 font-semibold'
-                  }
+                  }`}
                 >
-                  {needsCfgPct === 0
+                  {nSpent > needsBudget
+                    ? 'Lewat'
+                    : needsCfgPct === 0
                     ? 'Porsi 0%'
-                    : nSpent > needsBudget
-                    ? 'Over Budget'
                     : needsPct >= 85
-                    ? 'Hampir Penuh'
+                    ? 'Hampir penuh'
                     : 'Aman'}
                 </span>
               </div>
@@ -967,45 +1036,43 @@ export function DashboardTab() {
             {/* Keinginan */}
             <div
               onClick={() => setActiveTab('budget')}
-              className="p-3.5 rounded-2xl bg-gray-50/70 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800/80 hover:border-orange-400/50 transition-colors cursor-pointer space-y-2"
+              className="p-3.5 rounded-2xl bg-gray-50/70 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800/80 hover:border-orange-400/50 transition-colors cursor-pointer space-y-1.5"
             >
               <div className="flex items-center justify-between text-xs">
                 <span className="font-extrabold text-[#F97316] text-[11px] uppercase tracking-wider">
                   Keinginan ({wantsCfgPct}%)
                 </span>
                 <span className="font-black text-gray-900 dark:text-white text-xs tabular-nums">
-                  {wantsCfgPct === 0 && wSpent === 0
-                    ? '0%'
-                    : formatPctDisplay(wSpent, wantsBudget)}
+                  {formatPctDisplay(wSpent, wantsBudget)}
                 </span>
               </div>
               <div className="w-full h-1.5 rounded-full bg-gray-200/80 dark:bg-gray-800 overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-300 ${
-                    wSpent > wantsBudget && wantsBudget > 0 ? 'bg-rose-500' : 'bg-[#FB923C]'
+                    wSpent > wantsBudget ? 'bg-rose-500' : 'bg-[#FB923C]'
                   }`}
                   style={{ width: `${wantsPct}%` }}
                 />
               </div>
               <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">
-                <span>
+                <span className="truncate">
                   {formatRupiah(wSpent, hide)} / {formatRupiah(wantsBudget, hide)}
                 </span>
                 <span
-                  className={
-                    wSpent > wantsBudget && wantsBudget > 0
+                  className={`shrink-0 ml-1 ${
+                    wSpent > wantsBudget
                       ? 'text-rose-500 font-bold'
                       : wantsPct >= 85
                       ? 'text-amber-500 font-bold'
                       : 'text-gray-400 font-semibold'
-                  }
+                  }`}
                 >
-                  {wantsCfgPct === 0
-                    ? 'Nonaktif (0%)'
-                    : wSpent > wantsBudget
-                    ? 'Over Budget'
+                  {wSpent > wantsBudget
+                    ? 'Lewat'
+                    : wantsCfgPct === 0
+                    ? 'Porsi 0%'
                     : wantsPct >= 85
-                    ? 'Perlu Rem'
+                    ? 'Hampir penuh'
                     : 'Aman'}
                 </span>
               </div>
@@ -1014,16 +1081,14 @@ export function DashboardTab() {
             {/* Tabungan */}
             <div
               onClick={() => setActiveTab('budget')}
-              className="p-3.5 rounded-2xl bg-gray-50/70 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800/80 hover:border-sky-400/50 transition-colors cursor-pointer space-y-2"
+              className="p-3.5 rounded-2xl bg-gray-50/70 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800/80 hover:border-sky-400/50 transition-colors cursor-pointer space-y-1.5"
             >
               <div className="flex items-center justify-between text-xs">
                 <span className="font-extrabold text-[#38BDF8] text-[11px] uppercase tracking-wider">
                   Tabungan ({savingsBudgetCfgPct}%)
                 </span>
                 <span className="font-black text-gray-900 dark:text-white text-xs tabular-nums">
-                  {savingsBudgetCfgPct === 0 && sSpent === 0
-                    ? '0%'
-                    : formatPctDisplay(sSpent, savingsBudget)}
+                  {formatPctDisplay(sSpent, savingsBudget)}
                 </span>
               </div>
               <div className="w-full h-1.5 rounded-full bg-gray-200/80 dark:bg-gray-800 overflow-hidden">
@@ -1033,31 +1098,31 @@ export function DashboardTab() {
                 />
               </div>
               <div className="flex items-center justify-between text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">
-                <span>
+                <span className="truncate">
                   {formatRupiah(sSpent, hide)} / {formatRupiah(savingsBudget, hide)}
                 </span>
-                <span className="text-sky-500 dark:text-sky-400 font-semibold">
-                  {savingsBudgetCfgPct === 0
-                    ? 'Alokasi 0% bulan ini'
+                <span className="text-sky-500 dark:text-sky-400 font-semibold shrink-0 ml-1">
+                  {savingsBudgetCfgPct === 0 && sSpent === 0
+                    ? 'Porsi 0%'
                     : savingsPct >= 100
-                    ? 'Target Tercapai!'
+                    ? 'Tercapai'
                     : sSpent > 0
-                    ? 'Sedang Menabung'
-                    : 'Belum Disisihkan'}
+                    ? 'Berjalan'
+                    : 'Belum ada'}
                 </span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* 5. Aktivitas Bulan Ini (Left 6 Cols on Desktop) */}
-        <div className="order-4 lg:order-3 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4">
+        {/* 5. Kalender Aktivitas (Left 6 Cols on Desktop) */}
+        <div className="order-4 lg:order-3 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3.5">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
                 Kalender Aktivitas
               </h3>
-              <div className="flex items-center gap-1.5 mt-1">
+              <div className="flex items-center gap-1.5 mt-0.5">
                 <span className="text-[10px] font-extrabold text-gray-400 tracking-wider uppercase">
                   {monthLabel}
                 </span>
@@ -1083,7 +1148,7 @@ export function DashboardTab() {
               <button
                 type="button"
                 onClick={handleTodayMonth}
-                className="text-[10px] font-extrabold px-2.5 py-1 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+                className="text-[10px] font-bold px-2.5 py-1 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
               >
                 Hari Ini
               </button>
@@ -1099,7 +1164,7 @@ export function DashboardTab() {
           </div>
 
           {/* Days of week */}
-          <div className="grid grid-cols-7 text-center text-[10px] font-extrabold text-gray-400 pt-1 pb-1">
+          <div className="grid grid-cols-7 text-center text-[10px] font-extrabold text-gray-400 pt-0.5">
             <span>SN</span>
             <span>SL</span>
             <span>RB</span>
@@ -1113,20 +1178,20 @@ export function DashboardTab() {
           <div className="grid grid-cols-7 gap-1.5 lg:gap-2">
             {calendarCells.map((day, idx) => {
               if (day === null) {
-                return <div key={`empty-${idx}`} className="h-11 lg:h-14" />;
+                return <div key={`empty-${idx}`} className="h-11 lg:h-13" />;
               }
 
-              const exp = dailyExpensesMap[day];
-              const inc = dailyIncomeMap[day];
+              const exp = dailyExpensesMap[day] || 0;
+              const inc = dailyIncomeMap[day] || 0;
               const isSelected = selectedCalendarDay === day;
-              const hasActivity = Boolean(exp || inc);
+              const hasActivity = exp > 0 || inc > 0;
 
               return (
                 <button
                   key={`day-${day}`}
                   type="button"
                   onClick={() => setSelectedCalendarDay(day)}
-                  className={`h-11 lg:h-14 rounded-xl flex flex-col justify-between p-1.5 lg:p-2 transition-all cursor-pointer ${
+                  className={`h-11 lg:h-13 rounded-xl flex flex-col justify-between p-1.5 transition-all cursor-pointer ${
                     isSelected
                       ? 'bg-[#ECFCCB] dark:bg-[#D4F826]/25 ring-2 ring-[#D4F826] font-bold'
                       : hasActivity
@@ -1134,22 +1199,27 @@ export function DashboardTab() {
                       : 'bg-gray-50/70 dark:bg-gray-800/40 hover:bg-gray-100 dark:hover:bg-gray-800'
                   }`}
                 >
-                  <span className="text-[10px] text-gray-700 dark:text-gray-300 font-bold self-start leading-none tabular-nums">
-                    {day}
-                  </span>
-                  {inc && (!exp || inc > exp) ? (
-                    <span className="text-[8px] font-black text-emerald-500 self-end tabular-nums leading-none">
-                      {hide
-                        ? '+•••'
-                        : `+${formatCompactRupiah(inc - (exp || 0))
-                            .replace('+', '')
-                            .replace('-', '')}`}
+                  <div className="w-full flex items-center justify-between">
+                    <span className="text-[10px] text-gray-700 dark:text-gray-300 font-bold leading-none tabular-nums">
+                      {day}
                     </span>
-                  ) : exp ? (
-                    <span className="text-[8px] font-bold text-[#F472B6] self-end tabular-nums leading-none">
+                    {inc > 0 && exp > 0 && (
+                      <span className="text-[7px] font-black text-emerald-500 leading-none tabular-nums">
+                        +
+                      </span>
+                    )}
+                  </div>
+                  {exp > 0 ? (
+                    <span className="text-[8px] font-bold text-rose-500 dark:text-rose-400 self-end tabular-nums leading-none truncate max-w-full">
                       {hide
                         ? '-•••'
                         : `-${formatCompactRupiah(exp).replace('+', '').replace('-', '')}`}
+                    </span>
+                  ) : inc > 0 ? (
+                    <span className="text-[8px] font-black text-emerald-500 self-end tabular-nums leading-none truncate max-w-full">
+                      {hide
+                        ? '+•••'
+                        : `+${formatCompactRupiah(inc).replace('+', '').replace('-', '')}`}
                     </span>
                   ) : (
                     <span className="text-[8px] text-transparent select-none self-end">-</span>
@@ -1162,11 +1232,11 @@ export function DashboardTab() {
           {/* Selected day summary and transaction breakdown */}
           {selectedCalendarDay && (
             <div className="pt-3 border-t border-gray-100 dark:border-gray-800 space-y-2.5">
-              <div className="px-1 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="px-0.5 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <span className="text-gray-600 dark:text-gray-400 font-bold">
-                  Aktivitas {selectedCalendarDay} {SHORT_MONTHS_ID[activeMonth]}:
+                  {selectedCalendarDay} {SHORT_MONTHS_ID[activeMonth]}
                 </span>
-                <div className="flex items-center gap-3 tabular-nums">
+                <div className="flex items-center gap-2.5 tabular-nums">
                   {(dailyIncomeMap[selectedCalendarDay] || 0) > 0 && (
                     <span className="font-extrabold text-emerald-600 dark:text-emerald-400">
                       +{formatRupiah(dailyIncomeMap[selectedCalendarDay] || 0, hide)}
@@ -1182,10 +1252,9 @@ export function DashboardTab() {
                         2,
                         '0'
                       )}-${String(selectedCalendarDay).padStart(2, '0')}`;
-                      setActiveDate(dateStr);
-                      openAddTransaction('expense');
+                      openAddTransaction('expense', dateStr);
                     }}
-                    className="px-2 py-0.5 rounded-lg bg-[#D4F826] text-black font-black text-[10px] hover:bg-[#c6ec15] transition-colors flex items-center gap-0.5 cursor-pointer"
+                    className="px-2 py-0.5 rounded-lg bg-[#D4F826] text-black font-extrabold text-[10px] hover:bg-[#c6ec15] transition-colors flex items-center gap-0.5 cursor-pointer"
                   >
                     <Plus size={11} strokeWidth={3} />
                     <span>Catat</span>
@@ -1193,8 +1262,8 @@ export function DashboardTab() {
                 </div>
               </div>
 
-              {selectedDayTransactions.length > 0 ? (
-                <div className="space-y-1.5 pt-0.5 max-h-[210px] overflow-y-auto pr-1">
+              {selectedDayTransactions.length > 0 || selectedDayDebtPayments.length > 0 ? (
+                <div className="space-y-1.5 pt-0.5 max-h-[200px] overflow-y-auto pr-1">
                   {selectedDayTransactions.map((detail) => {
                     const { transaction, wallet, category } = detail;
                     const isExpense = transaction.type === 'expense';
@@ -1207,7 +1276,7 @@ export function DashboardTab() {
                         className="flex items-center justify-between p-2.5 rounded-2xl bg-gray-50/80 dark:bg-gray-800/60 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer group border border-black/5 dark:border-white/5"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
-                          <div className="w-8 h-8 rounded-full bg-white dark:bg-gray-700 shadow-xs flex items-center justify-center text-base shrink-0 group-hover:scale-105 transition-transform">
+                          <div className="w-8 h-8 rounded-xl bg-white dark:bg-gray-700 shadow-2xs flex items-center justify-center text-sm shrink-0">
                             {category?.emoji || (isIncome ? '💰' : '💳')}
                           </div>
                           <div className="min-w-0">
@@ -1221,7 +1290,7 @@ export function DashboardTab() {
                           </div>
                         </div>
 
-                        <div className="text-right shrink-0">
+                        <div className="text-right shrink-0 ml-2">
                           <span
                             className={`text-xs font-black tabular-nums ${
                               isExpense
@@ -1238,11 +1307,35 @@ export function DashboardTab() {
                       </div>
                     );
                   })}
+
+                  {selectedDayDebtPayments.map((dp) => (
+                    <div
+                      key={dp.id}
+                      onClick={() => setActiveTab('debt')}
+                      className="flex items-center justify-between p-2.5 rounded-2xl bg-gray-50/80 dark:bg-gray-800/60 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer border border-black/5 dark:border-white/5"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-xl bg-white dark:bg-gray-700 shadow-2xs flex items-center justify-center text-sm shrink-0">
+                          💳
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-gray-900 dark:text-white truncate">
+                            Cicilan {dp.debtName}
+                          </p>
+                          <p className="text-[10px] text-gray-400 mt-0.5 truncate">
+                            {dp.note || 'Pembayaran Utang'}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-black text-rose-500 dark:text-rose-400 tabular-nums shrink-0 ml-2">
+                        -{formatRupiah(dp.amount, hide)}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div className="py-3 px-3 text-center bg-gray-50/60 dark:bg-gray-800/30 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800/80 text-xs text-gray-400">
-                  Belum ada catatan transaksi pada tanggal {selectedCalendarDay}{' '}
-                  {SHORT_MONTHS_ID[activeMonth]}
+                  Belum ada transaksi
                 </div>
               )}
             </div>
@@ -1250,8 +1343,8 @@ export function DashboardTab() {
         </div>
 
         {/* 6. Transaksi Terbaru (Right 6 Cols on Desktop) */}
-        <div className="order-5 lg:order-4 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between space-y-4">
-          <div className="space-y-4">
+        <div className="order-5 lg:order-4 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-[28px] lg:rounded-[32px] p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between space-y-4">
+          <div className="space-y-3.5">
             <div className="flex items-center justify-between">
               <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
                 Transaksi Terbaru
@@ -1259,7 +1352,7 @@ export function DashboardTab() {
               <button
                 type="button"
                 onClick={() => setActiveTab('transactions')}
-                className="text-xs font-bold text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 cursor-pointer"
+                className="text-xs font-bold text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-0.5 cursor-pointer"
               >
                 <span>Semua</span>
                 <ChevronRight size={14} />
@@ -1268,13 +1361,13 @@ export function DashboardTab() {
 
             {transactionDetails.length === 0 ? (
               <div className="py-12 text-center bg-gray-50/50 dark:bg-gray-800/20 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 space-y-3">
-                <p className="text-xs text-gray-400">Belum ada transaksi yang tercatat</p>
+                <p className="text-xs text-gray-400">Belum ada transaksi tercatat</p>
                 <button
                   type="button"
-                  onClick={() => openAddTransaction()}
+                  onClick={() => openAddTransaction('expense')}
                   className="px-4 py-2 rounded-xl bg-[#D4F826] text-black text-xs font-extrabold cursor-pointer hover:bg-[#c6ec15]"
                 >
-                  + Catat Transaksi Pertama
+                  + Catat Transaksi
                 </button>
               </div>
             ) : (
@@ -1289,13 +1382,16 @@ export function DashboardTab() {
                   return (
                     <div
                       key={transaction.id}
-                      className="py-3 first:pt-1 last:pb-1 hover:bg-gray-50/40 dark:hover:bg-gray-800/20 transition-all cursor-pointer rounded-xl px-1.5"
-                      onClick={() => setSelectedTxId(isExpanded ? null : transaction.id)}
+                      className="py-2.5 first:pt-1 last:pb-1 hover:bg-gray-50/40 dark:hover:bg-gray-800/20 transition-all cursor-pointer rounded-xl px-1.5"
+                      onClick={() => {
+                        setSelectedTxId(isExpanded ? null : transaction.id);
+                        setConfirmDeleteTxId(null);
+                      }}
                     >
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-3 min-w-0">
                           <div
-                            className={`w-10 h-10 rounded-2xl text-lg flex items-center justify-center shrink-0 ${
+                            className={`w-9 h-9 rounded-2xl text-base flex items-center justify-center shrink-0 ${
                               isIncome
                                 ? 'bg-emerald-50 dark:bg-emerald-950/40'
                                 : isTransfer
@@ -1306,10 +1402,10 @@ export function DashboardTab() {
                             {category?.emoji || (isTransfer ? '🔄' : isIncome ? '💰' : '☕')}
                           </div>
                           <div className="min-w-0">
-                            <p className="text-xs lg:text-sm font-extrabold text-gray-900 dark:text-white truncate">
+                            <p className="text-xs lg:text-sm font-bold text-gray-900 dark:text-white truncate">
                               {transaction.note ||
                                 category?.name ||
-                                (isTransfer ? 'Transfer Antar Dompet' : 'Transaksi')}
+                                (isTransfer ? 'Transfer Dompet' : 'Transaksi')}
                             </p>
                             <p className="text-[10px] lg:text-[11px] text-gray-400 mt-0.5 truncate">
                               {wallet.name} · {formatFullDateIndo(transaction.date)}
@@ -1338,30 +1434,23 @@ export function DashboardTab() {
                         <motion.div
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: 'auto' }}
-                          className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800 text-xs space-y-2"
+                          className="mt-2.5 pt-2.5 border-t border-gray-100 dark:border-gray-800 text-xs space-y-2"
                         >
-                          <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-600 dark:text-gray-400">
-                            <div>
-                              <span className="text-gray-400 block text-[9px] uppercase font-bold">
-                                DOMPET
-                              </span>
-                              <span className="font-extrabold text-gray-800 dark:text-gray-200">
+                          <div className="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
+                            <span>
+                              Dompet:{' '}
+                              <strong className="text-gray-800 dark:text-gray-200">
                                 {wallet.name}
-                              </span>
-                            </div>
-                            <div>
-                              <span className="text-gray-400 block text-[9px] uppercase font-bold">
-                                {isTransfer ? 'KE DOMPET' : 'KATEGORI'}
-                              </span>
-                              <span className="font-extrabold text-gray-800 dark:text-gray-200">
-                                {isTransfer
-                                  ? transferWallet?.name || 'Dompet Tujuan'
-                                  : `${category?.emoji || ''} ${category?.name || 'Lainnya'}`}
-                              </span>
-                            </div>
+                              </strong>
+                            </span>
+                            <span>
+                              {isTransfer
+                                ? `Ke: ${transferWallet?.name || 'Dompet Tujuan'}`
+                                : `${category?.emoji || ''} ${category?.name || 'Lainnya'}`}
+                            </span>
                           </div>
 
-                          <div className="flex gap-2 pt-2">
+                          <div className="flex gap-2 pt-1">
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1377,12 +1466,24 @@ export function DashboardTab() {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                deleteTransaction(transaction.id);
+                                if (confirmDeleteTxId === transaction.id) {
+                                  deleteTransaction(transaction.id);
+                                  setConfirmDeleteTxId(null);
+                                  setSelectedTxId(null);
+                                } else {
+                                  setConfirmDeleteTxId(transaction.id);
+                                }
                               }}
-                              className="flex-1 py-1.5 rounded-xl bg-red-50 dark:bg-red-950/40 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-100 flex items-center justify-center gap-1 cursor-pointer"
+                              className={`flex-1 py-1.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors ${
+                                confirmDeleteTxId === transaction.id
+                                  ? 'bg-red-600 text-white'
+                                  : 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100'
+                              }`}
                             >
                               <Trash2 size={12} />
-                              <span>Hapus</span>
+                              <span>
+                                {confirmDeleteTxId === transaction.id ? 'Yakin?' : 'Hapus'}
+                              </span>
                             </button>
                           </div>
                         </motion.div>
@@ -1395,20 +1496,18 @@ export function DashboardTab() {
           </div>
         </div>
 
-        {/* 7. Row 3 on Desktop: 3 Equal Columns (Total Pemasukan, Total Pengeluaran, Runway Dana Darurat) */}
-        {/* Col 1: Total Pemasukan */}
+        {/* 7. Row 3: 3 Equal Columns (Pemasukan, Pengeluaran, Dana Darurat) */}
+        {/* Col 1: Pemasukan */}
         <div className="order-6 lg:order-6 lg:col-span-4 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">
-                TOTAL PEMASUKAN ({activePeriodLabel})
-              </span>
-            </div>
-            <div className="text-2xl lg:text-[28px] font-black text-gray-900 dark:text-white mt-1.5 tabular-nums truncate">
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+              Pemasukan · {activePeriodLabel}
+            </span>
+            <div className="text-2xl lg:text-[26px] font-black text-gray-900 dark:text-white mt-1.5 tabular-nums truncate">
               {formatRupiah(dashboardSummary.monthlyIncome, hide)}
             </div>
           </div>
-          <div className="mt-3 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+          <div className="mt-3 text-xs text-gray-500 dark:text-gray-400 tabular-nums">
             {prevPeriodComparison.incDeltaPct !== null ? (
               <span>
                 <strong className="text-emerald-600 dark:text-emerald-400">
@@ -1419,35 +1518,34 @@ export function DashboardTab() {
               </span>
             ) : dashboardSummary.monthlyIncome > 0 ? (
               <span>
-                Sisa kas berjalan:{' '}
+                Kas bersih:{' '}
                 <strong className="text-emerald-600 dark:text-emerald-400">
                   {formatRupiah(Math.max(0, dashboardSummary.netCashflow), hide)}
                 </strong>
               </span>
             ) : (
-              <span>Belum ada pemasukan periode ini</span>
+              <span>Belum ada pemasukan</span>
             )}
           </div>
         </div>
 
-        {/* Col 2: Total Pengeluaran */}
+        {/* Col 2: Pengeluaran */}
         <div className="order-7 lg:order-7 lg:col-span-4 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between">
           <div>
-            <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
-              TOTAL PENGELUARAN ({activePeriodLabel})
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+              Pengeluaran · {activePeriodLabel}
             </span>
-            <div className="text-2xl lg:text-[28px] font-black text-gray-900 dark:text-white mt-1.5 tabular-nums truncate">
+            <div className="text-2xl lg:text-[26px] font-black text-gray-900 dark:text-white mt-1.5 tabular-nums truncate">
               {formatRupiah(dashboardSummary.monthlyExpense, hide)}
             </div>
           </div>
-          <div className="mt-3 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+          <div className="mt-3 text-xs text-gray-500 dark:text-gray-400 tabular-nums">
             {budgetLimit > 0 ? (
               <span>
-                Terpakai{' '}
                 <strong className="text-rose-500 dark:text-rose-400">
                   {formatPctDisplay(dashboardSummary.monthlyExpense, budgetLimit)}
                 </strong>{' '}
-                dari batas {formatRupiah(budgetLimit, hide)}
+                dari budget {formatRupiah(budgetLimit, hide)}
               </span>
             ) : prevPeriodComparison.expDeltaPct !== null ? (
               <span>
@@ -1458,33 +1556,33 @@ export function DashboardTab() {
                 vs periode lalu
               </span>
             ) : (
-              <span>Belum ada pengeluaran periode ini</span>
+              <span>Belum ada pengeluaran</span>
             )}
           </div>
         </div>
 
-        {/* Col 3: Runway Dana Darurat */}
+        {/* Col 3: Dana Darurat */}
         <div
           onClick={() => setActiveTab('analytics')}
-          className="order-8 lg:order-8 lg:col-span-4 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 hover:border-amber-400/50 transition-colors cursor-pointer flex flex-col justify-between space-y-2.5"
-          title="Klik untuk lihat rincian Skor Kesehatan Finansial"
+          className="order-8 lg:order-8 lg:col-span-4 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 hover:border-amber-400/50 transition-colors cursor-pointer flex flex-col justify-between space-y-2"
+          title="Lihat Skor Kesehatan Finansial"
         >
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider">
+            <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
               <AlertCircle size={13} />
-              <span>RUNWAY DANA DARURAT</span>
+              <span>Dana Darurat</span>
             </div>
             <ArrowUpRight size={14} className="text-gray-400" />
           </div>
           <div className="flex items-baseline gap-1.5">
-            <span className="text-2xl lg:text-[28px] font-black text-gray-900 dark:text-white tabular-nums leading-none">
+            <span className="text-2xl lg:text-[26px] font-black text-gray-900 dark:text-white tabular-nums leading-none">
               {dashboardSummary.emergencyFundRunwayMonths}
             </span>
-            <span className="text-xs font-extrabold text-gray-400">Bulan Bertahan</span>
+            <span className="text-xs font-bold text-gray-400">bln bertahan</span>
           </div>
           <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
             <div
-              className={`h-full rounded-full transition-all duration-500 ${
+              className={`h-full rounded-full transition-all duration-300 ${
                 dashboardSummary.emergencyFundRunwayMonths >= 6
                   ? 'bg-emerald-500'
                   : dashboardSummary.emergencyFundRunwayMonths >= 3
@@ -1499,39 +1597,37 @@ export function DashboardTab() {
               }}
             />
           </div>
-          <p className="text-[11px] text-gray-500 dark:text-gray-400 font-semibold tabular-nums">
-            Total dana likuid: {formatRupiah(dashboardSummary.liquidAssetsTotal, hide)} (Target ideal ≥ 6 bln)
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 font-medium tabular-nums truncate">
+            Likuid {formatRupiah(dashboardSummary.liquidAssetsTotal, hide)} · Target 6 bln
           </p>
         </div>
 
-        {/* 8. Row 4 on Desktop: Full-Width Tagihan Mendatang (lg:col-span-12) */}
-        <div className="order-9 lg:order-9 lg:col-span-12 bg-[#0E0F12] rounded-[28px] lg:rounded-[32px] p-5 lg:p-7 text-white shadow-xl border border-white/5 space-y-4">
+        {/* 8. Row 4: Tagihan Mendatang (lg:col-span-12) */}
+        <div className="order-9 lg:order-9 lg:col-span-12 bg-[#0E0F12] rounded-[28px] lg:rounded-[32px] p-5 lg:p-6 text-white shadow-xl border border-white/5 space-y-3.5">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <Calendar size={18} className="text-[#D4F826]" />
-              <h3 className="text-sm lg:text-base font-extrabold text-white">
-                Jadwal Tagihan & Langganan Mendatang
-              </h3>
+              <Calendar size={17} className="text-[#D4F826]" />
+              <h3 className="text-sm lg:text-base font-extrabold text-white">Tagihan Mendatang</h3>
             </div>
             <button
               type="button"
               onClick={() => setActiveTab('subscriptions')}
-              className="text-xs font-bold text-gray-400 hover:text-[#D4F826] flex items-center gap-1 cursor-pointer transition-colors"
+              className="text-xs font-bold text-gray-400 hover:text-[#D4F826] flex items-center gap-0.5 cursor-pointer transition-colors"
             >
-              <span>Kelola Jadwal</span>
+              <span>Kelola</span>
               <ChevronRight size={14} />
             </button>
           </div>
 
           {upcomingBills.length === 0 ? (
-            <div className="py-5 px-4 text-center bg-white/[0.04] rounded-2xl border border-dashed border-white/10 text-xs text-gray-400 flex flex-col sm:flex-row items-center justify-between gap-2">
-              <span>Belum ada tagihan mendatang yang terjadwal pada periode ini</span>
+            <div className="py-4 px-4 bg-white/[0.04] rounded-2xl border border-dashed border-white/10 text-xs text-gray-400 flex flex-col sm:flex-row items-center justify-between gap-2">
+              <span>Semua tagihan periode ini lunas atau belum terjadwal</span>
               <button
                 type="button"
                 onClick={() => setActiveTab('subscriptions')}
-                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs cursor-pointer transition-colors"
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs cursor-pointer transition-colors shrink-0"
               >
-                + Tambah Tagihan Rutin
+                + Tambah Tagihan
               </button>
             </div>
           ) : (
@@ -1540,64 +1636,60 @@ export function DashboardTab() {
                 <div
                   key={bill.id}
                   onClick={() => setActiveTab('subscriptions')}
-                  className="bg-[#1A1C20] hover:bg-[#21242B] rounded-2xl p-4 border border-white/[0.06] hover:border-[#D4F826]/40 space-y-2.5 cursor-pointer transition-all"
+                  className="bg-[#1A1C20] hover:bg-[#21242B] rounded-2xl p-3.5 sm:p-4 border border-white/[0.06] hover:border-[#D4F826]/40 space-y-2 cursor-pointer transition-all"
                 >
-                  <span className="text-2xl block leading-none">{bill.iconEmoji}</span>
-                  <div>
-                    <p className="text-xs font-extrabold text-white truncate">{bill.name}</p>
-                    <span className="text-[10px] text-gray-400 font-medium block mt-0.5 truncate">
-                      Jatuh tempo {bill.dueDate}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xl leading-none">{bill.iconEmoji}</span>
+                    <span className="text-[10px] text-gray-400 font-semibold tabular-nums">
+                      Tgl {bill.dueDate}
                     </span>
                   </div>
-                  <div className="pt-0.5">
-                    <span className="text-xs lg:text-sm font-black text-[#D4F826] tabular-nums block truncate">
-                      {formatRupiah(bill.amount, hide)}
-                    </span>
-                  </div>
+                  <p className="text-xs font-bold text-white truncate">{bill.name}</p>
+                  <span className="text-xs lg:text-sm font-black text-[#D4F826] tabular-nums block truncate">
+                    {formatRupiah(bill.amount, hide)}
+                  </span>
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        {/* 9. Row 5 on Desktop: Pengeluaran Terbesar (lg:col-span-6) & Realisasi Anggaran (lg:col-span-6) */}
+        {/* 9. Row 5: Pengeluaran Terbesar (lg:col-span-6) & Realisasi Budget (lg:col-span-6) */}
         {/* Left Half: Pengeluaran Terbesar */}
         <div className="order-10 lg:order-10 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
-              Kategori Pengeluaran Terbesar
+              Pengeluaran Terbesar
             </h3>
             <span className="text-[11px] font-bold text-gray-400">{activePeriodLabel}</span>
           </div>
 
           {topExpenses.length === 0 ? (
             <div className="py-12 text-center bg-gray-50/60 dark:bg-gray-800/30 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 space-y-2 my-auto">
-              <p className="text-xs text-gray-400">
-                Belum ada pengeluaran pada periode {activePeriodLabel}
-              </p>
+              <p className="text-xs text-gray-400">Belum ada pengeluaran periode ini</p>
             </div>
           ) : (
-            <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1">
+            <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
               {topExpenses.map((item) => {
                 const pctOfSpent =
                   budgetSpent > 0 ? Math.min(100, Math.round((item.amount / budgetSpent) * 100)) : 0;
                 return (
                   <div
                     key={item.id}
-                    className="flex items-center justify-between px-4 py-3 rounded-2xl bg-[#F8F9FA] dark:bg-gray-800/50 border border-gray-100/80 dark:border-gray-800"
+                    className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-[#F8F9FA] dark:bg-gray-800/50 border border-gray-100/80 dark:border-gray-800"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <span className="text-2xl shrink-0">{item.emoji}</span>
+                      <span className="text-xl shrink-0">{item.emoji}</span>
                       <div className="min-w-0">
-                        <p className="text-xs font-extrabold text-gray-900 dark:text-white truncate">
+                        <p className="text-xs font-bold text-gray-900 dark:text-white truncate">
                           {item.name}
                         </p>
-                        <span className="text-[10px] font-semibold text-gray-400 block mt-0.5">
-                          {item.group} · {pctOfSpent}% dari total pengeluaran
+                        <span className="text-[10px] font-medium text-gray-400 block mt-0.5 tabular-nums">
+                          {item.group} · {pctOfSpent}%
                         </span>
                       </div>
                     </div>
-                    <span className="text-xs sm:text-sm font-black text-gray-900 dark:text-white tabular-nums shrink-0">
+                    <span className="text-xs sm:text-sm font-black text-gray-900 dark:text-white tabular-nums shrink-0 ml-2">
                       {formatRupiah(item.amount, hide)}
                     </span>
                   </div>
@@ -1607,15 +1699,15 @@ export function DashboardTab() {
           )}
         </div>
 
-        {/* Right Half: Realisasi Anggaran (Dynamic Donut Gauge + Legend) */}
-        <div className="order-11 lg:order-11 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between min-h-[320px] space-y-4">
+        {/* Right Half: Realisasi Budget (Dynamic Donut Gauge + Legend) */}
+        <div className="order-11 lg:order-11 lg:col-span-6 bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 flex flex-col justify-between min-h-[300px] space-y-4">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm lg:text-base font-extrabold text-gray-900 dark:text-white">
-                Realisasi Anggaran Belanja
+                Realisasi Budget
               </h3>
-              <p className="text-[11px] text-gray-400">
-                Terpakai {donutMetrics.usedPctStr} dari batas {formatRupiah(budgetLimit, hide)}
+              <p className="text-[11px] text-gray-400 tabular-nums">
+                Terpakai {donutMetrics.usedPctStr} dari {formatRupiah(budgetLimit, hide)}
               </p>
             </div>
             <button
@@ -1623,16 +1715,16 @@ export function DashboardTab() {
               onClick={() => setActiveTab('budget')}
               className="text-xs font-bold text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-0.5 cursor-pointer"
             >
-              <span>Atur Budget</span>
+              <span>Atur</span>
               <ChevronRight size={14} />
             </button>
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-6 my-auto py-2">
             {/* Dynamic SVG Donut */}
-            <div className="relative w-44 h-44 flex items-center justify-center shrink-0">
+            <div className="relative w-40 h-40 flex items-center justify-center shrink-0">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                {/* Background Track (Remaining Budget) */}
+                {/* Background Track */}
                 <circle
                   cx="50"
                   cy="50"
@@ -1653,7 +1745,7 @@ export function DashboardTab() {
                     strokeWidth="11"
                     strokeDasharray={`${donutMetrics.needsArc} ${donutMetrics.circumference}`}
                     strokeDashoffset="0"
-                    strokeLinecap="round"
+                    strokeLinecap={donutMetrics.wantsArc > 0 ? 'butt' : 'round'}
                   />
                 )}
                 {/* Peach/Orange Segment (Wants Spent) */}
@@ -1667,13 +1759,13 @@ export function DashboardTab() {
                     strokeWidth="11"
                     strokeDasharray={`${donutMetrics.wantsArc} ${donutMetrics.circumference}`}
                     strokeDashoffset={String(donutMetrics.wantsOffset)}
-                    strokeLinecap="round"
+                    strokeLinecap={donutMetrics.needsArc > 0 ? 'butt' : 'round'}
                   />
                 )}
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center px-3 text-center">
-                <span className="text-[10px] font-extrabold text-gray-400 uppercase tracking-widest">
-                  {isOverTotalBudget ? 'LEWAT BATAS' : 'SISA ANGGARAN'}
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                  {isOverTotalBudget ? 'Lewat' : 'Sisa'}
                 </span>
                 <span
                   className={`text-sm lg:text-base font-black tabular-nums mt-0.5 ${
@@ -1690,7 +1782,7 @@ export function DashboardTab() {
             </div>
 
             {/* Realisasi Legend Breakdown */}
-            <div className="w-full sm:flex-1 space-y-2.5 text-xs">
+            <div className="w-full sm:flex-1 space-y-2 text-xs">
               <div className="p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#A78BFA] shrink-0" />
@@ -1713,11 +1805,25 @@ export function DashboardTab() {
 
               <div className="p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-gray-300 dark:bg-gray-600 shrink-0" />
-                  <span className="font-bold text-gray-700 dark:text-gray-300">Sisa Anggaran</span>
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                      isOverTotalBudget ? 'bg-rose-500' : 'bg-gray-300 dark:bg-gray-600'
+                    }`}
+                  />
+                  <span className="font-bold text-gray-700 dark:text-gray-300">
+                    {isOverTotalBudget ? 'Lewat Budget' : 'Sisa Budget'}
+                  </span>
                 </div>
-                <span className="font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
-                  {formatRupiah(remainingBudget, hide)}
+                <span
+                  className={`font-black tabular-nums ${
+                    isOverTotalBudget
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                  }`}
+                >
+                  {isOverTotalBudget
+                    ? `+${formatRupiah(budgetSpent - budgetLimit, hide)}`
+                    : formatRupiah(remainingBudget, hide)}
                 </span>
               </div>
             </div>

@@ -77,8 +77,8 @@ export function getMonthlyDebtInstallmentAmount(
 
   // 3. Calculate from startDate -> dueDate month span if >= 2 months
   if (debt.startDate && debt.dueDate) {
-    const start = new Date(debt.startDate);
-    const due = new Date(debt.dueDate);
+    const start = parseLocalDay(debt.startDate);
+    const due = parseLocalDay(debt.dueDate);
     if (!isNaN(start.getTime()) && !isNaN(due.getTime()) && due.getTime() > start.getTime()) {
       const monthsDiff =
         (due.getFullYear() - start.getFullYear()) * 12 + (due.getMonth() - start.getMonth());
@@ -956,9 +956,32 @@ export function calculateBudgetBreakdown({
         FIXED_EXPENSE_KEYWORDS_REGEX.test(sub.name);
 
       if (isSubFixed) {
-        const resolvedAllocated = matchedDebt
-          ? getMonthlyDebtInstallmentAmount(matchedDebt, Number(sub.allocatedAmount) || 0)
-          : Number(sub.allocatedAmount) || 0;
+        let resolvedAllocated = Number(sub.allocatedAmount) || 0;
+        if (matchedDebt) {
+          const paidInPeriodForDebt = (matchedDebt.payments || []).reduce((sum, p) => {
+            const pd = parseLocalDay(p.date);
+            if (!isNaN(pd.getTime()) && isDateInBudgetPeriod(pd, periodInfo)) {
+              return sum + (Number(p.amount) || 0);
+            }
+            return sum;
+          }, 0);
+          const remAtPeriodStart = Math.max(
+            0,
+            (Number(matchedDebt.remainingAmount) || 0) + paidInPeriodForDebt
+          );
+          const effectiveDebtForPeriod: Debt = {
+            ...matchedDebt,
+            remainingAmount: remAtPeriodStart,
+            status: remAtPeriodStart > 0 ? 'active' : matchedDebt.status,
+          };
+          resolvedAllocated = Math.max(
+            paidInPeriodForDebt,
+            getMonthlyDebtInstallmentAmount(
+              effectiveDebtForPeriod,
+              Number(sub.allocatedAmount) || 0
+            )
+          );
+        }
 
         activeFixedSubs.push({
           id: sub.id,
@@ -1074,6 +1097,18 @@ export function calculateBudgetBreakdown({
   let todayFixExp = 0;
   const recordedTxIds = new Set<string>();
 
+  const effectiveTodayDate = new Date(
+    periodInfo.startDate.getFullYear(),
+    periodInfo.startDate.getMonth(),
+    periodInfo.startDate.getDate() + Math.max(0, periodInfo.currentDayOfPeriod - 1),
+    12,
+    0,
+    0
+  );
+  const effTodayYear = effectiveTodayDate.getFullYear();
+  const effTodayMonth = effectiveTodayDate.getMonth();
+  const effTodayDay = effectiveTodayDate.getDate();
+
   transactions.forEach((tx) => {
     recordedTxIds.add(tx.id);
     if (tx.type !== 'expense') return;
@@ -1109,9 +1144,9 @@ export function calculateBudgetBreakdown({
       }
 
       if (
-        d.getFullYear() === activeYear &&
-        d.getMonth() === activeMonth &&
-        d.getDate() === activeDay
+        d.getFullYear() === effTodayYear &&
+        d.getMonth() === effTodayMonth &&
+        d.getDate() === effTodayDay
       ) {
         if (fixed) {
           todayFixExp += tx.amount;
@@ -1135,9 +1170,9 @@ export function calculateBudgetBreakdown({
       if (isDateInBudgetPeriod(pd, periodInfo)) {
         monthlyFixExp += p.amount;
         if (
-          pd.getFullYear() === activeYear &&
-          pd.getMonth() === activeMonth &&
-          pd.getDate() === activeDay
+          pd.getFullYear() === effTodayYear &&
+          pd.getMonth() === effTodayMonth &&
+          pd.getDate() === effTodayDay
         ) {
           todayFixExp += p.amount;
         }

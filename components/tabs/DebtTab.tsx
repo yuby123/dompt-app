@@ -180,23 +180,59 @@ export function DebtTab() {
     [walletsWithBalance]
   );
 
-  // Check how much of a debt was paid in the current budget period / current calendar month
+  // Auto-reset delete confirmation after 4 seconds
+  React.useEffect(() => {
+    if (!confirmDeleteId) return;
+    const timer = setTimeout(() => setConfirmDeleteId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [confirmDeleteId]);
+
+  // Check how much of a debt was paid in the active budget period
   const getDebtPaidInCurrentPeriod = React.useCallback(
     (item: Debt): number => {
-      const now = new Date();
       return (item.payments || []).reduce((sum, p) => {
         const pd = parseLocalMidnight(p.date);
         if (!pd) return sum;
-        const inPeriod = isDateInBudgetPeriod(pd, budgetPeriod);
-        const inSameCalendarMonth =
-          pd.getFullYear() === now.getFullYear() && pd.getMonth() === now.getMonth();
-        if (inPeriod || inSameCalendarMonth) {
+        if (isDateInBudgetPeriod(pd, budgetPeriod)) {
           return sum + (Number(p.amount) || 0);
         }
         return sum;
       }, 0);
     },
     [budgetPeriod]
+  );
+
+  // Compute period target based on balance at the start of the active period (so partial payments don't shrink the target)
+  const getDebtCycleTargetInfo = React.useCallback(
+    (item: Debt) => {
+      const paidAmountThisCycle = getDebtPaidInCurrentPeriod(item);
+      const remNow = Math.max(0, Number(item.remainingAmount) || 0);
+      const remAtPeriodStart = Math.max(0, remNow + paidAmountThisCycle);
+      const targetMonthly =
+        remAtPeriodStart > 0
+          ? getMonthlyDebtInstallmentAmount({
+              ...item,
+              remainingAmount: remAtPeriodStart,
+              status: 'active',
+            })
+          : 0;
+      const isPaidOverall = item.status === 'paid' || remNow <= 0;
+      const paidThisCycle =
+        isPaidOverall ||
+        (paidAmountThisCycle > 0 &&
+          (targetMonthly > 0 ? paidAmountThisCycle >= targetMonthly : true));
+      const remainingThisCycle = isPaidOverall
+        ? 0
+        : Math.max(0, Math.min(remNow, targetMonthly - paidAmountThisCycle));
+
+      return {
+        paidAmountThisCycle,
+        targetMonthly,
+        paidThisCycle,
+        remainingThisCycle,
+      };
+    },
+    [getDebtPaidInCurrentPeriod]
   );
 
   // Auto-calculation handlers for Installment
@@ -275,11 +311,7 @@ export function DebtTab() {
       const isDeferred =
         item.type === 'payable' && !isDebtScheduledForBudgetPeriod(item, budgetPeriod);
 
-      const paidAmountThisCycle = getDebtPaidInCurrentPeriod(item);
-      const targetMonthly = getMonthlyDebtInstallmentAmount(item);
-      const paidThisCycle =
-        paidAmountThisCycle > 0 &&
-        (targetMonthly > 0 ? paidAmountThisCycle >= targetMonthly * 0.9 : true);
+      const { paidThisCycle } = getDebtCycleTargetInfo(item);
 
       if (item.dueDayOfMonth && item.dueDayOfMonth > 0) {
         const day = Math.max(1, Math.min(31, item.dueDayOfMonth));
@@ -301,10 +333,29 @@ export function DebtTab() {
           };
         }
 
+        // Find the occurrence of dueDayOfMonth that falls within the active budget period
+        const periodStartCand = getClampedMonthDate(
+          budgetPeriod.startDate.getFullYear(),
+          budgetPeriod.startDate.getMonth(),
+          day
+        );
+        const periodEndCand = getClampedMonthDate(
+          budgetPeriod.endDate.getFullYear(),
+          budgetPeriod.endDate.getMonth(),
+          day
+        );
         const thisMonthCandidate = getClampedMonthDate(now.getFullYear(), now.getMonth(), day);
-        const nextMonthCandidate = getClampedMonthDate(now.getFullYear(), now.getMonth() + 1, day);
 
-        let candidate = !paidThisCycle ? thisMonthCandidate : nextMonthCandidate;
+        let cycleCandidate = thisMonthCandidate;
+        if (isDateInBudgetPeriod(periodStartCand, budgetPeriod)) {
+          cycleCandidate = periodStartCand;
+        } else if (isDateInBudgetPeriod(periodEndCand, budgetPeriod)) {
+          cycleCandidate = periodEndCand;
+        }
+
+        let candidate = !paidThisCycle
+          ? cycleCandidate
+          : getClampedMonthDate(cycleCandidate.getFullYear(), cycleCandidate.getMonth() + 1, day);
 
         if (item.dueDate) {
           const finalDue = parseLocalMidnight(item.dueDate);
@@ -347,7 +398,7 @@ export function DebtTab() {
         paidThisCycle,
       };
     },
-    [budgetPeriod, getDebtPaidInCurrentPeriod]
+    [budgetPeriod, getDebtCycleTargetInfo]
   );
 
   // Filtered & sorted debts list (sorted by nearest due date first)
@@ -410,33 +461,32 @@ export function DebtTab() {
     [activeReceivables]
   );
 
-  // Monthly obligation for the current budget period
+  // Per-debt monthly obligation for the active budget period (prevents cross-debt overpayment bleed)
   const monthlyObligationStats = useMemo(() => {
     let totalDueThisPeriod = 0;
     let totalPaidThisPeriod = 0;
+    let remainingDueThisPeriod = 0;
 
     for (const d of debts.filter((item) => item.type === 'payable')) {
-      const paidThisCycle = getDebtPaidInCurrentPeriod(d);
-      totalPaidThisPeriod += paidThisCycle;
+      const { paidAmountThisCycle, targetMonthly, remainingThisCycle } = getDebtCycleTargetInfo(d);
+      totalPaidThisPeriod += paidAmountThisCycle;
 
       const isScheduled = isDebtScheduledForBudgetPeriod(d, budgetPeriod);
-      if (!isScheduled) continue;
-
-      if (d.status === 'active' && d.remainingAmount > 0) {
-        const monthlyAmt = getMonthlyDebtInstallmentAmount(d);
-        totalDueThisPeriod += Math.max(monthlyAmt, paidThisCycle);
-      } else if (paidThisCycle > 0) {
-        totalDueThisPeriod += paidThisCycle;
+      if (!isScheduled) {
+        totalDueThisPeriod += paidAmountThisCycle;
+        continue;
       }
+
+      totalDueThisPeriod += Math.max(targetMonthly, paidAmountThisCycle);
+      remainingDueThisPeriod += remainingThisCycle;
     }
 
-    const remainingDueThisPeriod = Math.max(0, totalDueThisPeriod - totalPaidThisPeriod);
     return {
       totalDueThisPeriod,
       totalPaidThisPeriod,
       remainingDueThisPeriod,
     };
-  }, [debts, budgetPeriod, getDebtPaidInCurrentPeriod]);
+  }, [debts, budgetPeriod, getDebtCycleTargetInfo]);
 
   // Liquid assets from positive wallets
   const liquidAssets = useMemo(() => {
@@ -445,7 +495,7 @@ export function DebtTab() {
       .reduce((acc, w) => acc + w.balance, 0);
   }, [liquidWallets]);
 
-  // Monthly Debt Burden vs Liquid Cash Ratio (more realistic for installments!)
+  // Monthly Debt Burden vs Liquid Cash Ratio
   const monthlyBurdenPct =
     monthlyObligationStats.remainingDueThisPeriod <= 0
       ? 0
@@ -453,23 +503,26 @@ export function DebtTab() {
       ? Math.round((monthlyObligationStats.remainingDueThisPeriod / liquidAssets) * 100)
       : 100;
 
-  // Closest upcoming due date across active payables that haven't been paid this cycle
+  // Closest upcoming due date across scheduled active payables that haven't been paid this cycle
   const nextDueItem = useMemo(() => {
     const listWithDue = activePayables
+      .filter((d) => isDebtScheduledForBudgetPeriod(d, budgetPeriod))
       .map((d) => {
         const info = getEffectiveDueInfo(d);
+        const cycleInfo = getDebtCycleTargetInfo(d);
         return {
           ...d,
           effectiveDueDate: info.effectiveDueDate,
           daysLeft: info.daysLeft,
           time: info.sortTime,
           paidThisCycle: info.paidThisCycle,
+          remainingThisCycle: cycleInfo.remainingThisCycle,
         };
       })
       .filter((d) => d.effectiveDueDate && !d.paidThisCycle)
       .sort((a, b) => a.time - b.time);
     return listWithDue[0] || null;
-  }, [activePayables, getEffectiveDueInfo]);
+  }, [activePayables, budgetPeriod, getEffectiveDueInfo, getDebtCycleTargetInfo]);
 
   // Open Add Modal
   const handleOpenAdd = (type: 'payable' | 'receivable' = 'payable') => {
@@ -487,7 +540,7 @@ export function DebtTab() {
     setFormMonthlyInstallment('');
     setFormDueDayOfMonth('10');
     setFormStartBillingMode('current_period');
-    const autoDue = computeInstallmentDueDate(today, 6, 10);
+    const autoDue = computeInstallmentDueDate(today, type === 'payable' ? 6 : 1, 10);
     setFormDueDate(autoDue);
     setFormNote('');
     setFormDisburseCashflow(false);
@@ -634,10 +687,13 @@ export function DebtTab() {
     setPayingDebt(debt);
     setIsFullSettlementMode(fullSettlement);
 
+    const { remainingThisCycle, targetMonthly } = getDebtCycleTargetInfo(debt);
     const defaultAmount = fullSettlement
       ? debt.remainingAmount
-      : debt.monthlyInstallment && debt.monthlyInstallment > 0
-      ? Math.min(debt.monthlyInstallment, debt.remainingAmount)
+      : remainingThisCycle > 0
+      ? remainingThisCycle
+      : targetMonthly > 0
+      ? Math.min(targetMonthly, debt.remainingAmount)
       : debt.remainingAmount;
 
     setPayAmount(formatNominalInput(String(defaultAmount)));
@@ -656,12 +712,12 @@ export function DebtTab() {
     const nextInstallmentNum = (debt.payments?.length || 0) + 1;
     setPayNote(
       fullSettlement
-        ? `Pelunasan Penuh ${debt.name}`
+        ? `Pelunasan ${debt.name}`
         : debt.type === 'payable'
         ? debt.isInstallment || debt.tenorMonths
           ? `Cicilan ke-${nextInstallmentNum} ${debt.name}`
-          : `Pembayaran ${debt.name}`
-        : `Penerimaan cicilan/pelunasan ${debt.name}`
+          : `Bayar ${debt.name}`
+        : `Terima ${debt.name}`
     );
   };
 
@@ -699,40 +755,38 @@ export function DebtTab() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-1 lg:pt-0 px-0.5">
         <div>
           <h1 className="font-display text-2xl lg:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight flex items-center gap-2.5">
-            <span>Utang, Cicilan & Piutang</span>
-            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 dark:bg-white/[0.08] text-slate-700 dark:text-slate-300">
-              {debts.length} Catatan
+            <span>Utang & Piutang</span>
+            <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-white/[0.08] text-slate-700 dark:text-slate-300">
+              {debts.length}
             </span>
           </h1>
-          <p className="text-xs lg:text-sm font-medium text-slate-500 dark:text-slate-400 mt-0.5">
-            Pantau kewajiban cicilan bulanan & piutang aktif, tersinkronisasi langsung dengan Dompet & Budget.
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">
+            Kelola cicilan & piutang aktif.
           </p>
         </div>
 
-        <div className="grid grid-cols-2 sm:flex items-center gap-2.5 w-full sm:w-auto shrink-0">
+        <div className="grid grid-cols-2 sm:flex items-center gap-2 w-full sm:w-auto shrink-0">
           <button
             type="button"
             onClick={() => handleOpenAdd('payable')}
-            className={`h-10 px-4 rounded-full ${brandAccentBg} flex items-center justify-center gap-2 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap`}
+            className={`h-10 px-4 rounded-full ${brandAccentBg} flex items-center justify-center gap-1.5 font-black text-xs shadow-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap`}
           >
-            <Plus size={16} strokeWidth={2.8} className="shrink-0" />
-            <span>Catat Utang</span>
+            <Plus size={15} strokeWidth={2.8} className="shrink-0" />
+            <span>Utang</span>
           </button>
           <button
             type="button"
             onClick={() => handleOpenAdd('receivable')}
             className="h-10 px-4 rounded-full bg-white dark:bg-[#16181D] hover:bg-slate-100 dark:hover:bg-white/[0.08] border border-slate-200/80 dark:border-white/10 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1.5 font-extrabold text-xs cursor-pointer transition-transform active:scale-95 whitespace-nowrap"
-            title="Catat piutang (orang yang berutang ke Anda)"
           >
-            <ArrowDownLeft size={16} className="shrink-0 text-emerald-500" />
-            <span>Catat Piutang</span>
+            <ArrowDownLeft size={15} className="shrink-0 text-emerald-500" />
+            <span>Piutang</span>
           </button>
         </div>
       </div>
 
       {/* Hero Overview Card */}
-      <div className="w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 sm:p-6 lg:p-7 text-white shadow-xl border border-white/10 relative overflow-hidden">
-        {/* Subtle decorative glow */}
+      <div className="w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 sm:p-6 text-white shadow-xl border border-white/10 relative overflow-hidden">
         <div className="absolute -top-24 -right-16 w-72 h-72 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
         <div
           className={`absolute -bottom-24 -left-16 w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
@@ -748,81 +802,81 @@ export function DebtTab() {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6 items-stretch relative z-10">
           {/* Left Column: 3 Key Metric Cards */}
-          <div className="lg:col-span-8 flex flex-col justify-between space-y-4">
+          <div className="lg:col-span-8 flex flex-col justify-between space-y-3.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-black text-[#D4F826] uppercase tracking-widest">
-                  RINGKASAN KEWAJIBAN & PIUTANG
+                  RINGKASAN
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full bg-white/10 text-slate-200 text-[10px] font-bold">
+                <span className="px-2 py-0.5 rounded-full bg-white/10 text-slate-200 text-[10px] font-bold">
                   {activePayables.length === 0
-                    ? 'Bebas Utang 🎉'
+                    ? 'Bebas Utang'
                     : `${activePayables.length} Utang Aktif`}
                 </span>
               </div>
               {totalPayableOriginal > 0 && (
                 <span className="text-[11px] font-semibold text-slate-300">
-                  Progres Pelunasan Pokok: <strong className="text-[#D4F826]">{overallPaidPct}%</strong>
+                  Terbayar <strong className="text-[#D4F826]">{overallPaidPct}%</strong>
                 </span>
               )}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-              {/* 1. Total Sisa Utang Pokok */}
-              <div className="p-4 rounded-2xl bg-white/[0.05] border border-white/10 space-y-1.5 flex flex-col justify-between">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-rose-400">
-                    <TrendingDown size={14} />
-                    <span>Total Sisa Utang</span>
-                  </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* 1. Sisa Utang */}
+              <div className="p-3.5 rounded-2xl bg-white/[0.05] border border-white/10 space-y-1 flex flex-col justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] font-bold text-rose-400">
+                  <TrendingDown size={13} />
+                  <span>Sisa Utang</span>
                 </div>
-                <div className="font-mono-num text-xl sm:text-2xl font-extrabold tracking-tight text-white truncate">
+                <div className="font-mono-num text-lg sm:text-xl font-extrabold tracking-tight text-white truncate">
                   {formatRupiah(totalPayableRemaining, hide)}
                 </div>
                 <div className="text-[11px] text-slate-400 truncate">
                   {activePayables.length > 0
-                    ? `Dari pokok ${formatRupiah(totalPayableOriginal, hide)}`
-                    : 'Tidak ada kewajiban aktif'}
+                    ? `Pokok ${formatRupiah(totalPayableOriginal, hide)}`
+                    : 'Bebas utang'}
                 </div>
               </div>
 
-              {/* 2. Tagihan Cicilan Bulan Ini */}
-              <div className="p-4 rounded-2xl bg-white/[0.05] border border-white/10 space-y-1.5 flex flex-col justify-between">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-[#D4F826]">
-                    <CalendarDays size={14} />
-                    <span>Cicilan Bulan Ini</span>
+              {/* 2. Tagihan Periode Ini */}
+              <div className="p-3.5 rounded-2xl bg-white/[0.05] border border-white/10 space-y-1 flex flex-col justify-between">
+                <div className="flex items-center justify-between gap-1">
+                  <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#D4F826]">
+                    <CalendarDays size={13} />
+                    <span>Tagihan Periode Ini</span>
                   </div>
                   {monthlyObligationStats.totalDueThisPeriod > 0 &&
                     monthlyObligationStats.remainingDueThisPeriod === 0 && (
                       <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
-                        LUNAS BLN INI
+                        LUNAS
                       </span>
                     )}
                 </div>
-                <div className="font-mono-num text-xl sm:text-2xl font-extrabold tracking-tight text-[#D4F826] truncate">
+                <div className="font-mono-num text-lg sm:text-xl font-extrabold tracking-tight text-[#D4F826] truncate">
                   {formatRupiah(monthlyObligationStats.remainingDueThisPeriod, hide)}
                 </div>
                 <div className="text-[11px] text-slate-400 truncate">
                   {monthlyObligationStats.totalPaidThisPeriod > 0
-                    ? `Terbayar bln ini: ${formatRupiah(monthlyObligationStats.totalPaidThisPeriod, hide)}`
+                    ? `Terbayar ${formatRupiah(monthlyObligationStats.totalPaidThisPeriod, hide)}`
                     : monthlyObligationStats.totalDueThisPeriod > 0
-                    ? 'Belum dibayar periode ini'
-                    : 'Tidak ada tagihan bulan ini'}
+                    ? `Target ${formatRupiah(monthlyObligationStats.totalDueThisPeriod, hide)}`
+                    : 'Tidak ada tagihan'}
                 </div>
               </div>
 
-              {/* 3. Total Piutang Saya */}
-              <div className="p-4 rounded-2xl bg-white/[0.05] border border-white/10 space-y-1.5 flex flex-col justify-between">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400">
-                  <TrendingUp size={14} />
-                  <span>Piutang (Di Luar)</span>
+              {/* 3. Piutang */}
+              <div className="p-3.5 rounded-2xl bg-white/[0.05] border border-white/10 space-y-1 flex flex-col justify-between">
+                <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-400">
+                  <TrendingUp size={13} />
+                  <span>Piutang</span>
                 </div>
-                <div className="font-mono-num text-xl sm:text-2xl font-extrabold tracking-tight text-emerald-300 truncate">
+                <div className="font-mono-num text-lg sm:text-xl font-extrabold tracking-tight text-emerald-300 truncate">
                   {formatRupiah(totalReceivableRemaining, hide)}
                 </div>
                 <div className="text-[11px] text-slate-400 truncate">
-                  {activeReceivables.length} catatan belum ditagih
+                  {activeReceivables.length > 0
+                    ? `${activeReceivables.length} piutang aktif`
+                    : 'Tidak ada piutang'}
                 </div>
               </div>
             </div>
@@ -830,13 +884,13 @@ export function DebtTab() {
 
           {/* Right Column: Financial Health & Next Due */}
           <div className="lg:col-span-4 flex flex-col justify-between gap-3 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-white/10 lg:pl-6">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/[0.07] space-y-1">
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/[0.07] space-y-0.5">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                  BEBAN CICILAN / KAS
+                  RASIO KAS
                 </span>
                 <span
-                  className={`font-mono-num text-lg lg:text-xl font-black block ${
+                  className={`font-mono-num text-lg font-black block ${
                     monthlyBurdenPct <= 25
                       ? 'text-[#D4F826]'
                       : monthlyBurdenPct <= 45
@@ -847,43 +901,43 @@ export function DebtTab() {
                   {monthlyBurdenPct}%
                 </span>
                 <p className="text-[10px] text-slate-400 truncate">
-                  Kas: {formatRupiah(liquidAssets, hide)}
+                  Kas {formatRupiah(liquidAssets, hide)}
                 </p>
               </div>
 
-              <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/[0.07] space-y-1">
+              <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/[0.07] space-y-0.5">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                  STATUS KESEHATAN
+                  STATUS
                 </span>
-                <span className="text-sm lg:text-base font-extrabold text-white block mt-0.5">
+                <span className="text-sm sm:text-base font-extrabold text-white block mt-0.5">
                   {totalPayableRemaining === 0
-                    ? 'Bebas Utang 🎉'
+                    ? 'Bebas Utang'
                     : monthlyBurdenPct <= 30
-                    ? 'Terkendali 👍'
-                    : 'Waspada ⚠️'}
+                    ? 'Aman'
+                    : 'Waspada'}
                 </span>
                 <p className="text-[10px] text-slate-400 truncate">
-                  {monthlyBurdenPct <= 30 ? 'Rasio cicilan sehat' : 'Prioritaskan cicilan'}
+                  {monthlyBurdenPct <= 30 ? 'Rasio sehat' : 'Prioritaskan bayar'}
                 </p>
               </div>
             </div>
 
             {/* Next Due Notification Banner */}
             {nextDueItem ? (
-              <div className="p-3.5 rounded-2xl bg-white/[0.06] border border-white/10 flex items-center justify-between gap-2.5">
+              <div className="p-3 rounded-2xl bg-white/[0.06] border border-white/10 flex items-center justify-between gap-2.5">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-[#D4F826]/15 border border-[#D4F826]/30 flex items-center justify-center shrink-0">
-                    <Clock size={15} className="text-[#D4F826]" />
+                    <Clock size={14} className="text-[#D4F826]" />
                   </div>
                   <div className="min-w-0">
                     <p className="text-xs font-extrabold text-white truncate">
-                      Terdekat: {nextDueItem.name}
+                      {nextDueItem.name}
                     </p>
-                    <p className="text-[11px] text-slate-300 truncate">
+                    <p className="text-[11px] text-slate-300 truncate font-mono-num">
                       {nextDueItem.dueDayOfMonth
-                        ? `Tgl ${nextDueItem.dueDayOfMonth} (${nextDueItem.effectiveDueDate})`
+                        ? `Tgl ${nextDueItem.dueDayOfMonth}`
                         : nextDueItem.effectiveDueDate}{' '}
-                      · {formatRupiah(getMonthlyDebtInstallmentAmount(nextDueItem), hide)}
+                      · {formatRupiah(nextDueItem.remainingThisCycle, hide)}
                     </p>
                   </div>
                 </div>
@@ -893,7 +947,7 @@ export function DebtTab() {
                   const isLate = days < 0;
                   return (
                     <span
-                      className={`text-[10px] font-black px-2.5 py-1 rounded-full shrink-0 ${
+                      className={`text-[10px] font-black px-2 py-0.5 rounded-full shrink-0 ${
                         isLate
                           ? 'bg-rose-500 text-white'
                           : days <= 3
@@ -902,21 +956,21 @@ export function DebtTab() {
                       }`}
                     >
                       {isLate
-                        ? `Lewat ${Math.abs(days)} hr`
+                        ? `Telat ${Math.abs(days)}h`
                         : days === 0
-                        ? 'Hari ini!'
-                        : `${days} hr lagi`}
+                        ? 'Hari ini'
+                        : `${days}h lagi`}
                     </span>
                   );
                 })()}
               </div>
             ) : (
-              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2.5">
-                <ShieldCheck size={18} className="text-emerald-400 shrink-0" />
-                <p className="text-xs font-semibold text-emerald-200 leading-snug">
+              <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-2">
+                <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
+                <p className="text-xs font-semibold text-emerald-200 truncate">
                   {activePayables.length === 0
-                    ? 'Tidak ada jadwal tagihan utang aktif.'
-                    : 'Semua jadwal cicilan bulan ini sudah terbayar tepat waktu!'}
+                    ? 'Tidak ada tagihan aktif.'
+                    : 'Cicilan periode ini lunas.'}
                 </p>
               </div>
             )}
@@ -931,7 +985,7 @@ export function DebtTab() {
           <button
             type="button"
             onClick={() => setActiveTypeFilter('all')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer whitespace-nowrap ${
               activeTypeFilter === 'all'
                 ? `${brandAccentBg} shadow-xs font-black`
                 : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
@@ -942,26 +996,26 @@ export function DebtTab() {
           <button
             type="button"
             onClick={() => setActiveTypeFilter('payable')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
               activeTypeFilter === 'payable'
                 ? `${brandAccentBg} shadow-xs font-black`
                 : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
             }`}
           >
-            <TrendingDown size={14} className="text-rose-500" />
-            <span>Utang Saya ({debts.filter((d) => d.type === 'payable').length})</span>
+            <TrendingDown size={13} className="text-rose-500" />
+            <span>Utang ({debts.filter((d) => d.type === 'payable').length})</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveTypeFilter('receivable')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
               activeTypeFilter === 'receivable'
                 ? `${brandAccentBg} shadow-xs font-black`
                 : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
             }`}
           >
-            <TrendingUp size={14} className="text-emerald-500" />
-            <span>Piutang Saya ({debts.filter((d) => d.type === 'receivable').length})</span>
+            <TrendingUp size={13} className="text-emerald-500" />
+            <span>Piutang ({debts.filter((d) => d.type === 'receivable').length})</span>
           </button>
         </div>
 
@@ -977,7 +1031,7 @@ export function DebtTab() {
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              Belum Lunas
+              Aktif
             </button>
             <button
               type="button"
@@ -1003,48 +1057,48 @@ export function DebtTab() {
             </button>
           </div>
 
-          <div className="relative min-w-[130px] sm:min-w-[180px]">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <div className="relative min-w-[120px] sm:min-w-[170px] flex-1 sm:flex-initial">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Cari nama / pihak..."
-              className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-[#D4F826]"
+              placeholder="Cari..."
+              className="w-full pl-7 pr-3 py-1.5 rounded-xl bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-[#D4F826]"
             />
           </div>
         </div>
       </div>
 
       {/* Debts List (Sorted by Nearest Due Date) */}
-      <div className="space-y-3.5">
+      <div className="space-y-3">
         {filteredDebts.length === 0 ? (
-          <div className="text-center py-12 bg-white dark:bg-[#11131E] rounded-[28px] p-6 border border-slate-200/80 dark:border-white/[0.08] space-y-2.5">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center mx-auto">
-              <CheckCircle2 size={24} />
+          <div className="text-center py-10 bg-white dark:bg-[#11131E] rounded-[28px] p-6 border border-slate-200/80 dark:border-white/[0.08] space-y-2">
+            <div className="w-11 h-11 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center mx-auto">
+              <CheckCircle2 size={22} />
             </div>
-            <p className="font-display text-base font-extrabold text-slate-900 dark:text-white">
-              Tidak ada catatan utang / piutang
+            <p className="font-display text-sm font-extrabold text-slate-900 dark:text-white">
+              Belum ada catatan
             </p>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
+            <p className="text-xs text-slate-400 max-w-xs mx-auto">
               {activeStatusFilter === 'active'
-                ? 'Semua kewajiban telah lunas atau belum ada catatan baru yang dimasukkan.'
-                : 'Tidak ada data yang sesuai dengan filter pencarian.'}
+                ? 'Semua tagihan telah lunas.'
+                : 'Tidak ada data yang cocok.'}
             </p>
             <div className="pt-2 flex justify-center gap-2">
               <button
                 type="button"
                 onClick={() => handleOpenAdd('payable')}
-                className={`px-4 py-2.5 rounded-xl ${brandAccentBg} text-xs font-black cursor-pointer shadow-xs`}
+                className={`px-3.5 py-2 rounded-xl ${brandAccentBg} text-xs font-black cursor-pointer shadow-xs`}
               >
-                + Catat Utang Baru
+                + Utang
               </button>
               <button
                 type="button"
                 onClick={() => handleOpenAdd('receivable')}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-white/[0.08] text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer"
+                className="px-3.5 py-2 rounded-xl bg-slate-100 dark:bg-white/[0.08] text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer"
               >
-                + Catat Piutang
+                + Piutang
               </button>
             </div>
           </div>
@@ -1076,7 +1130,6 @@ export function DebtTab() {
                 ? Math.max(1, Math.ceil(item.remainingAmount / monthlyAmt))
                 : 0;
 
-            // Detect if contactName or name matches one of the 17 official bank / e-wallet brands
             const matchedBrand =
               detectWalletBrand(item.contactName) || detectWalletBrand(item.name);
 
@@ -1091,7 +1144,7 @@ export function DebtTab() {
             return (
               <div
                 key={item.id}
-                className="relative overflow-hidden bg-white dark:bg-[#11131E] rounded-[24px] p-4 sm:p-5 border border-slate-200/80 dark:border-white/[0.08] hover:border-indigo-500/40 transition-all space-y-3.5 shadow-2xs"
+                className="relative overflow-hidden bg-white dark:bg-[#11131E] rounded-[24px] p-4 sm:p-5 border border-slate-200/80 dark:border-white/[0.08] hover:border-indigo-500/40 transition-all space-y-3 shadow-2xs"
               >
                 {/* Top Brand / Status Strip */}
                 <div
@@ -1099,14 +1152,14 @@ export function DebtTab() {
                   style={{ backgroundColor: topBarColor }}
                 />
 
-                {/* Row 1: Header (Logo/Icon + Title + Status Badges on Left, Remaining Amount on Right) */}
+                {/* Row 1: Header */}
                 <div className="flex items-start justify-between gap-3 pt-0.5">
-                  <div className="flex items-start gap-3.5 min-w-0">
+                  <div className="flex items-start gap-3 min-w-0">
                     {matchedBrand ? (
                       <WalletBrandLogo brandId={matchedBrand.id} size="md" />
                     ) : (
                       <div
-                        className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border ${
+                        className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border ${
                           isPaid
                             ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500'
                             : isPayable
@@ -1115,11 +1168,11 @@ export function DebtTab() {
                         }`}
                       >
                         {isPaid ? (
-                          <CheckCircle2 size={20} />
+                          <CheckCircle2 size={18} />
                         ) : isPayable ? (
-                          <TrendingDown size={20} />
+                          <TrendingDown size={18} />
                         ) : (
-                          <TrendingUp size={20} />
+                          <TrendingUp size={18} />
                         )}
                       </div>
                     )}
@@ -1133,29 +1186,28 @@ export function DebtTab() {
                               : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
                           }`}
                         >
-                          {isPayable ? 'UTANG SAYA' : 'PIUTANG'}
+                          {isPayable ? 'UTANG' : 'PIUTANG'}
                         </span>
 
-                        {/* Due Countdown / Paid This Month Status Tag */}
                         {isPaid ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-500 text-black">
                             <CheckCircle2 size={10} strokeWidth={3} />
-                            <span>Lunas Penuh</span>
+                            <span>Lunas</span>
                           </span>
                         ) : paidThisCycle ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-500/30">
                             <CheckCircle2 size={10} />
-                            <span>Sudah Dibayar Bulan Ini</span>
+                            <span>Lunas Periode Ini</span>
                           </span>
                         ) : isDeferredNextMonth ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-600 dark:text-amber-300 border border-amber-500/30">
                             <Clock size={10} />
-                            <span>Mulai Bulan Depan</span>
+                            <span>Periode Depan</span>
                           </span>
                         ) : isLate ? (
                           <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-md bg-rose-500 text-white">
                             <AlertCircle size={10} />
-                            <span>Terlambat {Math.abs(daysLeft)} hari</span>
+                            <span>Telat {Math.abs(daysLeft)}h</span>
                           </span>
                         ) : daysLeft !== null ? (
                           <span
@@ -1168,9 +1220,7 @@ export function DebtTab() {
                             }`}
                           >
                             <Clock size={10} />
-                            <span>
-                              {daysLeft === 0 ? 'Jatuh Tempo Hari Ini!' : `${daysLeft} hari lagi`}
-                            </span>
+                            <span>{daysLeft === 0 ? 'Hari Ini' : `${daysLeft}h lagi`}</span>
                           </span>
                         ) : null}
                       </div>
@@ -1179,11 +1229,10 @@ export function DebtTab() {
                         {item.name}
                       </h3>
 
-                      {/* Metadata Line */}
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
                         <span className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                          <Building2 size={12} className="text-slate-400" />
-                          {item.contactName || (isPayable ? 'Lembaga / Pihak' : 'Peminjam')}
+                          <Building2 size={11} className="text-slate-400" />
+                          {item.contactName || (isPayable ? 'Lembaga' : 'Peminjam')}
                         </span>
                         <span>·</span>
                         <span>
@@ -1192,8 +1241,8 @@ export function DebtTab() {
                         {item.note && (
                           <>
                             <span>·</span>
-                            <span className="italic text-slate-400 truncate max-w-[180px] sm:max-w-[260px]">
-                              &ldquo;{item.note}&rdquo;
+                            <span className="italic text-slate-400 truncate max-w-[160px] sm:max-w-[240px]">
+                              {item.note}
                             </span>
                           </>
                         )}
@@ -1204,7 +1253,7 @@ export function DebtTab() {
                   {/* Right Side: Remaining Amount */}
                   <div className="text-right shrink-0">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                      {isPaid ? 'STATUS' : 'SISA POKOK'}
+                      {isPaid ? 'STATUS' : 'SISA'}
                     </span>
                     <div
                       className={`font-mono-num text-base sm:text-xl font-extrabold tracking-tight ${
@@ -1215,43 +1264,40 @@ export function DebtTab() {
                           : 'text-emerald-500 dark:text-emerald-400'
                       }`}
                     >
-                      {isPaid ? 'Rp 0 (Lunas)' : formatRupiah(item.remainingAmount, hide)}
+                      {isPaid ? 'Lunas' : formatRupiah(item.remainingAmount, hide)}
                     </div>
                     <div className="font-mono-num text-[11px] font-medium text-slate-400">
-                      Total: {formatRupiah(item.totalAmount, hide)}
+                      Pokok {formatRupiah(item.totalAmount, hide)}
                     </div>
                   </div>
                 </div>
 
                 {/* Row 2: Unified Metrics Strip + Progress Bar */}
-                <div className="rounded-2xl bg-slate-50/90 dark:bg-white/[0.03] border border-slate-200/60 dark:border-white/[0.06] p-3.5 space-y-2.5">
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                    {/* Col 1: Cicilan Bulanan */}
+                <div className="rounded-2xl bg-slate-50/90 dark:bg-white/[0.03] border border-slate-200/60 dark:border-white/[0.06] p-3 space-y-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
                     <div>
                       <span className="text-[10px] font-semibold text-slate-400 block">
-                        {isPayable ? 'Cicilan / Bulan' : 'Angsuran / Bulan'}
+                        Cicilan / Bln
                       </span>
                       <span className="font-mono-num font-extrabold text-slate-900 dark:text-white mt-0.5 block">
-                        {monthlyAmt > 0 ? `${formatRupiah(monthlyAmt, hide)}` : 'Sekali Bayar'}
+                        {monthlyAmt > 0 ? formatRupiah(monthlyAmt, hide) : 'Sekali Bayar'}
                       </span>
                     </div>
 
-                    {/* Col 2: Jatuh Tempo */}
                     <div>
                       <span className="text-[10px] font-semibold text-slate-400 block">
-                        Jadwal Jatuh Tempo
+                        Jatuh Tempo
                       </span>
                       <span className={`font-mono-num font-extrabold ${brandAccentText} mt-0.5 block`}>
                         {item.dueDayOfMonth
-                          ? `Tiap Tgl ${item.dueDayOfMonth}`
+                          ? `Tgl ${item.dueDayOfMonth}`
                           : item.dueDate || '-'}
                       </span>
                     </div>
 
-                    {/* Col 3: Tenor & Sisa Angsuran */}
                     <div>
                       <span className="text-[10px] font-semibold text-slate-400 block">
-                        Tenor & Sisa Kali
+                        Tenor
                       </span>
                       <span className="font-bold text-slate-700 dark:text-slate-300 mt-0.5 block">
                         {item.tenorMonths ? `${item.tenorMonths} bln` : 'Non-cicilan'}
@@ -1259,7 +1305,6 @@ export function DebtTab() {
                       </span>
                     </div>
 
-                    {/* Col 4: Terbayar & Progres */}
                     <div className="sm:text-right">
                       <span className="text-[10px] font-semibold text-slate-400 block">
                         Terbayar ({progressPct}%)
@@ -1271,7 +1316,7 @@ export function DebtTab() {
                   </div>
 
                   {/* Progress Bar */}
-                  <div className="w-full h-2 rounded-full bg-slate-200/80 dark:bg-white/10 overflow-hidden">
+                  <div className="w-full h-1.5 rounded-full bg-slate-200/80 dark:bg-white/10 overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${
                         isPaid
@@ -1291,8 +1336,7 @@ export function DebtTab() {
                     <button
                       type="button"
                       onClick={() => setDetailDebt(item)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.06] dark:hover:bg-white/[0.12] text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                      title="Lihat & kelola riwayat pembayaran"
+                      className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.06] dark:hover:bg-white/[0.12] text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
                       <History size={13} />
                       <span>Riwayat ({item.payments?.length || 0})</span>
@@ -1305,10 +1349,10 @@ export function DebtTab() {
                         type="button"
                         onClick={() => cancelDebtPayment(item.id)}
                         className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800/60 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                        title="Batalkan pencatatan pembayaran cicilan terakhir & kembalikan saldo"
+                        title="Batalkan pembayaran terakhir"
                       >
                         <RotateCcw size={12} />
-                        <span>{isPaid ? 'Batal Lunas' : 'Batal Bayar'}</span>
+                        <span>Batal</span>
                       </button>
                     )}
 
@@ -1316,10 +1360,9 @@ export function DebtTab() {
                       type="button"
                       onClick={() => handleOpenEdit(item)}
                       className="px-2.5 py-1.5 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/[0.06] rounded-xl text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                      title="Edit catatan"
                     >
                       <Edit2 size={13} />
-                      <span className="hidden sm:inline">Ubah</span>
+                      <span className="hidden sm:inline">Edit</span>
                     </button>
 
                     <button
@@ -1337,10 +1380,9 @@ export function DebtTab() {
                           ? 'bg-red-600 text-white hover:bg-red-700'
                           : 'text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30'
                       }`}
-                      title="Hapus catatan"
                     >
                       <Trash2 size={13} />
-                      {confirmDeleteId === item.id && <span>Yakin Hapus?</span>}
+                      {confirmDeleteId === item.id && <span>Hapus?</span>}
                     </button>
                   </div>
 
@@ -1349,19 +1391,18 @@ export function DebtTab() {
                       <button
                         type="button"
                         onClick={() => handleOpenPay(item, false)}
-                        className={`px-3.5 py-2 rounded-xl ${brandAccentBg} text-xs font-black shadow-xs cursor-pointer transition-transform active:scale-95 flex items-center gap-1`}
+                        className={`px-3.5 py-1.5 rounded-xl ${brandAccentBg} text-xs font-black shadow-xs cursor-pointer transition-transform active:scale-95 flex items-center gap-1`}
                       >
                         <DollarSign size={13} />
-                        <span>{isPayable ? 'Bayar Cicilan' : 'Terima Cicilan'}</span>
+                        <span>{isPayable ? 'Bayar' : 'Terima'}</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={() => handleOpenPay(item, true)}
-                        className="px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.08] dark:hover:bg-white/[0.14] text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer transition-colors"
-                        title="Lunasi seluruh sisa kewajiban dengan memilih dompet"
+                        className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.08] dark:hover:bg-white/[0.14] text-slate-700 dark:text-slate-200 text-xs font-bold cursor-pointer transition-colors"
                       >
-                        Lunasi Penuh
+                        Lunasi
                       </button>
                     </div>
                   )}
@@ -1386,10 +1427,10 @@ export function DebtTab() {
               <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-white/[0.08]">
                 <div>
                   <h3 className="font-display text-base sm:text-lg font-extrabold text-slate-900 dark:text-white">
-                    {editingDebt ? 'Edit Catatan Utang / Piutang' : 'Catat Utang / Piutang Baru'}
+                    {editingDebt ? 'Edit Catatan' : 'Tambah Catatan'}
                   </h3>
                   <p className="text-[11px] text-slate-400">
-                    Isi rincian kewajiban atau piutang agar tersinkron ke Budget & Dompet.
+                    Sinkron otomatis ke Budget & Dompet.
                   </p>
                 </div>
                 <button
@@ -1414,7 +1455,7 @@ export function DebtTab() {
                     }`}
                   >
                     <TrendingDown size={14} />
-                    <span>Utang Saya</span>
+                    <span>Utang</span>
                   </button>
                   <button
                     type="button"
@@ -1426,7 +1467,7 @@ export function DebtTab() {
                     }`}
                   >
                     <TrendingUp size={14} />
-                    <span>Piutang Saya</span>
+                    <span>Piutang</span>
                   </button>
                 </div>
 
@@ -1434,7 +1475,7 @@ export function DebtTab() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                      Nama Utang / Cicilan *
+                      Nama *
                     </label>
                     <input
                       type="text"
@@ -1442,8 +1483,8 @@ export function DebtTab() {
                       onChange={(e) => setFormName(e.target.value)}
                       placeholder={
                         formType === 'payable'
-                          ? 'Misal: Cicilan iPhone, SPayLater'
-                          : 'Misal: Pinjaman Budi'
+                          ? 'Cicilan iPhone, SPayLater'
+                          : 'Pinjaman Budi'
                       }
                       required
                       className="w-full px-3 py-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
@@ -1452,7 +1493,7 @@ export function DebtTab() {
 
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                      {formType === 'payable' ? 'Bank / Lembaga / Pihak' : 'Nama Peminjam'}
+                      {formType === 'payable' ? 'Pihak / Lembaga' : 'Peminjam'}
                     </label>
                     <input
                       type="text"
@@ -1460,8 +1501,8 @@ export function DebtTab() {
                       onChange={(e) => setFormContactName(e.target.value)}
                       placeholder={
                         formType === 'payable'
-                          ? 'Misal: BCA, Mandiri, SeaBank, ShopeePay'
-                          : 'Misal: Ahmad, Teman Kantor'
+                          ? 'BCA, Mandiri, ShopeePay'
+                          : 'Ahmad, Teman'
                       }
                       className="w-full px-3 py-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
@@ -1472,14 +1513,14 @@ export function DebtTab() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                      Total Pinjaman Pokok (Rp) *
+                      Total Pokok (Rp) *
                     </label>
                     <input
                       type="text"
                       inputMode="numeric"
                       value={formTotalAmount}
                       onChange={(e) => handleTotalAmountChange(e.target.value)}
-                      placeholder="Contoh: 3.000.000"
+                      placeholder="3.000.000"
                       required
                       className="w-full px-3 py-2.5 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-900 dark:text-white font-mono-num focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
@@ -1506,8 +1547,8 @@ export function DebtTab() {
                       className="w-full px-3 py-2.5 bg-slate-50 dark:bg-[#181B29] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     >
                       <option value="cicilan">Cicilan & Paylater</option>
-                      <option value="bank">Perbankan / Pinjaman Resmi</option>
-                      <option value="personal">Personal / Teman & Keluarga</option>
+                      <option value="bank">Pinjaman Bank</option>
+                      <option value="personal">Personal / Teman</option>
                       <option value="modal">Modal Usaha</option>
                       <option value="kartu_kredit">Kartu Kredit</option>
                       <option value="lainnya">Lainnya</option>
@@ -1520,7 +1561,7 @@ export function DebtTab() {
                   <div className="p-3 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200 dark:border-white/10">
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                        Sisa Kewajiban Saat Ini (Rp)
+                        Sisa Saat Ini (Rp)
                       </label>
                       <button
                         type="button"
@@ -1528,7 +1569,7 @@ export function DebtTab() {
                         className="text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer flex items-center gap-1"
                       >
                         <RotateCcw size={11} />
-                        <span>Reset ke Total</span>
+                        <span>Reset</span>
                       </button>
                     </div>
                     <input
@@ -1536,7 +1577,7 @@ export function DebtTab() {
                       inputMode="numeric"
                       value={formRemainingAmount}
                       onChange={(e) => setFormRemainingAmount(formatNominalInput(e.target.value))}
-                      placeholder="Contoh: 1.500.000"
+                      placeholder="1.500.000"
                       className="w-full px-3 py-2 bg-white dark:bg-[#181B29] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-900 dark:text-white font-mono-num focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
                   </div>
@@ -1546,9 +1587,9 @@ export function DebtTab() {
                 <div className="p-3.5 rounded-2xl bg-slate-50/90 dark:bg-white/[0.03] border border-slate-200/80 dark:border-white/10 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <CalendarDays size={16} className={brandAccentText} />
+                      <CalendarDays size={15} className={brandAccentText} />
                       <span className="text-xs font-extrabold text-slate-900 dark:text-white">
-                        Skema Cicilan Bulanan
+                        Cicilan Bulanan
                       </span>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
@@ -1558,12 +1599,19 @@ export function DebtTab() {
                         onChange={(e) => {
                           const checked = e.target.checked;
                           setFormIsInstallment(checked);
+                          const dNum = parseInt(formDueDayOfMonth, 10) || 10;
                           if (checked) {
                             const tNum = parseInt(formTenorMonths, 10) || 6;
                             const tot = parseNominalInput(formTotalAmount);
                             if (tot > 0 && (!formMonthlyInstallment || formMonthlyInstallment === '0')) {
                               setFormMonthlyInstallment(formatNominalInput(String(Math.round(tot / tNum))));
                             }
+                            const calcDue = computeInstallmentDueDate(formStartDate, tNum, dNum);
+                            if (calcDue) setFormDueDate(calcDue);
+                          } else {
+                            // Reset due date to 1 month ahead so lump-sum doesn't keep multi-month tenor date
+                            const singleDue = computeInstallmentDueDate(formStartDate, 1, dNum);
+                            if (singleDue) setFormDueDate(singleDue);
                           }
                         }}
                         className="sr-only peer"
@@ -1578,7 +1626,7 @@ export function DebtTab() {
                         {/* Tenor */}
                         <div>
                           <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                            Tenor / Durasi (Bulan)
+                            Tenor (Bulan)
                           </label>
                           <div className="relative">
                             <input
@@ -1615,7 +1663,7 @@ export function DebtTab() {
                         {/* Tanggal Jatuh Tempo Bulanan */}
                         <div>
                           <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                            Jatuh Tempo Tiap Tanggal
+                            Tgl Jatuh Tempo
                           </label>
                           <div className="relative">
                             <input
@@ -1654,7 +1702,7 @@ export function DebtTab() {
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                            Cicilan per Bulan (Rp)
+                            Cicilan / Bln (Rp)
                           </label>
                           {parseNominalInput(formTotalAmount) > 0 &&
                             parseInt(formTenorMonths, 10) > 0 && (
@@ -1690,25 +1738,9 @@ export function DebtTab() {
                           onChange={(e) =>
                             setFormMonthlyInstallment(formatNominalInput(e.target.value))
                           }
-                          placeholder="Contoh: 500.000"
+                          placeholder="500.000"
                           className="w-full px-3 py-2 bg-white dark:bg-[#181B29] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-900 dark:text-white font-mono-num focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                         />
-                        {parseNominalInput(formMonthlyInstallment) > 0 &&
-                          parseInt(formTenorMonths, 10) > 0 && (
-                            <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500 dark:text-slate-400 mt-1 px-0.5 font-mono-num">
-                              <span>
-                                {formatRupiah(parseNominalInput(formMonthlyInstallment))} ×{' '}
-                                {formTenorMonths} bln
-                              </span>
-                              <span className="font-bold text-slate-700 dark:text-slate-300">
-                                Total:{' '}
-                                {formatRupiah(
-                                  parseNominalInput(formMonthlyInstallment) *
-                                    parseInt(formTenorMonths, 10)
-                                )}
-                              </span>
-                            </div>
-                          )}
                       </div>
                     </div>
                   )}
@@ -1718,7 +1750,7 @@ export function DebtTab() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                      Tanggal Mulai / Pinjam
+                      Tgl Mulai
                     </label>
                     <input
                       type="date"
@@ -1734,7 +1766,7 @@ export function DebtTab() {
                       </label>
                       {formIsInstallment && formTenorMonths && (
                         <span className={`text-[10px] ${brandAccentText} font-bold`}>
-                          Auto {formTenorMonths} bln
+                          {formTenorMonths} bln
                         </span>
                       )}
                     </div>
@@ -1752,7 +1784,7 @@ export function DebtTab() {
                   <div className="p-3 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200/80 dark:border-white/10 space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-extrabold text-slate-700 dark:text-slate-200">
-                        Jadwal Tagihan di Menu Budget
+                        Jadwal Tagihan Budget
                       </span>
                       <span className="text-[10px] font-semibold text-slate-400">
                         Pos Tagihan Fixed
@@ -1769,7 +1801,7 @@ export function DebtTab() {
                             : 'border-slate-200 dark:border-white/10 bg-white dark:bg-[#181B29] text-slate-500 dark:text-slate-400'
                         }`}
                       >
-                        <span>Bulan Ini</span>
+                        <span>Periode Ini</span>
                         {formStartBillingMode === 'current_period' && (
                           <Check size={13} className="text-lime-600 dark:text-[#D4F826]" />
                         )}
@@ -1794,17 +1826,17 @@ export function DebtTab() {
                             : 'border-slate-200 dark:border-white/10 bg-white dark:bg-[#181B29] text-slate-500 dark:text-slate-400'
                         }`}
                       >
-                        <span>Mulai Bulan Depan</span>
+                        <span>Periode Depan</span>
                         {formStartBillingMode === 'next_period' && (
                           <Check size={13} className="text-amber-500" />
                         )}
                       </button>
                     </div>
 
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">
+                    <p className="text-[10px] text-slate-500 dark:text-slate-400">
                       {formStartBillingMode === 'next_period'
-                        ? `⏳ Tidak memotong Pos Tagihan Fixed bulan ini (aktif mulai ${budgetPeriod.nextPaydayIso}).`
-                        : '⚡ Langsung masuk Pos Tagihan Bulanan (Fixed) pada periode budget saat ini.'}
+                        ? `Aktif mulai ${budgetPeriod.nextPaydayIso}.`
+                        : 'Masuk Pos Tagihan periode ini.'}
                     </p>
                   </div>
                 )}
@@ -1821,8 +1853,8 @@ export function DebtTab() {
                       />
                       <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
                         {formType === 'payable'
-                          ? 'Catat pencairan dana pinjaman masuk ke saldo dompet?'
-                          : 'Potong dana pinjaman keluar dari saldo dompet sekarang?'}
+                          ? 'Cairkan dana ke dompet'
+                          : 'Potong dana dari dompet'}
                       </span>
                     </label>
 
@@ -1852,14 +1884,11 @@ export function DebtTab() {
                             totalVal > selectedW.balance
                           ) {
                             return (
-                              <div className="p-2 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 text-[11px] text-red-700 dark:text-red-300 flex items-start gap-1.5">
-                                <AlertCircle size={14} className="text-red-500 shrink-0 mt-0.5" />
-                                <div>
-                                  <span className="font-extrabold">
-                                    Saldo {selectedW.name} kurang!
-                                  </span>{' '}
-                                  Tersedia {formatRupiah(selectedW.balance, hide)}.
-                                </div>
+                              <div className="p-2 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 text-[11px] text-red-700 dark:text-red-300 flex items-center gap-1.5">
+                                <AlertCircle size={13} className="text-red-500 shrink-0" />
+                                <span className="font-bold">
+                                  Saldo {selectedW.name} kurang ({formatRupiah(selectedW.balance, hide)}).
+                                </span>
                               </div>
                             );
                           }
@@ -1873,13 +1902,13 @@ export function DebtTab() {
                 {/* Notes */}
                 <div>
                   <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                    Catatan Tambahan (Opsional)
+                    Catatan (Opsional)
                   </label>
                   <input
                     type="text"
                     value={formNote}
                     onChange={(e) => setFormNote(e.target.value)}
-                    placeholder="Contoh: Bunga 0%, kontrak #12345"
+                    placeholder="Bunga 0%, kontrak #123"
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
                 </div>
@@ -1897,7 +1926,7 @@ export function DebtTab() {
                     type="submit"
                     className={`flex-1 py-2.5 rounded-xl ${brandAccentBg} text-xs font-black shadow-xs cursor-pointer`}
                   >
-                    {editingDebt ? 'Simpan Perubahan' : 'Simpan Catatan'}
+                    Simpan
                   </button>
                 </div>
               </form>
@@ -1914,19 +1943,19 @@ export function DebtTab() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white dark:bg-[#11131E] rounded-[28px] p-6 max-w-md w-full space-y-4 shadow-2xl border border-slate-200/80 dark:border-white/10"
+              className="bg-white dark:bg-[#11131E] rounded-[28px] p-5 sm:p-6 max-w-md w-full space-y-4 shadow-2xl border border-slate-200/80 dark:border-white/10"
             >
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="font-display text-base font-extrabold text-slate-900 dark:text-white">
                     {isFullSettlementMode
-                      ? 'Konfirmasi Pelunasan Penuh'
+                      ? 'Pelunasan Penuh'
                       : payingDebt.type === 'payable'
-                      ? 'Bayar Cicilan / Utang'
-                      : 'Terima Pembayaran Piutang'}
+                      ? 'Bayar Tagihan'
+                      : 'Terima Piutang'}
                   </h3>
                   <p className="text-xs text-slate-400 truncate max-w-[260px]">
-                    {payingDebt.name} ({payingDebt.contactName})
+                    {payingDebt.name} · {payingDebt.contactName}
                   </p>
                 </div>
                 <button
@@ -1944,25 +1973,25 @@ export function DebtTab() {
               {/* Debt Summary Pill */}
               <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 text-xs space-y-1.5">
                 <div className="flex justify-between text-slate-500 dark:text-slate-400">
-                  <span>Sisa Kewajiban Saat Ini:</span>
+                  <span>Sisa Tagihan</span>
                   <span className="font-mono-num font-extrabold text-rose-500">
                     {formatRupiah(payingDebt.remainingAmount)}
                   </span>
                 </div>
                 <div className="flex justify-between text-slate-500 dark:text-slate-400">
-                  <span>Total Pinjaman Pokok:</span>
+                  <span>Pokok</span>
                   <span className="font-mono-num font-bold text-slate-700 dark:text-slate-300">
                     {formatRupiah(payingDebt.totalAmount)}
                   </span>
                 </div>
                 {(payingDebt.monthlyInstallment || payingDebt.dueDayOfMonth) && (
                   <div className="flex justify-between text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-200 dark:border-white/10">
-                    <span>Cicilan Rutin:</span>
+                    <span>Cicilan</span>
                     <span className="font-mono-num font-extrabold text-lime-700 dark:text-[#D4F826]">
                       {payingDebt.monthlyInstallment
                         ? `${formatRupiah(payingDebt.monthlyInstallment)}/bln`
                         : ''}
-                      {payingDebt.dueDayOfMonth ? ` (Tiap tgl ${payingDebt.dueDayOfMonth})` : ''}
+                      {payingDebt.dueDayOfMonth ? ` (Tgl ${payingDebt.dueDayOfMonth})` : ''}
                     </span>
                   </div>
                 )}
@@ -1971,14 +2000,14 @@ export function DebtTab() {
               <form onSubmit={handleSubmitPay} className="space-y-3.5">
                 <div>
                   <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                    Nominal Pembayaran (Rp)
+                    Nominal (Rp)
                   </label>
                   <input
                     type="text"
                     inputMode="numeric"
                     value={payAmount}
                     onChange={(e) => setPayAmount(formatNominalInput(e.target.value))}
-                    placeholder="Contoh: 500.000"
+                    placeholder="500.000"
                     required
                     className="w-full p-3 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-2xl text-sm font-extrabold font-mono-num text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
@@ -1993,7 +2022,7 @@ export function DebtTab() {
                           }
                           className="text-[11px] font-bold text-lime-700 dark:text-[#D4F826] bg-lime-500/10 dark:bg-[#D4F826]/10 px-2.5 py-1 rounded-xl hover:underline cursor-pointer"
                         >
-                          1x Cicilan ({formatRupiah(payingDebt.monthlyInstallment)})
+                          1x ({formatRupiah(payingDebt.monthlyInstallment)})
                         </button>
                       )}
                     {payingDebt.monthlyInstallment &&
@@ -2008,7 +2037,7 @@ export function DebtTab() {
                           }
                           className="text-[11px] font-bold text-lime-700 dark:text-[#D4F826] bg-lime-500/10 dark:bg-[#D4F826]/10 px-2.5 py-1 rounded-xl hover:underline cursor-pointer"
                         >
-                          2x Cicilan ({formatRupiah(payingDebt.monthlyInstallment * 2)})
+                          2x ({formatRupiah(payingDebt.monthlyInstallment * 2)})
                         </button>
                       )}
                     <button
@@ -2018,23 +2047,21 @@ export function DebtTab() {
                       }
                       className="text-[11px] font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-white/[0.08] px-2.5 py-1 rounded-xl hover:underline cursor-pointer"
                     >
-                      Lunasi Sisa ({formatRupiah(payingDebt.remainingAmount)})
+                      Lunasi ({formatRupiah(payingDebt.remainingAmount)})
                     </button>
                   </div>
                 </div>
 
                 <div>
                   <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                    {payingDebt.type === 'payable'
-                      ? 'Bayar dari Dompet / Rekening:'
-                      : 'Terima ke Dompet / Rekening:'}
+                    {payingDebt.type === 'payable' ? 'Dompet Sumber' : 'Dompet Tujuan'}
                   </label>
                   <select
                     value={payWalletId}
                     onChange={(e) => setPayWalletId(e.target.value)}
                     className="w-full p-3 bg-slate-50 dark:bg-[#181B29] border border-slate-200 dark:border-white/10 rounded-2xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   >
-                    <option value="">-- Tanpa Potong Dompet (Catat Saja) --</option>
+                    <option value="">-- Tanpa Dompet (Catat Saja) --</option>
                     {walletsWithBalance.map((w) => (
                       <option key={w.id} value={w.id}>
                         {w.name} ({formatRupiah(w.balance, hide)})
@@ -2048,15 +2075,12 @@ export function DebtTab() {
                     const amt = parseNominalInput(payAmount);
                     if (payingDebt.type === 'payable' && selectedW && amt > selectedW.balance) {
                       return (
-                        <div className="mt-2 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 text-[11px] text-red-700 dark:text-red-300 flex items-start gap-2">
-                          <AlertCircle size={15} className="text-red-500 shrink-0 mt-0.5" />
-                          <div>
-                            <span className="font-extrabold">
-                              Saldo {selectedW.name} Tidak Cukup!
-                            </span>{' '}
-                            Tersedia {formatRupiah(selectedW.balance, hide)}, kurang{' '}
-                            <strong>{formatRupiah(amt - selectedW.balance, hide)}</strong>. Pilih dompet lain atau pilih &ldquo;Tanpa Potong Dompet&rdquo;.
-                          </div>
+                        <div className="mt-2 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/60 border border-red-400 dark:border-red-700 text-[11px] text-red-700 dark:text-red-300 flex items-center gap-2">
+                          <AlertCircle size={14} className="text-red-500 shrink-0" />
+                          <span>
+                            Saldo <strong>{selectedW.name}</strong> kurang{' '}
+                            <strong>{formatRupiah(amt - selectedW.balance, hide)}</strong>.
+                          </span>
                         </div>
                       );
                     }
@@ -2067,7 +2091,7 @@ export function DebtTab() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-1">
-                      Tanggal Bayar
+                      Tanggal
                     </label>
                     <input
                       type="date"
@@ -2085,7 +2109,7 @@ export function DebtTab() {
                       type="text"
                       value={payNote}
                       onChange={(e) => setPayNote(e.target.value)}
-                      placeholder="Contoh: Cicilan ke-1"
+                      placeholder="Cicilan ke-1"
                       className="w-full p-3 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-2xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
                   </div>
@@ -2106,7 +2130,7 @@ export function DebtTab() {
                     type="submit"
                     className={`flex-1 py-3 rounded-2xl ${brandAccentBg} text-xs font-black shadow-xs cursor-pointer`}
                   >
-                    Konfirmasi Pembayaran
+                    Konfirmasi
                   </button>
                 </div>
               </form>
@@ -2123,7 +2147,7 @@ export function DebtTab() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white dark:bg-[#11131E] rounded-[28px] p-6 max-w-md w-full space-y-4 shadow-2xl border border-slate-200/80 dark:border-white/10 max-h-[85vh] overflow-y-auto"
+              className="bg-white dark:bg-[#11131E] rounded-[28px] p-5 sm:p-6 max-w-md w-full space-y-4 shadow-2xl border border-slate-200/80 dark:border-white/10 max-h-[85vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between">
                 <div>
@@ -2131,7 +2155,7 @@ export function DebtTab() {
                     Riwayat Pembayaran
                   </h3>
                   <p className="text-xs text-slate-400 truncate max-w-[260px]">
-                    {activeDetailDebt.name} ({activeDetailDebt.contactName})
+                    {activeDetailDebt.name} · {activeDetailDebt.contactName}
                   </p>
                 </div>
                 <button
@@ -2144,15 +2168,15 @@ export function DebtTab() {
               </div>
 
               {/* Status Header */}
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 space-y-2">
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 space-y-1.5">
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-slate-500">Total Pinjaman Pokok:</span>
+                  <span className="text-slate-500">Pokok</span>
                   <span className="font-mono-num font-extrabold text-slate-900 dark:text-white">
                     {formatRupiah(activeDetailDebt.totalAmount)}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-xs">
-                  <span className="text-slate-500">Sisa Belum Dibayar:</span>
+                  <span className="text-slate-500">Sisa</span>
                   <span
                     className={`font-mono-num font-black ${
                       activeDetailDebt.remainingAmount <= 0
@@ -2161,37 +2185,29 @@ export function DebtTab() {
                     }`}
                   >
                     {activeDetailDebt.remainingAmount <= 0
-                      ? 'Lunas 🎉'
+                      ? 'Lunas'
                       : formatRupiah(activeDetailDebt.remainingAmount)}
                   </span>
                 </div>
                 {activeDetailDebt.monthlyInstallment && (
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-500">Cicilan Bulanan:</span>
+                    <span className="text-slate-500">Cicilan</span>
                     <span className="font-mono-num font-bold text-lime-700 dark:text-[#D4F826]">
-                      {formatRupiah(activeDetailDebt.monthlyInstallment)} / bulan
-                    </span>
-                  </div>
-                )}
-                {activeDetailDebt.tenorMonths && (
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-500">Tempo / Tenor:</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-300">
-                      {activeDetailDebt.tenorMonths} Bulan
+                      {formatRupiah(activeDetailDebt.monthlyInstallment)} / bln
                     </span>
                   </div>
                 )}
                 {activeDetailDebt.dueDayOfMonth && (
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-500">Jatuh Tempo Bulanan:</span>
+                    <span className="text-slate-500">Jatuh Tempo</span>
                     <span className="font-bold text-lime-700 dark:text-[#D4F826]">
-                      Setiap tanggal {activeDetailDebt.dueDayOfMonth}
+                      Tiap tgl {activeDetailDebt.dueDayOfMonth}
                     </span>
                   </div>
                 )}
                 {activeDetailDebt.dueDate && (
                   <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-500">Target Pelunasan Akhir:</span>
+                    <span className="text-slate-500">Target Lunas</span>
                     <span className="font-mono-num font-bold text-slate-700 dark:text-slate-300">
                       {activeDetailDebt.dueDate}
                     </span>
@@ -2203,18 +2219,13 @@ export function DebtTab() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Daftar Angsuran Terbayar ({activeDetailDebt.payments?.length || 0})
+                    Riwayat ({activeDetailDebt.payments?.length || 0})
                   </h4>
-                  {activeDetailDebt.payments && activeDetailDebt.payments.length > 0 && (
-                    <span className="text-[10px] font-semibold text-slate-400">
-                      Klik Batal untuk membatalkan
-                    </span>
-                  )}
                 </div>
 
                 {!activeDetailDebt.payments || activeDetailDebt.payments.length === 0 ? (
                   <div className="text-center py-6 bg-slate-50 dark:bg-white/[0.03] rounded-2xl text-xs text-slate-400 space-y-2.5">
-                    <p>Belum ada riwayat cicilan yang dicatat.</p>
+                    <p>Belum ada riwayat pembayaran.</p>
                     {(activeDetailDebt.remainingAmount < activeDetailDebt.totalAmount ||
                       activeDetailDebt.status === 'paid') && (
                       <button
@@ -2223,7 +2234,7 @@ export function DebtTab() {
                         className="mx-auto px-3.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-xs font-extrabold flex items-center gap-1.5 cursor-pointer"
                       >
                         <RotateCcw size={13} />
-                        <span>Batalkan Pembayaran & Kembalikan Sisa Utang</span>
+                        <span>Kembalikan Sisa Tagihan</span>
                       </button>
                     )}
                   </div>
@@ -2256,7 +2267,6 @@ export function DebtTab() {
                               type="button"
                               onClick={() => cancelDebtPayment(activeDetailDebt.id, p.id)}
                               className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200/80 dark:border-rose-800/60 text-[11px] font-extrabold flex items-center gap-1 cursor-pointer transition-colors"
-                              title="Batalkan pencatatan pembayaran cicilan ini"
                             >
                               <RotateCcw size={12} />
                               <span>Batal</span>
@@ -2265,18 +2275,18 @@ export function DebtTab() {
                         </div>
                       ))}
                     </div>
-                    <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-relaxed pt-1">
-                      💡 Membatalkan pembayaran akan otomatis mengembalikan sisa kewajiban utang dan mengembalikan saldo dompet yang terpotong.
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 pt-0.5">
+                      Batal akan mengembalikan sisa tagihan & saldo dompet.
                     </p>
                   </>
                 )}
               </div>
 
-              <div className="pt-2">
+              <div className="pt-1">
                 <button
                   type="button"
                   onClick={() => setDetailDebt(null)}
-                  className="w-full py-3 rounded-2xl bg-slate-100 dark:bg-white/[0.08] text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
+                  className="w-full py-2.5 rounded-2xl bg-slate-100 dark:bg-white/[0.08] text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
                 >
                   Tutup
                 </button>

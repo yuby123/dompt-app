@@ -2642,11 +2642,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const incDelta = newIncAmt - oldIncAmt;
     let nextBudgetConfig = budgetConfig;
     if (incDelta !== 0) {
-      const currentEst = Math.max(0, Number(budgetConfig.estimatedIncome) || 0);
-      const nextEst = Math.max(0, currentEst + incDelta);
+      const updatedTxList = transactions.map((t) =>
+        t.id === id ? ({ ...t, ...data, updatedAt: now } as Transaction) : t
+      );
+      const { periodRecordedIncome } = resolveEffectivePeriodIncome(
+        budgetConfig,
+        updatedTxList,
+        budgetPeriod
+      );
       nextBudgetConfig = {
         ...budgetConfig,
-        estimatedIncome: nextEst,
+        estimatedIncome: periodRecordedIncome,
         updatedAt: now,
       };
       setBudgetConfig(nextBudgetConfig);
@@ -2707,10 +2713,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let budgetChanged = false;
 
     if (deletedTx && deletedTx.type === 'income' && deletedTx.amount > 0) {
-      const currentEst = Math.max(0, Number(nextBudgetConfig.estimatedIncome) || 0);
+      const remainingTxList = transactions.filter((t) => t.id !== id);
+      const { periodRecordedIncome } = resolveEffectivePeriodIncome(
+        nextBudgetConfig,
+        remainingTxList,
+        budgetPeriod
+      );
       nextBudgetConfig = {
         ...nextBudgetConfig,
-        estimatedIncome: Math.max(0, currentEst - deletedTx.amount),
+        estimatedIncome: periodRecordedIncome,
         deletedIds: nextDeleted,
         updatedAt: new Date().toISOString(),
       };
@@ -3675,17 +3686,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       data.customPeriodStart !== undefined ||
       data.customNextPayday !== undefined;
 
-    const nextSettings: AppSettings = hasPeriodUpdate
+    const hasSettingsOrPeriodUpdate =
+      hasPeriodUpdate || Boolean(data.settings);
+
+    const nextSettings: AppSettings = hasSettingsOrPeriodUpdate
       ? {
           ...settings,
+          ...(budgetConfig.settings || {}),
+          ...(data.settings || {}),
           paydayDay: nextPayday,
           periodMode: nextPeriodMode,
           customPeriodStart: nextCustomStart,
           customNextPayday: nextCustomNext,
         }
-      : settings;
+      : {
+          ...settings,
+          ...(budgetConfig.settings || {}),
+        };
 
-    if (hasPeriodUpdate) {
+    if (hasSettingsOrPeriodUpdate) {
       setSettings(nextSettings);
       saveStoredSettings(nextSettings, localScopeUid);
       if (mirrorUid) saveStoredSettings(nextSettings, mirrorUid);
@@ -3758,18 +3777,57 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const now = new Date().toISOString();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
     let targetSubName = '';
-    const updatedSub = budgetConfig.subcategories.map((s) => {
-      if (s.id === id) {
-        targetSubName = s.name.toLowerCase().trim();
-        return { ...s, ...data };
-      }
-      return s;
-    });
+    const existsInConfig = budgetConfig.subcategories.some((s) => s.id === id);
+    const updatedSub = existsInConfig
+      ? budgetConfig.subcategories.map((s) => {
+          if (s.id === id) {
+            targetSubName = s.name.toLowerCase().trim();
+            return { ...s, ...data };
+          }
+          return s;
+        })
+      : [
+          ...budgetConfig.subcategories,
+          {
+            id,
+            name: data.name || 'Subkategori',
+            group: data.group || 'kebutuhan',
+            allocatedAmount: data.allocatedAmount ?? 0,
+            emoji: data.emoji || '💳',
+            dueDateDay: data.dueDateDay,
+            isGroceryStock: data.isGroceryStock,
+          },
+        ];
     const updated: BudgetConfig = {
       ...budgetConfig,
       subcategories: updatedSub,
       updatedAt: now,
     };
+
+    // Two-way sync with payable debts if this is a debt subcategory (e.g. sub-debt-*)
+    if (id.startsWith('sub-debt-') && data.allocatedAmount !== undefined) {
+      const linkedDebtId = id.replace(/^sub-debt-/, '');
+      const hasLinkedDebt = debts.some((d) => d.id === linkedDebtId);
+      if (hasLinkedDebt) {
+        const nextDebts = debts.map((d) => {
+          if (d.id !== linkedDebtId) return d;
+          const updatedDebt: Debt = {
+            ...d,
+            monthlyInstallment: data.allocatedAmount,
+            dueDayOfMonth: data.dueDateDay !== undefined ? data.dueDateDay : d.dueDayOfMonth,
+            updatedAt: now,
+          };
+          if (isCloudUser && user?.uid) {
+            saveUserDebt(user.uid, updatedDebt).catch(() => {});
+            if (mirrorUid) saveUserDebt(mirrorUid, updatedDebt).catch(() => {});
+          }
+          return updatedDebt;
+        });
+        setDebts(nextDebts);
+        saveStoredDebts(nextDebts, localScopeUid);
+        if (mirrorUid) saveStoredDebts(nextDebts, mirrorUid);
+      }
+    }
 
     // Two-way sync: if a subscription is linked to this subcategory, keep its details in sync
     let nextSubs = subscriptions;

@@ -6,7 +6,6 @@ import {
   Plus,
   MoreVertical,
   X,
-  Sliders,
   SlidersHorizontal,
   HelpCircle,
   ChevronUp,
@@ -20,6 +19,10 @@ import {
   CalendarClock,
   Trash2,
   Smile,
+  Sparkles,
+  Wallet,
+  ArrowUpRight,
+  RotateCcw,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -35,6 +38,7 @@ import {
   isDebtOrInstallmentSubcategory,
   isDebtScheduledForBudgetPeriod,
   isGrocerySubcategory,
+  parseLocalDay,
   resolveEffectivePeriodIncome,
 } from '@/lib/budgetUtils';
 
@@ -54,7 +58,6 @@ export function BudgetTab() {
     categories,
     activeYear,
     activeMonth,
-    activeDay,
     setActiveDate,
     budgetPeriod,
     goToPrevPeriod,
@@ -97,7 +100,7 @@ export function BudgetTab() {
   const [newSubIsGrocery, setNewSubIsGrocery] = useState(false);
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
 
-  // Pola Makan & Belanja Modal state
+  // Simulasi Keperluan Pribadi Modal state
   const [isFoodModalOpen, setIsFoodModalOpen] = useState(false);
   const [tempFoodMode, setTempFoodMode] = useState<FoodLifestyleMode>(
     budgetConfig.foodLifestyleMode || 'eat_out'
@@ -114,11 +117,9 @@ export function BudgetTab() {
     keinginan: false,
     tabungan: false,
   });
-  // Cicilan & Utang dipisahkan dari Kebutuhan dan disembunyikan secara default (baru tampil saat diklik)
   const [showDebtSection, setShowDebtSection] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [showFixedPos, setShowFixedPos] = useState(false);
-  const [showGroceryPos, setShowGroceryPos] = useState(false);
   const [showVariablePos, setShowVariablePos] = useState(false);
 
   const toggleGroupCollapse = (group: BudgetGroup) => {
@@ -136,19 +137,19 @@ export function BudgetTab() {
   }, [targetGroup]);
 
   // Group limits (resolved accurately per active budget period)
-  const rawEstimatedIncome = budgetConfig.estimatedIncome ?? 0;
-  const recordedPeriodIncome = dashboardSummary.monthlyIncome ?? 0;
-  const { effectiveIncome: totalIncome } = useMemo(
+  const { effectiveIncome: totalIncome, periodRecordedIncome } = useMemo(
     () => resolveEffectivePeriodIncome(budgetConfig, transactions, budgetPeriod),
     [budgetConfig, transactions, budgetPeriod]
   );
+  const isManualIncomeOverride =
+    Boolean(
+      budgetConfig?.settings?.manualIncomePeriodKey &&
+        budgetConfig.settings.manualIncomePeriodKey === budgetPeriod.periodKey
+    ) && totalIncome !== periodRecordedIncome;
+
   const needsLimit = Math.round((totalIncome * budgetConfig.needsPercent) / 100);
   const wantsLimit = Math.round((totalIncome * budgetConfig.wantsPercent) / 100);
   const savingsLimit = Math.round((totalIncome * budgetConfig.savingsPercent) / 100);
-
-  const curMonthDate = new Date(activeYear, activeMonth, 1);
-  const daysInCurMonth = new Date(activeYear, activeMonth + 1, 0).getDate();
-  const curMonthShort = curMonthDate.toLocaleString('id-ID', { month: 'short' });
 
   // Merge subcategories with payable debts scheduled for this budget period
   const effectiveSubcategories = useMemo<BudgetSubcategory[]>(() => {
@@ -157,7 +158,7 @@ export function BudgetTab() {
       if (debt.type !== 'payable') return;
       const isPaid = debt.status === 'paid' && (debt.remainingAmount ?? 0) <= 0;
       const paidThisMonth = (debt.payments || []).reduce((sum, p) => {
-        const pd = new Date(p.date);
+        const pd = parseLocalDay(p.date);
         if (isDateInBudgetPeriod(pd, budgetPeriod)) {
           return sum + p.amount;
         }
@@ -182,8 +183,6 @@ export function BudgetTab() {
 
       const isScheduledInThisPeriod = isDebtScheduledForBudgetPeriod(debt, budgetPeriod);
 
-      // If debt is paid off (with 0 payments this month) or scheduled to start in a future period (next month),
-      // remove it from this period's active subcategories so it doesn't enter Pos Tagihan Bulanan (Fixed)
       if ((isPaid && paidThisMonth <= 0) || !isScheduledInThisPeriod) {
         if (existsIdx >= 0) {
           base.splice(existsIdx, 1);
@@ -193,7 +192,7 @@ export function BudgetTab() {
 
       let dueDay: number | undefined = debt.dueDayOfMonth;
       if (dueDay === undefined && debt.dueDate) {
-        const pd = new Date(debt.dueDate);
+        const pd = parseLocalDay(debt.dueDate);
         if (!isNaN(pd.getTime())) dueDay = pd.getDate();
       }
 
@@ -273,35 +272,73 @@ export function BudgetTab() {
   );
 
   // Dynamic subcategory spent amounts calculated from transactions & debt payments in the active period
-  const { subSpentMap, unallocatedGroupSpent } = useMemo(() => {
+  const { subSpentMap, unallocatedGroupSpent, unallocatedGroupItems } = useMemo(() => {
     const map: Record<string, number> = {};
     const unallocatedMap: Record<BudgetGroup, number> = {
       kebutuhan: 0,
       keinginan: 0,
       tabungan: 0,
     };
+    const unallocatedItemsMap: Record<
+      BudgetGroup,
+      { label: string; amount: number; emoji: string; isPersonalNeed?: boolean }[]
+    > = {
+      kebutuhan: [],
+      keinginan: [],
+      tabungan: [],
+    };
 
-    const catMap = new Map<string, { name: string; group?: BudgetGroup }>(
-      categories.map((c) => [c.id, { name: c.name.toLowerCase(), group: c.budgetGroup }])
+    const catMap = new Map<string, { name: string; group?: BudgetGroup; emoji?: string }>(
+      categories.map((c) => [c.id, { name: c.name.toLowerCase(), group: c.budgetGroup, emoji: c.emoji }])
     );
     const recordedTxIds = new Set<string>();
 
+    const addUnallocatedItem = (
+      group: BudgetGroup,
+      label: string,
+      amount: number,
+      emoji: string,
+      isPersonalNeed?: boolean
+    ) => {
+      unallocatedMap[group] = (unallocatedMap[group] || 0) + amount;
+      const cleanLabel = label.trim() || 'Pengeluaran Lainnya';
+      const existing = unallocatedItemsMap[group].find(
+        (item) => item.label.toLowerCase() === cleanLabel.toLowerCase()
+      );
+      if (existing) {
+        existing.amount += amount;
+      } else {
+        unallocatedItemsMap[group].push({
+          label: cleanLabel,
+          amount,
+          emoji: emoji || '📌',
+          isPersonalNeed,
+        });
+      }
+    };
+
     transactions.forEach((tx) => {
       recordedTxIds.add(tx.id);
-      const d = new Date(tx.date);
+      const d = parseLocalDay(tx.date);
       if (isDateInBudgetPeriod(d, budgetPeriod)) {
         if (tx.type === 'expense') {
           const catInfo = tx.categoryId ? catMap.get(tx.categoryId) : undefined;
           const catName = catInfo?.name || '';
-          const txGroup = tx.expenseNature === 'savings' ? 'tabungan' : (tx.budgetGroup || catInfo?.group);
+          const txGroup: BudgetGroup =
+            tx.expenseNature === 'savings'
+              ? 'tabungan'
+              : (tx.budgetGroup as BudgetGroup) || catInfo?.group || 'kebutuhan';
 
           const cleanTxNote = (tx.note || '')
             .toLowerCase()
-            .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)|bayar cicilan utang:|cicilan utang:/gi, '')
+            .replace(
+              /\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)|bayar cicilan utang:|cicilan utang:/gi,
+              ''
+            )
             .trim();
           const rawTxNote = (tx.note || '').toLowerCase().trim();
 
-          // 1. Try matching subcategory in the same budget group first (if txGroup is known)
+          // 1. Try matching subcategory in the same budget group first
           let matchSub = effectiveSubcategories.find((s) => {
             if (txGroup && s.group !== txGroup) return false;
 
@@ -313,19 +350,22 @@ export function BudgetTab() {
               return true;
             }
 
-            // B. Note matches subcategory name (with minimum length guard to avoid false positives)
+            // B. Note matches subcategory name
             if (subNameLower) {
               if (
                 cleanTxNote === subNameLower ||
                 (cleanSubName.length >= 3 && cleanTxNote.includes(cleanSubName)) ||
-                (subNameLower.length >= 3 && (rawTxNote.includes(subNameLower) || cleanTxNote.includes(subNameLower))) ||
+                (subNameLower.length >= 3 &&
+                  (rawTxNote.includes(subNameLower) || cleanTxNote.includes(subNameLower))) ||
                 (cleanTxNote.length >= 4 && subNameLower.includes(cleanTxNote))
               ) {
                 return true;
               }
 
-              // C. Keyword overlap (e.g. "wifi" in "wifi & internet")
-              const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3 && w !== 'cicilan');
+              // C. Keyword overlap
+              const subWords = subNameLower
+                .split(/[\s&/,-]+/)
+                .filter((w) => w.length >= 3 && w !== 'cicilan');
               const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
               if (subWords.length > 0 && noteWords.length > 0) {
                 const hasCommon = subWords.some((sw) =>
@@ -346,18 +386,46 @@ export function BudgetTab() {
               }
             }
 
-            // E. Synonym match for Tabungan category ('cat-tabungan' -> 'Nabung Dana Darurat' / 'Tabungan')
+            // E. Synonym matches for common Indonesian categories
             if (
-              txGroup === 'tabungan' &&
-              (tx.categoryId === 'cat-tabungan' || /tabung|nabung|simpan/i.test(catName)) &&
-              /nabung|tabung|darurat|simpan/i.test(subNameLower)
+              (tx.categoryId === 'cat-transport' || /transport|bensin|parkir|ojol|tol/i.test(catName)) &&
+              /bensin|transport|parkir|ojol|bbm|kendaraan/i.test(subNameLower)
             ) {
               return true;
             }
-
-            // F. Synonym match for Belanja Bulanan & Bahan Masak ('grocery')
             if (
-              (tx.expenseNature === 'grocery' || tx.categoryId === 'cat-belanja-bulanan') &&
+              (tx.categoryId === 'cat-makan' || /makan|minum|kuliner/i.test(catName)) &&
+              !isGrocerySubcategory(s) &&
+              /makan|minum|jajan|konsumsi/i.test(subNameLower)
+            ) {
+              return true;
+            }
+            if (
+              (tx.categoryId === 'cat-kuota' || /kuota|internet|wifi|pulsa/i.test(catName)) &&
+              /wifi|wi-fi|internet|kuota|pulsa/i.test(subNameLower)
+            ) {
+              return true;
+            }
+            if (
+              (tx.categoryId === 'cat-listrik' || /listrik|pln|token/i.test(catName)) &&
+              /listrik|pln|token/i.test(subNameLower)
+            ) {
+              return true;
+            }
+            if (
+              txGroup === 'tabungan' &&
+              (tx.categoryId === 'cat-tabungan' ||
+                tx.categoryId === 'cat-investasi' ||
+                /tabung|nabung|simpan|investasi/i.test(catName)) &&
+              /nabung|tabung|darurat|simpan|investasi/i.test(subNameLower)
+            ) {
+              return true;
+            }
+            if (
+              (tx.expenseNature === 'grocery' ||
+                tx.expenseNature === 'non_daily' ||
+                tx.categoryId === 'cat-belanja-bulanan' ||
+                tx.categoryId === 'cat-kondangan') &&
               isGrocerySubcategory(s)
             ) {
               return true;
@@ -375,12 +443,15 @@ export function BudgetTab() {
               if (
                 cleanTxNote === subNameLower ||
                 (cleanSubName.length >= 3 && cleanTxNote.includes(cleanSubName)) ||
-                (subNameLower.length >= 3 && (rawTxNote.includes(subNameLower) || cleanTxNote.includes(subNameLower))) ||
+                (subNameLower.length >= 3 &&
+                  (rawTxNote.includes(subNameLower) || cleanTxNote.includes(subNameLower))) ||
                 (cleanTxNote.length >= 4 && subNameLower.includes(cleanTxNote))
               ) {
                 return true;
               }
-              const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3 && w !== 'cicilan');
+              const subWords = subNameLower
+                .split(/[\s&/,-]+/)
+                .filter((w) => w.length >= 3 && w !== 'cicilan');
               const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
               return subWords.some((sw) =>
                 noteWords.some(
@@ -394,10 +465,15 @@ export function BudgetTab() {
 
           if (matchSub) {
             map[matchSub.id] = (map[matchSub.id] || 0) + tx.amount;
-          } else if (txGroup) {
-            unallocatedMap[txGroup] = (unallocatedMap[txGroup] || 0) + tx.amount;
           } else {
-            unallocatedMap['kebutuhan'] = (unallocatedMap['kebutuhan'] || 0) + tx.amount;
+            const isPersonalNeed =
+              tx.expenseNature === 'grocery' || tx.expenseNature === 'non_daily';
+            const fallbackLabel =
+              tx.note?.trim() ||
+              categories.find((c) => c.id === tx.categoryId)?.name ||
+              (isPersonalNeed ? 'Keperluan Pribadi' : 'Pengeluaran Lainnya');
+            const fallbackEmoji = isPersonalNeed ? '🛍️' : '🧾';
+            addUnallocatedItem(txGroup, fallbackLabel, tx.amount, fallbackEmoji, isPersonalNeed);
           }
         } else if (tx.type === 'transfer' && tx.budgetGroup === 'tabungan') {
           const rawNote = (tx.note || '').toLowerCase().trim();
@@ -410,7 +486,7 @@ export function BudgetTab() {
           if (matchSub) {
             map[matchSub.id] = (map[matchSub.id] || 0) + tx.amount;
           } else {
-            unallocatedMap['tabungan'] = (unallocatedMap['tabungan'] || 0) + tx.amount;
+            addUnallocatedItem('tabungan', tx.note || 'Transfer Tabungan', tx.amount, '💰');
           }
         }
       }
@@ -421,7 +497,7 @@ export function BudgetTab() {
       if (debt.type !== 'payable') return;
       (debt.payments || []).forEach((p) => {
         if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
-        const pd = new Date(p.date);
+        const pd = parseLocalDay(p.date);
         if (isDateInBudgetPeriod(pd, budgetPeriod)) {
           const debtSubId = `sub-debt-${debt.id}`;
           const cleanDebtName = debt.name.toLowerCase().trim();
@@ -436,13 +512,17 @@ export function BudgetTab() {
           if (matchSub) {
             map[matchSub.id] = (map[matchSub.id] || 0) + p.amount;
           } else {
-            unallocatedMap['kebutuhan'] = (unallocatedMap['kebutuhan'] || 0) + p.amount;
+            addUnallocatedItem('kebutuhan', `Cicilan ${debt.name}`, p.amount, '💳');
           }
         }
       });
     });
 
-    return { subSpentMap: map, unallocatedGroupSpent: unallocatedMap };
+    return {
+      subSpentMap: map,
+      unallocatedGroupSpent: unallocatedMap,
+      unallocatedGroupItems: unallocatedItemsMap,
+    };
   }, [transactions, categories, effectiveSubcategories, debts, budgetPeriod]);
 
   // Subcategories recognized as fixed monthly obligations (Wi-Fi, Netflix, Listrik, Cicilan Utang, etc.)
@@ -486,24 +566,6 @@ export function BudgetTab() {
 
     return list;
   }, [effectiveSubcategories, subscriptions, subSpentMap]);
-
-  // Subcategories recognized as grocery/cooking stock (Belanja Bulanan, Bahan Masak, Sembako, dll.)
-  const grocerySubcategories = useMemo(() => {
-    const list: { id: string; name: string; allocatedAmount: number }[] = [];
-    effectiveSubcategories.forEach((sub) => {
-      if (sub.group === 'tabungan') return;
-      if (sub.isSubscriptionActive === false) return;
-      if (isGrocerySubcategory(sub)) {
-        const spent = subSpentMap[sub.id] || 0;
-        list.push({
-          id: sub.id,
-          name: sub.name,
-          allocatedAmount: Math.max(sub.allocatedAmount, spent),
-        });
-      }
-    });
-    return list;
-  }, [effectiveSubcategories, subSpentMap]);
 
   const calculateGroupSpent = (group: BudgetGroup) => {
     const subTotal = effectiveSubcategories
@@ -554,6 +616,16 @@ export function BudgetTab() {
 
   const totalPercentage = needsPercent + wantsPercent + savingsPercent;
 
+  // Format percentage helper so small positive values (e.g. 0.4%) don't display as 0%
+  const formatPctLabel = (spent: number, limit: number): string => {
+    if (spent <= 0 || limit <= 0) return '0%';
+    const raw = (spent / limit) * 100;
+    if (raw > 0 && raw < 1) {
+      return `${raw.toFixed(1).replace('.', ',')}%`;
+    }
+    return `${Math.round(raw)}%`;
+  };
+
   const handleSaveIncome = (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseNominalInput(tempIncomeInput);
@@ -561,7 +633,8 @@ export function BudgetTab() {
       estimatedIncome: val,
       settings: {
         ...(budgetConfig.settings || {}),
-        manualIncomePeriodKey: budgetPeriod.periodKey,
+        manualIncomePeriodKey:
+          periodRecordedIncome > 0 && val === periodRecordedIncome ? '' : budgetPeriod.periodKey,
       },
     });
     setIsEditIncomeOpen(false);
@@ -585,9 +658,14 @@ export function BudgetTab() {
     e.preventDefault();
     const cleanDay = Math.max(1, Math.min(31, Math.round(Number(tempPaydayDay) || 1)));
 
-    if (tempPeriodMode === 'custom' && tempCustomStart && tempCustomNext && tempCustomNext > tempCustomStart) {
+    if (
+      tempPeriodMode === 'custom' &&
+      tempCustomStart &&
+      tempCustomNext &&
+      tempCustomNext > tempCustomStart
+    ) {
       const startParts = tempCustomStart.split('-').map(Number);
-      const inferredPayday = Number(tempPaydayDay) > 1 ? cleanDay : (startParts[2] || cleanDay);
+      const inferredPayday = Number(tempPaydayDay) > 1 ? cleanDay : startParts[2] || cleanDay;
       updateBudgetConfig({
         paydayDay: inferredPayday,
         periodMode: 'custom',
@@ -596,7 +674,10 @@ export function BudgetTab() {
       });
 
       const today = new Date();
-      const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(
+        2,
+        '0'
+      )}-${String(today.getDate()).padStart(2, '0')}`;
       if (todayIso >= tempCustomStart && todayIso < tempCustomNext) {
         setActiveDate(todayIso);
       } else {
@@ -632,6 +713,34 @@ export function BudgetTab() {
     setIsEditPeriodOpen(false);
   };
 
+  // Auto-balance helper for percentage sliders
+  const handleAutoBalancePercentages = () => {
+    const diff = 100 - (needsPercent + wantsPercent + savingsPercent);
+    if (diff === 0) return;
+    if (diff > 0) {
+      setNeedsPercent((prev) => Math.min(100, prev + diff));
+    } else {
+      let toReduce = Math.abs(diff);
+      let nextSavings = savingsPercent;
+      let nextWants = wantsPercent;
+      let nextNeeds = needsPercent;
+
+      const saveCut = Math.min(nextSavings, toReduce);
+      nextSavings -= saveCut;
+      toReduce -= saveCut;
+
+      const wantCut = Math.min(nextWants, toReduce);
+      nextWants -= wantCut;
+      toReduce -= wantCut;
+
+      nextNeeds = Math.max(0, nextNeeds - toReduce);
+
+      setSavingsPercent(nextSavings);
+      setWantsPercent(nextWants);
+      setNeedsPercent(nextNeeds);
+    }
+  };
+
   const handleSavePercentages = () => {
     if (totalPercentage === 100) {
       updateBudgetConfig({
@@ -646,117 +755,8 @@ export function BudgetTab() {
   // Open Simulasi & Konsep Belanja Bulanan Fleksibel modal
   const openFoodLifestyleModal = () => {
     setTempGroceryBudgetInput(formatNominalInput(1000000));
-    setTempEatOutBudgetInput(formatNominalInput(2000000));
+    setTempEatOutBudgetInput(formatNominalInput(500000));
     setIsFoodModalOpen(true);
-  };
-
-  const handleSelectFoodModePreset = (mode: FoodLifestyleMode, mealsOut = 1) => {
-    setTempFoodMode(mode);
-    const curGrocery = parseNominalInput(tempGroceryBudgetInput);
-    const curEatOut = parseNominalInput(tempEatOutBudgetInput);
-    const pool = curGrocery + curEatOut > 0 ? curGrocery + curEatOut : Math.max(600000, Math.round(needsLimit * 0.45));
-
-    if (mode === 'eat_out') {
-      setTempMealsOutPerDay(3);
-      setTempGroceryBudgetInput('0');
-      setTempEatOutBudgetInput(formatNominalInput(pool));
-    } else if (mode === 'hybrid') {
-      setTempMealsOutPerDay(mealsOut);
-      // 1x makan di luar (misal malam beli di luar, pagi/siang masak) -> ~55% stok belanja masak, 45% makan luar
-      // 2x makan di luar (misal pagi masak, siang & malam beli) -> ~40% stok belanja masak, 60% makan luar
-      const groceryRatio = mealsOut === 1 ? 0.55 : 0.4;
-      const gAmount = Math.round((pool * groceryRatio) / 10000) * 10000;
-      const eAmount = Math.max(0, pool - gAmount);
-      setTempGroceryBudgetInput(formatNominalInput(gAmount));
-      setTempEatOutBudgetInput(formatNominalInput(eAmount));
-    } else if (mode === 'cook_home') {
-      setTempMealsOutPerDay(0);
-      // Full masak sendiri dengan belanja bulanan -> ~85% stok belanja bulanan/pasar, ~15% camilan/darurat luar
-      const gAmount = Math.round((pool * 0.85) / 10000) * 10000;
-      const eAmount = Math.max(0, pool - gAmount);
-      setTempGroceryBudgetInput(formatNominalInput(gAmount));
-      setTempEatOutBudgetInput(formatNominalInput(eAmount));
-    }
-  };
-
-  const handleSaveFoodLifestyle = (e: React.FormEvent) => {
-    e.preventDefault();
-    const groceryVal = Math.max(0, parseNominalInput(tempGroceryBudgetInput));
-    const eatOutVal = Math.max(0, parseNominalInput(tempEatOutBudgetInput));
-
-    const nextSubs = [...(budgetConfig.subcategories || [])];
-
-    // 1. Update or add Makan di Luar subcategory ('sub-makan')
-    const eatOutIdx = nextSubs.findIndex(
-      (s) =>
-        s.id === 'sub-makan' ||
-        (!isGrocerySubcategory(s) && /makan\s*&\s*minum|makan\s*di\s*luar/i.test(s.name))
-    );
-    const eatOutLabel =
-      tempFoodMode === 'hybrid'
-        ? 'Makan di Luar (Malam/Jajan)'
-        : tempFoodMode === 'cook_home'
-        ? 'Jajan & Camilan Harian'
-        : 'Makan & Minum';
-
-    if (eatOutIdx >= 0) {
-      nextSubs[eatOutIdx] = {
-        ...nextSubs[eatOutIdx],
-        name: eatOutLabel,
-        allocatedAmount: eatOutVal,
-        isGroceryStock: false,
-      };
-    } else if (eatOutVal > 0) {
-      nextSubs.unshift({
-        id: 'sub-makan',
-        name: eatOutLabel,
-        group: 'kebutuhan',
-        allocatedAmount: eatOutVal,
-        emoji: '🍔',
-        isGroceryStock: false,
-      });
-    }
-
-    // 2. Update, add, or remove Belanja Bulanan & Bahan Masak subcategory ('sub-belanja-bulanan')
-    const groceryIdx = nextSubs.findIndex(
-      (s) => s.id === 'sub-belanja-bulanan' || isGrocerySubcategory(s)
-    );
-
-    if (groceryVal > 0 || tempFoodMode !== 'eat_out') {
-      if (groceryIdx >= 0) {
-        nextSubs[groceryIdx] = {
-          ...nextSubs[groceryIdx],
-          name: nextSubs[groceryIdx].name || 'Belanja Bulanan & Masak',
-          allocatedAmount: groceryVal,
-          emoji: nextSubs[groceryIdx].emoji || '🛒',
-          isGroceryStock: true,
-        };
-      } else {
-        // Insert right after eatOutSub or at start of kebutuhan
-        nextSubs.splice(Math.max(0, eatOutIdx + 1), 0, {
-          id: 'sub-belanja-bulanan',
-          name: 'Belanja Bulanan & Masak',
-          group: 'kebutuhan',
-          allocatedAmount: groceryVal,
-          emoji: '🛒',
-          isGroceryStock: true,
-        });
-      }
-    } else if (groceryIdx >= 0 && groceryVal === 0 && tempFoodMode === 'eat_out') {
-      // Remove or zero out grocery sub when switching back to full eat_out with Rp 0
-      nextSubs.splice(groceryIdx, 1);
-    }
-
-    updateBudgetConfig({
-      foodLifestyleMode: tempFoodMode,
-      mealsOutPerDay: tempFoodMode === 'eat_out' ? 3 : tempFoodMode === 'hybrid' ? tempMealsOutPerDay : 0,
-      subcategories: nextSubs,
-    });
-
-    if (groceryVal > 0 || tempFoodMode !== 'eat_out') {
-      setShowGroceryPos(true);
-    }
-    setIsFoodModalOpen(false);
   };
 
   const handleCreateSubcategory = (e: React.FormEvent) => {
@@ -792,14 +792,19 @@ export function BudgetTab() {
     setNewSubIsGrocery(false);
   };
 
-  const openAddForGroup = (group: BudgetGroup) => {
+  const openAddForGroup = (
+    group: BudgetGroup,
+    prefill?: { name?: string; amount?: number; emoji?: string; isGrocery?: boolean }
+  ) => {
     setEditingSubId(null);
     setTargetGroup(group);
-    setNewSubName('');
-    setNewSubAmount('');
-    setNewSubEmoji(group === 'kebutuhan' ? '⚡' : group === 'keinginan' ? '🎬' : '💰');
+    setNewSubName(prefill?.name || '');
+    setNewSubAmount(prefill?.amount ? formatNominalInput(prefill.amount) : '');
+    setNewSubEmoji(
+      prefill?.emoji || (group === 'kebutuhan' ? '⚡' : group === 'keinginan' ? '🎬' : '💰')
+    );
     setNewSubDueDay('');
-    setNewSubIsGrocery(false);
+    setNewSubIsGrocery(Boolean(prefill?.isGrocery));
     setIsAddSubOpen(true);
   };
 
@@ -817,54 +822,107 @@ export function BudgetTab() {
 
   const renderGroupSection = (params: {
     group: BudgetGroup;
+    groupPercent: number;
     title: string;
+    subtitle: string;
     tooltip: string;
-    dotColor: string;
+    accentTextClass: string;
+    accentBgSoftClass: string;
+    accentBorderClass: string;
     sectionBarColor: string;
     itemBarColor: string;
     subs: BudgetSubcategory[];
     groupSpent: number;
     groupLimit: number;
+    rawGroupLimit?: number;
+    deductedDebtAmount?: number;
     spentLabel?: string;
   }) => {
     const {
       group,
+      groupPercent,
       title,
+      subtitle,
       tooltip,
-      dotColor,
+      accentTextClass,
+      accentBgSoftClass,
+      accentBorderClass,
       sectionBarColor,
       itemBarColor,
       subs,
       groupSpent,
       groupLimit,
+      rawGroupLimit,
+      deductedDebtAmount = 0,
       spentLabel = 'TERPAKAI',
     } = params;
 
     const isCollapsed = collapsedGroups[group];
-    const groupSpentPct = groupLimit > 0 ? Math.min(100, Math.round((groupSpent / groupLimit) * 100)) : 0;
-    const isNearOrOverLimit = groupSpentPct >= 85;
-    const isGroupOver = groupLimit > 0 && groupSpent > groupLimit;
-    const groupOverAmount = groupSpent - groupLimit;
+    const isZeroAllocationGroup = groupPercent === 0 || (groupLimit === 0 && totalIncome > 0);
+    const groupSpentPct =
+      groupLimit > 0
+        ? Math.min(100, Math.round((groupSpent / groupLimit) * 100))
+        : groupSpent > 0
+        ? 100
+        : 0;
+    const isNearOrOverLimit = groupLimit > 0 && groupSpentPct >= 85;
+    const isGroupOver =
+      (groupLimit > 0 && groupSpent > groupLimit) || (groupLimit === 0 && groupSpent > 0);
+    const groupOverAmount = Math.max(0, groupSpent - groupLimit);
 
     const groupAllocated = subs.reduce((sum, s) => sum + (Number(s.allocatedAmount) || 0), 0);
     const allocPct = groupLimit > 0 ? Math.round((groupAllocated / groupLimit) * 100) : 0;
     const remainingUnallocated = groupLimit - groupAllocated;
+    const unmappedItems = unallocatedGroupItems[group] || [];
+    const unmappedSpent = unallocatedGroupSpent[group] || 0;
 
     return (
-      <div className="space-y-3.5 pt-2">
+      <section className="rounded-[26px] bg-white dark:bg-[#12141A] border border-gray-200/80 dark:border-gray-800/80 p-4 sm:p-6 shadow-xs space-y-4 transition-all">
         {/* Section Header */}
-        <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <span className={`w-2 h-2 rounded-full ${dotColor}`} />
-            <h3 className="text-xs font-extrabold tracking-[0.22em] text-gray-900 dark:text-white uppercase">
-              {title}
-            </h3>
-            {isGroupOver && (
-              <span className="px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 text-[10px] font-black text-rose-600 dark:text-rose-400 flex items-center gap-1 shadow-2xs">
-                <AlertTriangle size={10} className="shrink-0 text-rose-500" />
-                <span>Over +{formatRupiah(groupOverAmount, hide)}</span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <h3 className="text-sm sm:text-base font-black tracking-tight text-gray-900 dark:text-white flex items-center gap-2">
+                <span>{title}</span>
+                <span className={`text-xs font-extrabold tabular-nums ${accentTextClass}`}>
+                  ({groupPercent}%)
+                </span>
+              </h3>
+
+              {isZeroAllocationGroup && groupSpent === 0 && (
+                <span className="text-[11px] font-bold text-gray-400 dark:text-gray-500">
+                  · Alokasi 0% Periode Ini
+                </span>
+              )}
+
+              {isGroupOver && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-black text-rose-600 dark:text-rose-400">
+                  <AlertTriangle size={12} className="shrink-0 text-rose-500" />
+                  <span>Melebihi +{formatRupiah(groupOverAmount, hide)}</span>
+                </span>
+              )}
+
+              <span
+                className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 cursor-help transition-colors"
+                title={tooltip}
+              >
+                <HelpCircle size={14} />
               </span>
-            )}
+            </div>
+
+            <p className="text-[11px] font-medium text-gray-500 dark:text-gray-400 leading-relaxed">
+              {subtitle}
+              {deductedDebtAmount > 0 && rawGroupLimit !== undefined && (
+                <span className="text-gray-400 dark:text-gray-500">
+                  {' '}
+                  · Pagu {formatRupiah(rawGroupLimit, hide)} dikurangi Cicilan{' '}
+                  {formatRupiah(deductedDebtAmount, hide)}
+                </span>
+              )}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
             <button
               type="button"
               onClick={() => {
@@ -873,192 +931,280 @@ export function BudgetTab() {
                 setSavingsPercent(budgetConfig.savingsPercent);
                 setIsEditPercentagesOpen(true);
               }}
-              className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[11px] font-bold text-gray-600 dark:text-gray-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+              className="px-3 py-1.5 rounded-xl bg-gray-100 dark:bg-gray-800/90 hover:bg-gray-200 dark:hover:bg-gray-700 text-[11px] font-bold text-gray-700 dark:text-gray-200 flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap shrink-0"
             >
-              <SlidersHorizontal size={11} />
-              <span>Ubah</span>
+              <SlidersHorizontal size={12} />
+              <span>Ubah Porsi</span>
             </button>
-            <span
-              className="text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 cursor-help transition-colors"
-              title={tooltip}
-            >
-              <HelpCircle size={14} />
-            </span>
-          </div>
 
-          <button
-            type="button"
-            onClick={() => toggleGroupCollapse(group)}
-            className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg cursor-pointer transition-colors"
-            title={isCollapsed ? 'Tampilkan' : 'Sembunyikan'}
-          >
-            {isCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-          </button>
+            <button
+              type="button"
+              onClick={() => openAddForGroup(group)}
+              className="px-3 py-1.5 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black text-[11px] font-black flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap shrink-0"
+            >
+              <Plus size={13} strokeWidth={2.5} />
+              <span>Subkategori</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => toggleGroupCollapse(group)}
+              className="p-2 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl cursor-pointer transition-colors"
+              title={isCollapsed ? 'Tampilkan' : 'Sembunyikan'}
+            >
+              {isCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+            </button>
+          </div>
         </div>
 
-        {/* Section-Level Full-Width Progress Bar & Labels */}
-        <div className="space-y-1.5 px-1">
-          <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+        {/* Section-Level Full-Width Progress Bar & Summary Metrics */}
+        <div className="space-y-2 pt-1">
+          <div className="w-full h-2.5 rounded-full bg-gray-100 dark:bg-gray-800/90 overflow-hidden">
             <div
               className={`h-full rounded-full transition-all duration-500 ${
-                isGroupOver ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.5)]' : isNearOrOverLimit ? 'bg-[#EF4444]' : sectionBarColor
+                isGroupOver
+                  ? 'bg-rose-500'
+                  : isNearOrOverLimit
+                  ? 'bg-amber-500'
+                  : sectionBarColor
               }`}
               style={{ width: `${groupSpentPct}%` }}
             />
           </div>
-          <div className="flex items-center justify-between text-[10px] font-extrabold tracking-wider uppercase tabular-nums">
-            <span className={isGroupOver ? 'text-rose-600 dark:text-rose-400 flex items-center gap-1 font-black' : 'text-gray-400'}>
-              {isGroupOver && <AlertTriangle size={11} className="shrink-0 text-rose-500" />}
-              <span>
-                {spentLabel}: {formatRupiah(groupSpent, hide)} {isGroupOver ? `(+${formatRupiah(groupOverAmount, hide)})` : ''}
+
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-bold tabular-nums">
+            <div className="flex items-center gap-2">
+              <span
+                className={
+                  isGroupOver
+                    ? 'text-rose-600 dark:text-rose-400 font-black flex items-center gap-1'
+                    : 'text-gray-600 dark:text-gray-300'
+                }
+              >
+                {isGroupOver && <AlertTriangle size={12} className="shrink-0 text-rose-500" />}
+                <span>
+                  {spentLabel}:{' '}
+                  <strong className="text-gray-900 dark:text-white">
+                    {formatRupiah(groupSpent, hide)}
+                  </strong>
+                </span>
               </span>
-            </span>
-            <span className="text-gray-400">BATAS: {formatRupiah(groupLimit, hide)}</span>
+              <span className="text-gray-400">·</span>
+              <span className={isGroupOver ? 'text-rose-500 font-black' : accentTextClass}>
+                {groupLimit > 0
+                  ? `${formatPctLabel(groupSpent, groupLimit)} dari batas`
+                  : groupSpent > 0
+                  ? 'Batas Rp0 (0%)'
+                  : '0%'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
+              <span>
+                Batas:{' '}
+                <strong className="text-gray-900 dark:text-white">
+                  {formatRupiah(groupLimit, hide)}
+                </strong>
+              </span>
+              {groupLimit > groupSpent && (
+                <>
+                  <span className="text-gray-300 dark:text-gray-700">·</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">
+                    Sisa {formatRupiah(groupLimit - groupSpent, hide)}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
         {!isCollapsed && (
           <>
+            {/* Zero-Allocation Notice if user set 0% for this group */}
+            {isZeroAllocationGroup && groupSpent === 0 ? (
+              <div className="rounded-2xl bg-gray-50 dark:bg-[#171A21] border border-dashed border-gray-200 dark:border-gray-800 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-extrabold text-gray-700 dark:text-gray-200">
+                    Pos {title} Diatur 0% pada Periode Ini
+                  </div>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    Anda menonaktifkan alokasi {title.toLowerCase()} bulan ini (Rp0). Target subkategori di bawah tidak dibebankan ke anggaran aktif.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNeedsPercent(budgetConfig.needsPercent);
+                    setWantsPercent(budgetConfig.wantsPercent);
+                    setSavingsPercent(budgetConfig.savingsPercent);
+                    setIsEditPercentagesOpen(true);
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-gray-400 text-xs font-extrabold text-gray-800 dark:text-gray-200 cursor-pointer transition-colors whitespace-nowrap shrink-0 self-start sm:self-auto"
+                >
+                  Aktifkan Alokasi %
+                </button>
+              </div>
+            ) : null}
+
             {/* 2-Column Subcategory Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
+            <div
+              className={`grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1 ${
+                isZeroAllocationGroup && groupSpent === 0 ? 'opacity-60' : ''
+              }`}
+            >
               {subs.map((sub) => {
                 const spent = subSpentMap[sub.id] || 0;
-                const rawPct = sub.allocatedAmount > 0 ? Math.round((spent / sub.allocatedAmount) * 100) : 0;
+                const rawPct =
+                  sub.allocatedAmount > 0 ? Math.round((spent / sub.allocatedAmount) * 100) : 0;
                 const pct = Math.min(100, rawPct);
                 const isMenuOpen = activeMenuSubId === sub.id;
-                const isOver = sub.allocatedAmount > 0 && spent > sub.allocatedAmount;
-                const overAmount = spent - sub.allocatedAmount;
+                const isOver =
+                  !isZeroAllocationGroup &&
+                  sub.allocatedAmount > 0 &&
+                  spent > sub.allocatedAmount;
+                const overAmount = Math.max(0, spent - sub.allocatedAmount);
 
                 return (
                   <div
                     key={sub.id}
-                    className={`rounded-[22px] px-5 py-4 border transition-all flex items-center gap-4 relative group ${
+                    className={`rounded-2xl p-4 border transition-all flex items-start gap-3.5 relative group ${
                       isMenuOpen
-                        ? 'border-[#D4F826] shadow-[0_4px_20px_rgba(212,248,38,0.15)] bg-white dark:bg-[#16181D]'
+                        ? 'border-[#D4F826] bg-gray-50/60 dark:bg-[#181B22]'
                         : isOver
-                        ? 'border-rose-400 dark:border-rose-600/70 bg-gradient-to-br from-white via-rose-50/25 to-rose-50/50 dark:from-[#16181D] dark:via-rose-950/20 dark:to-rose-950/30 shadow-[0_4px_18px_rgba(244,63,94,0.12)] ring-1 ring-rose-400/40 dark:ring-rose-500/30'
-                        : 'border-gray-100 dark:border-gray-800/80 hover:border-[#D4F826] dark:hover:border-[#D4F826]/70 shadow-[0_2px_10px_rgba(0,0,0,0.02)] bg-white dark:bg-[#16181D]'
+                        ? 'border-rose-400/80 dark:border-rose-600/70 bg-rose-50/30 dark:bg-rose-950/20'
+                        : 'border-gray-200/75 dark:border-gray-800/90 hover:border-gray-300 dark:hover:border-gray-700 bg-gray-50/40 dark:bg-[#161920]'
                     }`}
                   >
-                    {/* Left Emoji Icon with badge if over budget */}
-                    <div className="relative shrink-0">
-                      <div className="text-[28px] leading-none w-9 text-center select-none">
-                        {sub.emoji}
-                      </div>
-                      {isOver && (
-                        <div
-                          className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-500 text-white flex items-center justify-center text-[9px] font-black shadow-xs ring-1 ring-white dark:ring-black animate-pulse"
-                          title={`Over Budget +${formatRupiah(overAmount, hide)}`}
-                        >
-                          !
-                        </div>
-                      )}
+                    {/* Left Emoji Icon */}
+                    <div
+                      onClick={() => openEditSub(sub)}
+                      className="w-11 h-11 rounded-2xl bg-white dark:bg-[#1E222B] border border-gray-200/60 dark:border-gray-800 flex items-center justify-center text-2xl shrink-0 select-none cursor-pointer hover:scale-105 transition-transform"
+                      title="Klik untuk edit subkategori"
+                    >
+                      {sub.emoji}
                     </div>
 
                     {/* Center Info + Bar */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                          <span className={`text-[13px] font-extrabold truncate ${
-                            isOver ? 'text-rose-950 dark:text-rose-100' : 'text-gray-900 dark:text-white'
-                          }`}>
-                            {sub.name}
-                          </span>
-                          {isOver && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-black text-rose-600 dark:text-rose-400 bg-rose-100/90 dark:bg-rose-950/80 px-2 py-0.5 rounded-md border border-rose-200 dark:border-rose-900/60 shrink-0">
-                              <AlertTriangle size={10} className="shrink-0 text-rose-500 dark:text-rose-400" />
-                              <span>Over Budget</span>
+                      <div className="flex items-start justify-between gap-2 mb-1.5">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              onClick={() => openEditSub(sub)}
+                              className={`text-[13px] font-extrabold truncate cursor-pointer hover:underline ${
+                                isOver
+                                  ? 'text-rose-950 dark:text-rose-100'
+                                  : 'text-gray-900 dark:text-white'
+                              }`}
+                            >
+                              {sub.name}
                             </span>
-                          )}
-                          {(sub.subscriptionId || sub.dueDateDay) && (
-                            <button
-                              type="button"
-                              onClick={() => setActiveTab('subscriptions')}
-                              className="text-[10px] font-semibold text-gray-400 hover:text-sky-500 dark:hover:text-sky-400 shrink-0 cursor-pointer transition-colors"
-                              title="Terhubung dengan Jadwal Langganan & Tagihan Bulanan"
-                            >
-                              {sub.isSubscriptionActive === false
-                                ? '· Dijeda'
-                                : sub.dueDateDay
-                                ? `· Tgl ${sub.dueDateDay}`
-                                : '· Rutin'}
-                            </button>
-                          )}
-                          {isGrocerySubcategory(sub) && !sub.dueDateDay && !sub.subscriptionId && (
-                            <button
-                              type="button"
-                              onClick={openFoodLifestyleModal}
-                              className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 px-1.5 py-0.5 rounded-md border border-amber-500/25 shrink-0 cursor-pointer transition-colors"
-                              title="Pos Keperluan Pribadi (Tidak dibebankan kuota harian)"
-                            >
-                              🛍️ Keperluan Pribadi
-                            </button>
-                          )}
+                            {(sub.subscriptionId || sub.dueDateDay) && (
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab('subscriptions')}
+                                className="text-[10px] font-semibold text-gray-400 hover:text-sky-500 dark:hover:text-sky-400 shrink-0 cursor-pointer transition-colors"
+                                title="Terhubung dengan Jadwal Langganan & Tagihan Bulanan"
+                              >
+                                {sub.isSubscriptionActive === false
+                                  ? '· Dijeda'
+                                  : sub.dueDateDay
+                                  ? `· Tgl ${sub.dueDateDay}`
+                                  : '· Rutin'}
+                              </button>
+                            )}
+                            {isGrocerySubcategory(sub) &&
+                              !sub.dueDateDay &&
+                              !sub.subscriptionId && (
+                                <button
+                                  type="button"
+                                  onClick={openFoodLifestyleModal}
+                                  className="text-[10px] font-bold text-amber-600 dark:text-amber-400 hover:underline shrink-0 cursor-pointer transition-colors"
+                                  title="Pos Keperluan Pribadi (Tidak dibebankan kuota harian)"
+                                >
+                                  · Keperluan Pribadi
+                                </button>
+                              )}
+                          </div>
                         </div>
 
-                        <span className={`text-[13px] font-black tabular-nums shrink-0 ${
-                          isOver ? 'text-rose-600 dark:text-rose-400' : 'text-gray-900 dark:text-white'
-                        }`}>
-                          {formatRupiah(spent, hide)}
-                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span
+                            className={`text-[13px] font-black tabular-nums ${
+                              isOver
+                                ? 'text-rose-600 dark:text-rose-400'
+                                : 'text-gray-900 dark:text-white'
+                            }`}
+                          >
+                            {formatRupiah(spent, hide)}
+                          </span>
+
+                          {/* Right 3-Dots Action Button */}
+                          <button
+                            type="button"
+                            onClick={() => setActiveMenuSubId(isMenuOpen ? null : sub.id)}
+                            className={`w-7 h-7 rounded-xl flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
+                              isMenuOpen
+                                ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white'
+                                : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200/60 dark:hover:bg-gray-800'
+                            }`}
+                          >
+                            <MoreVertical size={14} />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Subcategory Progress Bar */}
-                      <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                      <div className="w-full h-1.5 rounded-full bg-gray-200/80 dark:bg-gray-800 overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-300 ${
-                            isOver ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]' : itemBarColor
+                            isOver
+                              ? 'bg-rose-500'
+                              : rawPct >= 85
+                              ? 'bg-amber-500'
+                              : itemBarColor
                           }`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
 
                       {/* Bottom Details Row */}
-                      <div className="flex items-center justify-between mt-1.5 gap-2">
+                      <div className="flex items-center justify-between mt-2 gap-2 text-[11px] tabular-nums">
                         {isOver ? (
-                          <span className="text-[10px] font-black text-rose-600 dark:text-rose-400 flex items-center gap-1 tabular-nums">
+                          <span className="font-extrabold text-rose-600 dark:text-rose-400 flex items-center gap-1">
                             <AlertTriangle size={11} className="shrink-0 text-rose-500" />
-                            <span>Melebihi +{formatRupiah(overAmount, hide)} ({rawPct}%)</span>
+                            <span>
+                              Lewat +{formatRupiah(overAmount, hide)} ({rawPct}%)
+                            </span>
                           </span>
                         ) : rawPct >= 85 ? (
-                          <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1 tabular-nums">
-                            <span>Sisa {formatRupiah(Math.max(0, sub.allocatedAmount - spent), hide)} ({rawPct}%)</span>
+                          <span className="font-bold text-amber-600 dark:text-amber-400">
+                            Sisa {formatRupiah(Math.max(0, sub.allocatedAmount - spent), hide)} (
+                            {rawPct}%)
                           </span>
                         ) : (
-                          <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 tabular-nums">
-                            Sisa {formatRupiah(Math.max(0, sub.allocatedAmount - spent), hide)}
+                          <span className="font-medium text-gray-500 dark:text-gray-400">
+                            Sisa {formatRupiah(Math.max(0, sub.allocatedAmount - spent), hide)} (
+                            {formatPctLabel(spent, sub.allocatedAmount)})
                           </span>
                         )}
 
-                        <span className="text-[11px] font-semibold text-gray-400 tabular-nums shrink-0">
-                          dari {formatRupiah(sub.allocatedAmount, hide)}
+                        <span className="font-semibold text-gray-400 dark:text-gray-500 shrink-0">
+                          Pagu {formatRupiah(sub.allocatedAmount, hide)}
                         </span>
                       </div>
                     </div>
 
-                    {/* Right 3-Dots Action Button */}
-                    <button
-                      type="button"
-                      onClick={() => setActiveMenuSubId(isMenuOpen ? null : sub.id)}
-                      className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
-                        isMenuOpen
-                          ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white'
-                          : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
-                      }`}
-                    >
-                      <MoreVertical size={15} />
-                    </button>
-
                     {/* Subcategory Menu Dropdown */}
                     {isMenuOpen && (
-                      <div className="absolute right-4 top-14 z-30 bg-white dark:bg-[#1E2026] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[130px] text-xs font-bold space-y-1">
+                      <div className="absolute right-4 top-12 z-30 bg-white dark:bg-[#1E2026] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[140px] text-xs font-bold space-y-1">
                         <button
                           type="button"
                           onClick={() => openEditSub(sub)}
-                          className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
                         >
                           <Pencil size={12} />
-                          <span>Edit</span>
+                          <span>Edit Pagu</span>
                         </button>
                         <button
                           type="button"
@@ -1066,7 +1212,7 @@ export function BudgetTab() {
                             deleteBudgetSubcategory(sub.id);
                             setActiveMenuSubId(null);
                           }}
-                          className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer"
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer"
                         >
                           <Trash2 size={12} />
                           <span>Hapus</span>
@@ -1076,197 +1222,427 @@ export function BudgetTab() {
                   </div>
                 );
               })}
+
+              {/* Transparent Card for Unmapped Expenses in this Group so Total Always Matches 100% */}
+              {unmappedSpent > 0 && (
+                <div className="rounded-2xl p-4 border border-dashed border-amber-400/70 dark:border-amber-500/50 bg-amber-50/40 dark:bg-amber-950/15 flex items-start gap-3.5">
+                  <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center text-xl shrink-0">
+                    🧾
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="text-[13px] font-extrabold text-gray-900 dark:text-white block">
+                          Pengeluaran Lainnya ({title})
+                        </span>
+                        <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400 block">
+                          Transaksi tercatat yang belum punya subkategori khusus
+                        </span>
+                      </div>
+                      <span className="text-[13px] font-black text-amber-600 dark:text-amber-400 tabular-nums shrink-0">
+                        {formatRupiah(unmappedSpent, hide)}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[11px] text-gray-600 dark:text-gray-300">
+                      {unmappedItems.slice(0, 3).map((item, idx) => (
+                        <span key={idx} className="tabular-nums">
+                          {idx > 0 ? '· ' : ''}
+                          {item.emoji} {item.label} ({formatRupiah(item.amount, hide)})
+                        </span>
+                      ))}
+                    </div>
+
+                    {unmappedItems.length > 0 && (
+                      <div className="pt-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openAddForGroup(group, {
+                              name: unmappedItems[0].label,
+                              amount: unmappedSpent,
+                              emoji: unmappedItems[0].emoji,
+                              isGrocery: unmappedItems[0].isPersonalNeed,
+                            })
+                          }
+                          className="text-[11px] font-extrabold text-amber-700 dark:text-amber-300 hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus size={12} />
+                          <span>Jadikan Subkategori ({unmappedItems[0].label})</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Full-Width Dashed + TAMBAH SUBKATEGORI Button */}
-            <button
-              type="button"
-              onClick={() => openAddForGroup(group)}
-              className="w-full py-3.5 rounded-[20px] border border-dashed border-gray-200 dark:border-gray-800 text-[11px] font-extrabold tracking-[0.15em] text-gray-400 hover:text-gray-800 dark:hover:text-white hover:border-gray-400 dark:hover:border-gray-600 flex items-center justify-center gap-2 cursor-pointer transition-all uppercase bg-white/50 dark:bg-transparent"
-            >
-              <Plus size={14} />
-              <span>TAMBAH SUBKATEGORI</span>
-            </button>
-
-            {/* Allocation Footer Status Bar */}
-            <div className="bg-gray-50/90 dark:bg-[#16181D]/90 rounded-2xl px-4 py-3 flex items-center justify-between border border-gray-100/80 dark:border-gray-800/70">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`w-2 h-2 rounded-full ${
-                    remainingUnallocated < 0
-                      ? 'bg-red-500'
-                      : allocPct === 100
-                      ? 'bg-[#D4F826]'
-                      : 'bg-amber-400'
-                  }`}
-                />
-                <span className="text-[10px] font-extrabold tracking-widest text-gray-500 dark:text-gray-400 uppercase">
-                  {remainingUnallocated === 0 && groupLimit > 0
-                    ? 'ALOKASI PENUH 100%'
-                    : remainingUnallocated < 0
-                    ? `MELEBIHI BATAS ALOKASI (${allocPct}%)`
-                    : `TERALOKASI ${allocPct}% · SISA ALOKASI`}
-                </span>
-              </div>
-              <span
-                className={`text-xs font-black tabular-nums ${
-                  remainingUnallocated < 0
-                    ? 'text-red-500'
-                    : 'text-[#84CC16] dark:text-[#D4F826]'
-                }`}
+            {/* Allocation Footer Status Bar (Only shown when group has active > 0 limit) */}
+            {!isZeroAllocationGroup && (
+              <div
+                className={`rounded-2xl px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border ${accentBgSoftClass} ${accentBorderClass}`}
               >
-                {formatRupiah(remainingUnallocated, hide)}
-              </span>
-            </div>
+                <div className="flex items-center gap-2 text-[11px] font-bold text-gray-600 dark:text-gray-300">
+                  <span>
+                    {remainingUnallocated === 0 && groupLimit > 0
+                      ? `Alokasi subkategori pas 100% dari batas ${title}`
+                      : remainingUnallocated < 0
+                      ? `Total pagu subkategori (${formatRupiah(
+                          groupAllocated,
+                          hide
+                        )}) melebihi batas ${title} (${allocPct}%)`
+                      : `Teralokasi ${formatRupiah(
+                          groupAllocated,
+                          hide
+                        )} (${allocPct}%) · Sisa pagu belum dialokasikan:`}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
+                  <span
+                    className={`text-xs font-black tabular-nums ${
+                      remainingUnallocated < 0
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : 'text-gray-900 dark:text-white'
+                    }`}
+                  >
+                    {remainingUnallocated < 0
+                      ? `Over ${formatRupiah(Math.abs(remainingUnallocated), hide)}`
+                      : formatRupiah(remainingUnallocated, hide)}
+                  </span>
+
+                  {remainingUnallocated > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openAddForGroup(group, {
+                          amount: remainingUnallocated,
+                        })
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-gray-400 text-[10px] font-extrabold text-gray-800 dark:text-gray-200 cursor-pointer transition-colors whitespace-nowrap"
+                    >
+                      + Alokasikan Sisa
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </>
         )}
-      </div>
+      </section>
     );
   };
 
   return (
     <div className="space-y-5 lg:space-y-6 pb-28 lg:pb-10">
-      {/* Header */}
-      <div className="pt-2 lg:pt-0 px-1">
-        <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
-          Atur Budget
-        </h1>
-        <p className="text-xs lg:text-sm font-semibold text-gray-400 mt-0.5">
-          Kasih tugas buat setiap Rupiahmu.
-        </p>
+      {/* Top Header with Quick Actions */}
+      <div className="pt-2 lg:pt-0 px-1 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
+            Atur Budget
+          </h1>
+          <p className="text-xs lg:text-sm font-medium text-gray-500 dark:text-gray-400 mt-0.5">
+            Rencanakan porsi pengeluaran rutin, keperluan pribadi, dan kuota harian sampai gajian berikutnya.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={openFoodLifestyleModal}
+            className="px-3 py-2 rounded-xl bg-white dark:bg-[#16181D] border border-gray-200 dark:border-gray-800 hover:border-amber-400 text-xs font-bold text-gray-700 dark:text-gray-200 flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap shrink-0"
+          >
+            <span>🛍️</span>
+            <span>Simulasi Keperluan Pribadi</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowArchived((v) => !v)}
+            className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+              showArchived
+                ? 'bg-gray-900 text-white dark:bg-white dark:text-black border-transparent'
+                : 'bg-white dark:bg-[#16181D] border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-300 hover:border-gray-300'
+            }`}
+          >
+            <Eye size={13} />
+            <span>{showArchived ? 'Sembunyikan Arsip' : 'Arsip Dijeda'}</span>
+          </button>
+        </div>
       </div>
 
-      {/* Full-Width Dark Hero Card (matching Dashboard & Wallets theme-adaptive gradient style) */}
-      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 lg:px-9 lg:py-7 text-white shadow-xl space-y-5 border border-white/10">
-        <div className="absolute -top-24 -right-16 w-80 h-80 rounded-full bg-[#8B5CF6]/20 blur-3xl pointer-events-none transition-colors duration-500" />
-        <div
-          className={`absolute -bottom-24 -left-16 w-80 h-80 rounded-full blur-3xl pointer-events-none transition-colors duration-500 ${
-            settings.accentColor === 'plum'
-              ? 'bg-[#71325A]/25'
-              : settings.accentColor === 'orange'
-              ? 'bg-[#FF6B2B]/15'
-              : settings.accentColor === 'pink'
-              ? 'bg-[#FFA4A4]/15'
-              : 'bg-[#D4F826]/15'
-          }`}
-        />
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
-          {/* Left: Perkiraan Pemasukan + Nominal + Badges */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-widest">
-                PERKIRAAN PEMASUKAN
+      {/* Full-Width Dark Hero Card */}
+      <div className="relative overflow-hidden w-full bg-gradient-to-br from-[#0D0F1A] via-[#13172B] to-[#090A10] rounded-[28px] lg:rounded-[32px] p-5 sm:p-6 lg:px-8 lg:py-7 text-white shadow-xl space-y-5 border border-white/10">
+        <div className="absolute -top-24 -right-16 w-80 h-80 rounded-full bg-[#8B5CF6]/15 blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-24 -left-16 w-80 h-80 rounded-full bg-[#D4F826]/10 blur-3xl pointer-events-none" />
+
+        {/* Row 1: Income & Period Controls */}
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-5">
+          {/* Left: Basis Pemasukan Periode Ini */}
+          <div className="space-y-2.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-extrabold text-[#D4F826] uppercase tracking-wider">
+                Basis Pemasukan Periode Ini
               </span>
+              <span className="text-[11px] text-gray-400">·</span>
+              <span className="text-[11px] font-semibold text-gray-300">
+                {isManualIncomeOverride
+                  ? 'Target Manual'
+                  : periodRecordedIncome > 0
+                  ? 'Otomatis dari Transaksi Pemasukan'
+                  : 'Estimasi Awal'}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="text-3xl sm:text-4xl lg:text-[40px] font-black tracking-tight tabular-nums text-white leading-none">
+                {formatRupiah(totalIncome, hide)}
+              </div>
               <button
                 type="button"
                 onClick={() => {
                   setTempIncomeInput(formatNominalInput(totalIncome));
                   setIsEditIncomeOpen(true);
                 }}
-                className="p-1 text-gray-400 hover:text-white rounded-lg transition-colors cursor-pointer"
-                title="Ubah Pemasukan"
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-bold text-gray-200 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+                title="Ubah Perkiraan Pemasukan"
               >
-                <Pencil size={15} />
+                <Pencil size={13} />
+                <span>Ubah</span>
               </button>
             </div>
 
-            <div className="text-3xl sm:text-4xl lg:text-[42px] font-black tracking-tight tabular-nums text-white leading-none">
-              {formatRupiah(totalIncome, hide)}
-            </div>
-
-            {recordedPeriodIncome > 0 && (
+            {periodRecordedIncome > 0 && totalIncome !== periodRecordedIncome && (
               <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                <span className="bg-emerald-500/15 border border-emerald-400/30 px-2.5 py-1 rounded-xl text-emerald-300 text-[10px] font-bold flex items-center gap-1.5 tabular-nums">
-                  <span>💰 Pemasukan Tercatat Periode Ini: {formatRupiah(recordedPeriodIncome, hide)}</span>
+                <span className="text-xs text-gray-300 tabular-nums">
+                  Pemasukan tercatat di transaksi:{' '}
+                  <strong className="text-emerald-300">
+                    {formatRupiah(periodRecordedIncome, hide)}
+                  </strong>
                 </span>
-                {totalIncome !== recordedPeriodIncome && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      updateBudgetConfig({
-                        estimatedIncome: recordedPeriodIncome,
-                        settings: {
-                          ...(budgetConfig.settings || {}),
-                          manualIncomePeriodKey: budgetPeriod.periodKey,
-                        },
-                      });
-                    }}
-                    className="bg-white/10 hover:bg-white/20 border border-white/15 px-2.5 py-1 rounded-xl text-[#D4F826] text-[10px] font-extrabold flex items-center gap-1 transition-colors cursor-pointer"
-                    title="Sesuaikan Perkiraan Pemasukan dengan Pemasukan Tercatat Periode Ini"
-                  >
-                    <Check size={11} strokeWidth={2.8} />
-                    <span>Gunakan Pemasukan Tercatat ({formatRupiah(recordedPeriodIncome, hide)})</span>
-                  </button>
-                )}
-              </div>
-            )}
-
-            {((dashboardSummary.monthlyGroceryExpense || 0) + (dashboardSummary.monthlyNonDailyExpense || 0)) > 0 && (
-              <div className="pt-1 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={openFoodLifestyleModal}
-                  className="bg-amber-400/15 hover:bg-amber-400/25 border border-amber-400/40 px-3 py-1 rounded-xl text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer text-[10px] font-bold tabular-nums"
-                  title="Tidak dibebankan langsung ke kuota harian — mengurangi saldo pos harian & menyesuaikan kuota harian"
+                  onClick={() => {
+                    updateBudgetConfig({
+                      estimatedIncome: periodRecordedIncome,
+                      settings: {
+                        ...(budgetConfig.settings || {}),
+                        manualIncomePeriodKey: '',
+                      },
+                    });
+                  }}
+                  className="bg-[#D4F826]/15 hover:bg-[#D4F826]/25 border border-[#D4F826]/30 px-2.5 py-1 rounded-lg text-[#D4F826] text-[11px] font-extrabold flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
                 >
-                  <span>
-                    🛍️ Keperluan Pribadi: -{formatRupiah((dashboardSummary.monthlyGroceryExpense || 0) + (dashboardSummary.monthlyNonDailyExpense || 0), hide)}
-                  </span>
-                  <HelpCircle size={11} />
+                  <RotateCcw size={11} />
+                  <span>Ikuti Pemasukan Tercatat</span>
                 </button>
               </div>
             )}
           </div>
 
-          {/* Right on Desktop: Quick Allocation Summary */}
-          <div className="hidden lg:flex items-center gap-8">
-            <div>
-              <span className="text-[10px] font-extrabold text-violet-400 uppercase tracking-wider block">
-                KEBUTUHAN ({budgetConfig.needsPercent}%)
-              </span>
-              <span className="text-base font-black text-white mt-1 block tabular-nums">
-                {formatRupiah(needsLimit, hide)}
-              </span>
+          {/* Right: Active Period Navigation & Payday Config */}
+          <div className="flex flex-col sm:flex-row lg:flex-col items-start sm:items-center lg:items-end justify-between gap-3 bg-white/[0.04] border border-white/10 rounded-2xl p-3.5 shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-[#D4F826]/15 border border-[#D4F826]/30 flex items-center justify-center text-[#D4F826] shrink-0">
+                <Calendar size={15} />
+              </div>
+              <div>
+                <div className="flex items-center gap-1.5 text-[11px] text-gray-300 font-semibold">
+                  <span>{budgetPeriod.periodFullLabel}</span>
+                  <span>·</span>
+                  <span className="text-[#D4F826] font-extrabold">
+                    {budgetPeriod.isCustomFlexiblePeriod
+                      ? `Fleksibel ${budgetPeriod.totalDays} Hari`
+                      : budgetPeriod.paydayDay === 1
+                      ? 'Siklus Bulanan'
+                      : `Gajian Tgl ${budgetPeriod.paydayDay}`}
+                  </span>
+                </div>
+                <div className="text-[11px] text-gray-400 tabular-nums mt-0.5">
+                  Hari ke-{budgetPeriod.currentDayOfPeriod} dari {budgetPeriod.totalDays} ·{' '}
+                  <strong className="text-white">
+                    {budgetPeriod.daysRemainingUntilPayday} hari menuju gajian
+                  </strong>
+                </div>
+              </div>
             </div>
-            <div>
-              <span className="text-[10px] font-extrabold text-pink-400 uppercase tracking-wider block">
-                KEINGINAN ({budgetConfig.wantsPercent}%)
-              </span>
-              <span className="text-base font-black text-white mt-1 block tabular-nums">
-                {formatRupiah(wantsLimit, hide)}
-              </span>
-            </div>
-            <div>
-              <span className="text-[10px] font-extrabold text-teal-400 uppercase tracking-wider block">
-                TABUNGAN ({budgetConfig.savingsPercent}%)
-              </span>
-              <span className="text-base font-black text-white mt-1 block tabular-nums">
-                {formatRupiah(savingsLimit, hide)}
-              </span>
+
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+              <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-0.5">
+                <button
+                  type="button"
+                  onClick={goToPrevPeriod}
+                  className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                  title="Periode Sebelumnya"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={goToCurrentPeriod}
+                  className="px-2.5 py-1 text-[10px] font-extrabold text-gray-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  Periode Ini
+                </button>
+                <button
+                  type="button"
+                  onClick={goToNextPeriod}
+                  className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                  title="Periode Berikutnya"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={openPeriodModal}
+                className="px-3 py-1.5 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black font-black text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                <CalendarClock size={13} strokeWidth={2.5} />
+                <span>Atur Tgl Gajian</span>
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Pos Anggaran: Tagihan Bulanan (Fixed) vs Harian & Belanja Bulanan (Fleksibel) — Collapsed by default, expand on click */}
+        {/* Row 2: Visual 3-Group Allocation Bar & Summary Cards (Visible on Both Mobile & Desktop!) */}
+        <div className="relative z-10 pt-4 border-t border-white/10 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-bold text-gray-400">
+              Komposisi Alokasi Anggaran ({budgetConfig.needsPercent}% / {budgetConfig.wantsPercent}% /{' '}
+              {budgetConfig.savingsPercent}%)
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setNeedsPercent(budgetConfig.needsPercent);
+                setWantsPercent(budgetConfig.wantsPercent);
+                setSavingsPercent(budgetConfig.savingsPercent);
+                setIsEditPercentagesOpen(true);
+              }}
+              className="text-[11px] font-extrabold text-[#D4F826] hover:underline flex items-center gap-1 cursor-pointer whitespace-nowrap"
+            >
+              <SlidersHorizontal size={12} />
+              <span>Atur Persentase</span>
+            </button>
+          </div>
+
+          {/* Stacked Proportional Bar */}
+          <div className="w-full h-2.5 rounded-full bg-white/10 overflow-hidden flex gap-0.5 p-0.5">
+            {budgetConfig.needsPercent > 0 && (
+              <div
+                className="h-full rounded-l-full first:rounded-l-full last:rounded-r-full bg-[#A594F9] transition-all duration-500"
+                style={{ width: `${budgetConfig.needsPercent}%` }}
+                title={`Kebutuhan: ${budgetConfig.needsPercent}%`}
+              />
+            )}
+            {budgetConfig.wantsPercent > 0 && (
+              <div
+                className="h-full first:rounded-l-full last:rounded-r-full bg-pink-500 transition-all duration-500"
+                style={{ width: `${budgetConfig.wantsPercent}%` }}
+                title={`Keinginan: ${budgetConfig.wantsPercent}%`}
+              />
+            )}
+            {budgetConfig.savingsPercent > 0 && (
+              <div
+                className="h-full first:rounded-l-full rounded-r-full bg-teal-400 transition-all duration-500"
+                style={{ width: `${budgetConfig.savingsPercent}%` }}
+                title={`Tabungan: ${budgetConfig.savingsPercent}%`}
+              />
+            )}
+          </div>
+
+          {/* 3-Column Allocation Cards (Responsive across Mobile & Desktop) */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            {/* Kebutuhan */}
+            <div className="rounded-2xl bg-white/[0.04] border border-white/10 px-4 py-3 flex items-center justify-between sm:block">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-extrabold text-violet-300">
+                  Kebutuhan ({budgetConfig.needsPercent}%)
+                </span>
+                <span className="text-[10px] font-bold text-gray-400 tabular-nums">
+                  Terpakai {formatPctLabel(needsSpent + debtTotalSpent, needsLimit)}
+                </span>
+              </div>
+              <div className="text-right sm:text-left sm:mt-1">
+                <span className="text-sm sm:text-base font-black text-white tabular-nums block">
+                  {formatRupiah(needsLimit, hide)}
+                </span>
+                <span className="text-[10px] text-gray-400 tabular-nums block">
+                  Terpakai: {formatRupiah(needsSpent + debtTotalSpent, hide)}
+                </span>
+              </div>
+            </div>
+
+            {/* Keinginan */}
+            <div className="rounded-2xl bg-white/[0.04] border border-white/10 px-4 py-3 flex items-center justify-between sm:block">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-extrabold text-pink-300">
+                  Keinginan ({budgetConfig.wantsPercent}%)
+                </span>
+                <span className="text-[10px] font-bold text-gray-400 tabular-nums">
+                  {budgetConfig.wantsPercent === 0
+                    ? 'Nonaktif'
+                    : `Terpakai ${formatPctLabel(wantsSpent, wantsLimit)}`}
+                </span>
+              </div>
+              <div className="text-right sm:text-left sm:mt-1">
+                <span className="text-sm sm:text-base font-black text-white tabular-nums block">
+                  {formatRupiah(wantsLimit, hide)}
+                </span>
+                <span className="text-[10px] text-gray-400 tabular-nums block">
+                  Terpakai: {formatRupiah(wantsSpent, hide)}
+                </span>
+              </div>
+            </div>
+
+            {/* Tabungan */}
+            <div className="rounded-2xl bg-white/[0.04] border border-white/10 px-4 py-3 flex items-center justify-between sm:block">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-extrabold text-teal-300">
+                  Tabungan ({budgetConfig.savingsPercent}%)
+                </span>
+                <span className="text-[10px] font-bold text-gray-400 tabular-nums">
+                  {budgetConfig.savingsPercent === 0
+                    ? '0% Bulan Ini'
+                    : `Realisasi ${formatPctLabel(savingsSpent, savingsLimit)}`}
+                </span>
+              </div>
+              <div className="text-right sm:text-left sm:mt-1">
+                <span className="text-sm sm:text-base font-black text-white tabular-nums block">
+                  {formatRupiah(savingsLimit, hide)}
+                </span>
+                <span className="text-[10px] text-gray-400 tabular-nums block">
+                  Realisasi: {formatRupiah(savingsSpent, hide)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Row 3: Pos Tagihan Bulanan (Fixed) vs Pos Harian & Keperluan Pribadi (Fleksibel) */}
         {totalIncome > 0 && (
-          <div className="pt-3.5 border-t border-white/10 grid grid-cols-1 lg:grid-cols-2 gap-2.5 text-xs items-start">
+          <div className="relative z-10 pt-3.5 border-t border-white/10 grid grid-cols-1 lg:grid-cols-2 gap-2.5 text-xs items-start">
             {/* 1. Menu Pos Tagihan Bulanan (Fixed) */}
-            <div className="h-full flex flex-col bg-white/[0.04] hover:bg-white/[0.07] rounded-2xl border border-white/10 transition-colors overflow-hidden">
+            <div className="h-full flex flex-col bg-white/[0.04] hover:bg-white/[0.06] rounded-2xl border border-white/10 transition-colors overflow-hidden">
               <button
                 type="button"
                 onClick={() => setShowFixedPos((prev) => !prev)}
-                className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 cursor-pointer text-left"
-                title={showFixedPos ? 'Sembunyikan rincian Pos Tagihan Bulanan' : 'Klik untuk melihat rincian Pos Tagihan Bulanan'}
+                className="w-full px-4 py-3 flex items-center justify-between gap-2 cursor-pointer text-left"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-base shrink-0">📅</span>
-                  <span className="text-[10px] font-black text-sky-400 uppercase tracking-wider truncate">
-                    POS TAGIHAN BULANAN (FIXED)
+                <div className="min-w-0">
+                  <span className="text-[11px] font-extrabold text-sky-300 block">
+                    📅 Pos Tagihan Bulanan (Fixed)
+                  </span>
+                  <span className="text-[11px] text-gray-400 tabular-nums block mt-0.5">
+                    Terbayar {formatRupiah(dashboardSummary.monthlyFixedExpense, hide)} dari{' '}
+                    {formatRupiah(dashboardSummary.monthlyFixedBudget, hide)}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs sm:text-sm text-gray-100 font-black tabular-nums">
-                    Pagu: {formatRupiah(dashboardSummary.monthlyFixedBudget, hide)}
+                  <span className="text-xs sm:text-sm text-white font-black tabular-nums">
+                    {formatRupiah(dashboardSummary.monthlyFixedBudget, hide)}
                   </span>
                   <span className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-gray-300">
                     {showFixedPos ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -1280,63 +1656,54 @@ export function BudgetTab() {
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.18 }}
+                    transition={{ duration: 0.16 }}
                     className="overflow-hidden flex-1 flex flex-col"
                   >
-                    <div className="px-3.5 pb-3.5 pt-2 border-t border-white/10 space-y-2 flex-1 flex flex-col justify-between">
-                      {/* Baris 1: Jumlah pos terjadwal */}
-                      <div className="text-[10px] text-gray-400 font-medium flex items-center justify-between">
+                    <div className="px-4 pb-3.5 pt-2.5 border-t border-white/10 space-y-2 text-[11px]">
+                      <div className="flex items-center justify-between text-gray-300">
                         <span>Pos tagihan terjadwal:</span>
-                        <span className="text-gray-200 font-bold tabular-nums">
+                        <span className="font-bold text-white tabular-nums">
                           {fixedSubcategories.length} pos aktif
                         </span>
                       </div>
 
-                      {/* Baris 2: Terbayar & Sisa Tagihan */}
-                      <div className="text-[11px] flex flex-wrap items-center justify-between gap-1.5">
-                        <span className="text-gray-400">
-                          Terbayar periode ini:{' '}
-                          <strong className="text-white">
-                            {formatRupiah(dashboardSummary.monthlyFixedExpense, hide)}
-                          </strong>
-                        </span>
-                        <span className="text-[11px] font-extrabold">
-                          {dashboardSummary.monthlyFixedExpense >= dashboardSummary.monthlyFixedBudget &&
-                          dashboardSummary.monthlyFixedBudget > 0 ? (
-                            <span className="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/30">
-                              Lunas Semua
-                            </span>
-                          ) : (
-                            <span className="text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-md border border-sky-500/25">
-                              Sisa: {formatRupiah(
-                                Math.max(0, dashboardSummary.monthlyFixedBudget - dashboardSummary.monthlyFixedExpense),
+                      <div className="flex items-center justify-between text-gray-300">
+                        <span>Sisa tagihan belum dibayar:</span>
+                        <span className="font-extrabold text-sky-300 tabular-nums">
+                          {dashboardSummary.monthlyFixedExpense >=
+                            dashboardSummary.monthlyFixedBudget &&
+                          dashboardSummary.monthlyFixedBudget > 0
+                            ? 'Lunas Semua'
+                            : formatRupiah(
+                                Math.max(
+                                  0,
+                                  dashboardSummary.monthlyFixedBudget -
+                                    dashboardSummary.monthlyFixedExpense
+                                ),
                                 hide
                               )}
-                            </span>
-                          )}
                         </span>
                       </div>
 
-                      {/* Baris 3: Alokasi */}
-                      <div className="text-[11px] text-gray-400 font-medium flex items-center justify-between gap-2 min-h-[24px]">
-                        <span className="shrink-0">Alokasi:</span>
+                      <div className="text-gray-400 pt-1 border-t border-white/5">
                         {fixedSubcategories.length > 0 ? (
-                          <span className="text-sky-300 font-bold truncate bg-sky-500/10 px-2 py-0.5 rounded-lg border border-sky-500/20 max-w-full">
+                          <span className="text-gray-300 leading-relaxed block">
+                            Rincian:{' '}
                             {fixedSubcategories
                               .map((s) => `${s.name} (${formatRupiah(s.allocatedAmount, hide)})`)
-                              .join(' + ')}
+                              .join(' · ')}
                           </span>
                         ) : (
-                          <span className="text-gray-500 italic">Belum ada alokasi tagihan berjadwal</span>
+                          <span className="italic text-gray-500">
+                            Belum ada alokasi tagihan berjadwal
+                          </span>
                         )}
                       </div>
 
                       {deferredNextPeriodDebts.length > 0 && (
-                        <div className="text-[10px] text-amber-300/95 bg-amber-500/10 border border-amber-500/25 rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2">
-                          <span className="truncate">
-                            ⏳ {deferredNextPeriodDebts.map((d) => d.name).join(', ')}
-                          </span>
-                          <span className="font-extrabold shrink-0">Mulai periode depan</span>
+                        <div className="text-[10px] text-amber-300 pt-1">
+                          ⏳ {deferredNextPeriodDebts.map((d) => d.name).join(', ')} dijadwalkan
+                          mulai periode depan
                         </div>
                       )}
                     </div>
@@ -1345,23 +1712,25 @@ export function BudgetTab() {
               </AnimatePresence>
             </div>
 
-            {/* 2. Menu Pos Pengeluaran Harian & Keperluan Pribadi (Fleksibel Mengikuti Sisa Uang) */}
-            <div className="h-full flex flex-col bg-white/[0.04] hover:bg-white/[0.07] rounded-2xl border border-white/10 transition-colors overflow-hidden">
+            {/* 2. Menu Pos Pengeluaran Harian & Keperluan Pribadi (Fleksibel) */}
+            <div className="h-full flex flex-col bg-white/[0.04] hover:bg-white/[0.06] rounded-2xl border border-white/10 transition-colors overflow-hidden">
               <button
                 type="button"
                 onClick={() => setShowVariablePos((prev) => !prev)}
-                className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 cursor-pointer text-left"
-                title={showVariablePos ? 'Sembunyikan rincian Pos Harian & Keperluan Pribadi' : 'Klik untuk melihat rincian Pos Harian & Keperluan Pribadi'}
+                className="w-full px-4 py-3 flex items-center justify-between gap-2 cursor-pointer text-left"
               >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-base shrink-0">🥪</span>
-                  <span className="text-[10px] font-black text-[#D4F826] uppercase tracking-wider truncate">
-                    POS HARIAN & KEPERLUAN PRIBADI (FLEKSIBEL)
+                <div className="min-w-0">
+                  <span className="text-[11px] font-extrabold text-[#D4F826] block">
+                    🥪 Pos Harian & Keperluan Pribadi (Fleksibel)
+                  </span>
+                  <span className="text-[11px] text-gray-400 tabular-nums block mt-0.5">
+                    Kuota aman: ~{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari (
+                    {budgetPeriod.daysRemainingUntilPayday} hari tersisa)
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-xs sm:text-sm text-gray-100 font-black tabular-nums">
-                    Sisa Uang: {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
+                  <span className="text-xs sm:text-sm text-[#D4F826] font-black tabular-nums">
+                    Sisa {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
                   </span>
                   <span className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center text-gray-300">
                     {showVariablePos ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -1375,101 +1744,64 @@ export function BudgetTab() {
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.18 }}
+                    transition={{ duration: 0.16 }}
                     className="overflow-hidden flex-1 flex flex-col"
                   >
-                    <div className="px-3.5 pb-3.5 pt-2 border-t border-white/10 space-y-2 flex-1 flex flex-col justify-between">
-                      {/* Baris 1: Pagu Awal vs Potongan Keperluan Pribadi (Non-Harian) */}
-                      <div className="text-[10px] text-gray-300 font-medium flex flex-wrap items-center justify-between gap-2">
-                        <span>
-                          Pagu awal non-tagihan:{' '}
-                          <strong className="text-white tabular-nums">
-                            {formatRupiah(dashboardSummary.monthlyGroceryBudget, hide)}
-                          </strong>
+                    <div className="px-4 pb-3.5 pt-2.5 border-t border-white/10 space-y-2 text-[11px]">
+                      <div className="flex items-center justify-between text-gray-300">
+                        <span>Pagu awal non-tagihan:</span>
+                        <span className="font-bold text-white tabular-nums">
+                          {formatRupiah(dashboardSummary.monthlyGroceryBudget, hide)}
                         </span>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-amber-300 font-bold tabular-nums bg-amber-500/15 px-2 py-0.5 rounded-md border border-amber-400/30">
-                            🛍️ Keperluan Pribadi: -{formatRupiah((dashboardSummary.monthlyGroceryExpense || 0) + (dashboardSummary.monthlyNonDailyExpense || 0), hide)}
+                      </div>
+
+                      <div className="flex items-center justify-between text-gray-300">
+                        <span>Dipakai Keperluan Pribadi (Non-Harian):</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-amber-300 tabular-nums">
+                            -
+                            {formatRupiah(
+                              (dashboardSummary.monthlyGroceryExpense || 0) +
+                                (dashboardSummary.monthlyNonDailyExpense || 0),
+                              hide
+                            )}
                           </span>
                           <button
                             type="button"
                             onClick={openFoodLifestyleModal}
-                            className="text-[10px] font-black text-amber-200 hover:text-white bg-white/10 px-1.5 py-0.5 rounded-md cursor-pointer"
-                            title="Lihat simulasi kuota harian mengikuti sisa keperluan pribadi"
+                            className="text-[10px] font-extrabold text-[#D4F826] hover:underline cursor-pointer"
                           >
                             Simulasi
                           </button>
                         </div>
                       </div>
 
-                      {/* Baris 2: Terpakai Harian & Sisa Uang Riil */}
-                      <div className="text-[11px] flex flex-wrap items-center justify-between gap-1.5">
-                        <span className="text-gray-400">
-                          Terpakai harian (makan luar/bensin):{' '}
-                          <strong className="text-white tabular-nums">
-                            {formatRupiah(dashboardSummary.monthlyVariableExpense, hide)}
-                          </strong>
-                        </span>
-                        <span className="text-[11px] font-extrabold">
-                          {dashboardSummary.remainingVariableBudget <= 0 ? (
-                            <span className="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/30">
-                              Sisa Uang: Rp0 (Habis)
-                            </span>
-                          ) : (
-                            <span className="text-[#D4F826] bg-[#D4F826]/10 px-2 py-0.5 rounded-md border border-[#D4F826]/20 tabular-nums">
-                              Sisa Uang: {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
-                            </span>
-                          )}
+                      <div className="flex items-center justify-between text-gray-300">
+                        <span>Terpakai operasional harian:</span>
+                        <span className="font-bold text-white tabular-nums">
+                          -{formatRupiah(dashboardSummary.monthlyVariableExpense, hide)}
                         </span>
                       </div>
 
-                      {/* Baris 3: Kuota Harian Mengikuti Sisa Uang */}
-                      <div className="text-[11px] text-gray-400 font-medium flex flex-wrap items-center justify-between gap-2 min-h-[24px]">
-                        <span>
-                          Kuota hari ini (mengikuti sisa s/d <strong className="text-white">{budgetPeriod.endShortLabel}</strong> •{' '}
-                          {budgetPeriod.daysRemainingUntilPayday} hari):
-                        </span>
-                        {dashboardSummary.remainingVariableBudget <= 0 ? (
-                          <span className="text-rose-300 font-extrabold tabular-nums bg-rose-500/15 px-2 py-0.5 rounded-lg border border-rose-500/30">
-                            Maks Rp0/hari (Rem Belanja)
-                          </span>
-                        ) : (
-                          <span className="text-[#D4F826] font-extrabold tabular-nums bg-[#D4F826]/10 px-2 py-0.5 rounded-lg border border-[#D4F826]/25">
-                            ~{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Baris 4: Dampak jika hari ini melebihi kuota harian (Overbudget Rollover ke Esok Hari) */}
-                      {dashboardSummary.dailyOverbudget && budgetPeriod.daysRemainingUntilPayday > 1 ? (
-                        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 space-y-1.5 text-[10px]">
-                          <div className="flex flex-wrap items-center justify-between gap-1">
-                            <span className="text-rose-300 font-extrabold">
-                              ⚠️ Hari ini lewat +{formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)} dari kuota:
+                      {dashboardSummary.dailyOverbudget &&
+                      budgetPeriod.daysRemainingUntilPayday > 1 ? (
+                        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 space-y-1 text-[10px] text-gray-200">
+                          <div className="flex items-center justify-between font-extrabold text-rose-300">
+                            <span>
+                              Hari ini lewat +
+                              {formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}
                             </span>
-                            <span className="text-amber-300 font-black tabular-nums">
-                              Kuota mulai besok: ~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hari
+                            <span className="text-amber-300 tabular-nums">
+                              Besok: ~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hr
                             </span>
                           </div>
                           <p className="text-gray-300 leading-relaxed">
-                            Kelebihan hari ini otomatis memotong sisa saldo pos harian, sehingga kuota harian selama sisa{' '}
-                            <strong className="text-white">{budgetPeriod.daysRemainingUntilPayday - 1} hari</strong> ke depan berkurang{' '}
-                            <strong className="text-rose-300">-{formatRupiah(dashboardSummary.tomorrowQuotaDiff, hide)}/hari</strong> agar uang tetap cukup sampai gajian.
-                            {dashboardSummary.dailyBudgetQuota > dashboardSummary.dailyOverbudgetAmount && (
-                              <>
-                                {' '}Atau jika ingin lusa kembali normal (<strong className="text-[#D4F826]">{formatRupiah(dashboardSummary.dailyBudgetQuota, hide)}/hari</strong>), cukup rem belanja besok maksimal{' '}
-                                <strong className="text-amber-300">
-                                  {formatRupiah(Math.max(0, dashboardSummary.dailyBudgetQuota - dashboardSummary.dailyOverbudgetAmount), hide)}
-                                </strong>.
-                              </>
-                            )}
+                            Kelebihan hari ini otomatis disesuaikan ke sisa{' '}
+                            {budgetPeriod.daysRemainingUntilPayday - 1} hari ke depan agar saldo
+                            tetap cukup sampai gajian.
                           </p>
                         </div>
-                      ) : (
-                        <div className="text-[10px] text-gray-400/90 bg-white/[0.03] border border-white/5 rounded-xl px-2.5 py-1.5 leading-relaxed">
-                          💡 <strong className="text-gray-200">Jika hari ini lewat kuota:</strong> Kelebihannya otomatis mengurangi jatah hari-hari berikutnya (kuota mulai besok menyesuaikan dibagi sisa hari) agar uang tetap cukup sampai gajian.
-                        </div>
-                      )}
+                      ) : null}
                     </div>
                   </motion.div>
                 )}
@@ -1477,75 +1809,6 @@ export function BudgetTab() {
             </div>
           </div>
         )}
-
-        {/* Bottom Bar: Periode Aktif & Pengaturan Tanggal Gajian */}
-        <div className="pt-4 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-2xl bg-[#D4F826]/15 border border-[#D4F826]/30 flex items-center justify-center text-[#D4F826] shrink-0">
-              <Calendar size={17} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                  PERIODE AKTIF
-                </span>
-                <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-white/10 text-[#D4F826] uppercase tracking-wider">
-                  {budgetPeriod.isCustomFlexiblePeriod
-                    ? `Fleksibel (${budgetPeriod.totalDays} Hari)`
-                    : budgetPeriod.paydayDay === 1
-                    ? 'Tgl 1 - Akhir Bulan'
-                    : `Gajian Tgl ${budgetPeriod.paydayDay}`}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 mt-0.5">
-                <span className="font-extrabold text-white text-sm">
-                  {budgetPeriod.periodFullLabel}
-                </span>
-                <span className="text-[11px] text-gray-400 font-medium">
-                  • Hari ke-{budgetPeriod.currentDayOfPeriod} dari {budgetPeriod.totalDays} ({budgetPeriod.daysRemainingUntilPayday} hari menuju gajian)
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 self-end sm:self-auto">
-            <div className="flex items-center bg-white/5 border border-white/10 rounded-xl p-0.5">
-              <button
-                type="button"
-                onClick={goToPrevPeriod}
-                className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
-                title="Periode Sebelumnya"
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={goToCurrentPeriod}
-                className="px-2.5 py-1 text-[10px] font-extrabold text-gray-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
-                title="Kembali ke Periode Saat Ini"
-              >
-                Periode Ini
-              </button>
-              <button
-                type="button"
-                onClick={goToNextPeriod}
-                className="p-1.5 text-gray-300 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
-                title="Periode Berikutnya"
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
-
-            <button
-              type="button"
-              onClick={openPeriodModal}
-              className="px-3.5 py-2 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black font-black text-[11px] flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0"
-            >
-              <CalendarClock size={13} strokeWidth={2.5} />
-              <span>Atur Tgl Gajian</span>
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Contextual Overbudget Alert Notification Banner */}
@@ -1553,135 +1816,120 @@ export function BudgetTab() {
         <motion.div
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-gradient-to-r from-rose-500/15 via-rose-500/10 to-amber-500/10 dark:from-rose-950/60 dark:via-rose-900/40 dark:to-amber-950/20 border-2 border-rose-500/40 dark:border-rose-600/60 rounded-[26px] p-4 sm:p-5 shadow-lg relative overflow-hidden space-y-3.5"
+          className="bg-rose-50/70 dark:bg-rose-950/30 border border-rose-300 dark:border-rose-800/70 rounded-[24px] p-4 sm:p-5 space-y-3"
         >
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-start sm:items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-rose-500 text-white flex items-center justify-center shrink-0 shadow-md">
-                <AlertTriangle size={20} strokeWidth={2.5} />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-rose-500 text-white flex items-center justify-center shrink-0">
+                <AlertTriangle size={18} strokeWidth={2.5} />
               </div>
               <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black uppercase tracking-widest text-rose-600 dark:text-rose-400 bg-rose-500/10 dark:bg-rose-500/20 px-2 py-0.5 rounded-md border border-rose-500/20">
-                    PERINGATAN BUDGET
-                  </span>
-                  <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
-                    {budgetPeriod.periodShortLabel}
-                  </span>
-                </div>
-                <h3 className="text-sm sm:text-base font-black text-gray-900 dark:text-white mt-0.5">
-                  {overbudgetCategories.length} Kategori Melebihi Anggaran!
+                <h3 className="text-sm font-black text-gray-900 dark:text-white">
+                  {overbudgetCategories.length} Subkategori Melebihi Pagu Anggaran
                 </h3>
+                <p className="text-xs text-gray-600 dark:text-gray-300">
+                  Total kelebihan subkategori:{' '}
+                  <strong className="text-rose-600 dark:text-rose-400 tabular-nums">
+                    +{formatRupiah(totalOverbudgetAmount, hide)}
+                  </strong>
+                </p>
               </div>
-            </div>
-
-            <div className="flex items-center gap-2 self-start sm:self-auto bg-white/90 dark:bg-black/40 backdrop-blur-xs px-3.5 py-2 rounded-2xl border border-rose-200 dark:border-rose-800 shadow-2xs">
-              <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400">Total Kelebihan:</span>
-              <span className="text-sm font-black text-rose-600 dark:text-rose-400 tabular-nums">
-                +{formatRupiah(totalOverbudgetAmount, hide)}
-              </span>
             </div>
           </div>
 
-          {/* Overbudget Categories Pills List */}
-          <div className="pt-2 border-t border-rose-200/60 dark:border-rose-800/40 flex flex-wrap items-center gap-2">
-            <span className="text-[10px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-              Kategori Terlampaui:
-            </span>
-            {overbudgetCategories.map((item) => (
-              <span
+          <div className="pt-2 border-t border-rose-200/60 dark:border-rose-800/40 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+            {overbudgetCategories.map((item, idx) => (
+              <button
                 key={item.id}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white dark:bg-gray-900/90 border border-rose-200 dark:border-rose-800 text-xs font-extrabold text-gray-800 dark:text-gray-200 shadow-2xs"
+                type="button"
+                onClick={() => openEditSub(item)}
+                className="inline-flex items-center gap-1.5 font-bold text-gray-800 dark:text-gray-200 hover:underline cursor-pointer tabular-nums"
+                title="Klik untuk sesuaikan pagu subkategori ini"
               >
+                {idx > 0 && <span className="text-rose-300 dark:text-rose-700 mr-1">·</span>}
                 <span>{item.emoji}</span>
-                <span>{item.name}</span>
-                <span className="text-rose-600 dark:text-rose-400 font-black tabular-nums">
-                  +{formatRupiah(item.overAmount, hide)}
+                <span>{item.name}:</span>
+                <span className="text-rose-600 dark:text-rose-400 font-black">
+                  +{formatRupiah(item.overAmount, hide)} ({item.overPct}%)
                 </span>
-                <span className="text-[10px] font-semibold text-rose-500 dark:text-rose-400">
-                  ({item.overPct}%)
-                </span>
-              </span>
+              </button>
             ))}
           </div>
         </motion.div>
       )}
 
-      {/* Top Right "Tampilkan Arsip" Pill Control (matching reference screenshot) */}
-      <div className="flex justify-end px-1 -mb-2">
-        <button
-          type="button"
-          onClick={() => setShowArchived((v) => !v)}
-          className="px-3.5 py-1.5 rounded-full bg-gray-100/90 dark:bg-gray-800/70 hover:bg-gray-200/80 dark:hover:bg-gray-800 text-[11px] font-bold text-gray-500 dark:text-gray-400 flex items-center gap-1.5 cursor-pointer transition-colors"
-        >
-          <Eye size={13} />
-          <span>{showArchived ? 'Sembunyikan Arsip' : 'Tampilkan Arsip'}</span>
-        </button>
-      </div>
-
-      {/* Category Sections (Matching Reference 2-Column Card Grid UI) */}
-      <div className="space-y-8">
+      {/* Category Sections */}
+      <div className="space-y-6">
         {renderGroupSection({
           group: 'kebutuhan',
-          title: 'KEBUTUHAN',
-          tooltip: `Alokasi Kebutuhan Pokok & Operasional (${budgetConfig.needsPercent}%) — Cicilan & Utang dipisahkan di menu bawah`,
-          dotColor: 'bg-[#A594F9]',
+          groupPercent: budgetConfig.needsPercent,
+          title: 'Kebutuhan Pokok & Operasional',
+          subtitle: 'Tagihan rutin, makan harian, transportasi, dan keperluan pribadi',
+          tooltip: `Alokasi Kebutuhan Pokok & Operasional (${budgetConfig.needsPercent}%)`,
+          accentTextClass: 'text-violet-600 dark:text-violet-400',
+          accentBgSoftClass: 'bg-violet-50/50 dark:bg-violet-950/15',
+          accentBorderClass: 'border-violet-200/60 dark:border-violet-800/40',
           sectionBarColor: 'bg-[#A594F9]',
           itemBarColor: 'bg-[#A594F9]',
           subs: showArchived ? needsSubs : needsSubs.filter((s) => s.isSubscriptionActive !== false),
           groupSpent: needsSpent,
           groupLimit: Math.max(0, needsLimit - debtTotalAllocated),
-          spentLabel: 'TERPAKAI',
+          rawGroupLimit: needsLimit,
+          deductedDebtAmount: debtTotalAllocated,
+          spentLabel: 'Terpakai',
         })}
 
-        {/* Menu Terpisah: CICILAN & UTANG (Disembunyikan secara default, tampil saat diklik) */}
+        {/* Menu Terpisah: CICILAN & UTANG */}
         {(visibleDebtSubs.length > 0 || deferredNextPeriodDebts.length > 0) && (
-          <div className="space-y-3.5 pt-2">
-            {/* Clickable Section Header */}
+          <section className="rounded-[26px] bg-white dark:bg-[#12141A] border border-gray-200/80 dark:border-gray-800/80 p-4 sm:p-6 shadow-xs space-y-4">
             <div
               onClick={() => setShowDebtSection((prev) => !prev)}
-              className="flex items-center justify-between px-1 cursor-pointer select-none group"
+              className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer select-none"
             >
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="w-2 h-2 rounded-full bg-amber-400" />
-                <h3 className="text-xs font-extrabold tracking-[0.22em] text-gray-900 dark:text-white uppercase">
-                  CICILAN & UTANG
-                </h3>
-                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-[10px] font-black text-amber-600 dark:text-amber-400 tabular-nums">
-                  {visibleDebtSubs.length} Cicilan
-                </span>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-black text-gray-900 dark:text-white">
+                    Cicilan & Kewajiban Utang
+                  </h3>
+                  <span className="text-xs font-extrabold text-amber-600 dark:text-amber-400 tabular-nums">
+                    ({visibleDebtSubs.length} Cicilan Aktif)
+                  </span>
+                </div>
+                <p className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                  Otomatis masuk Pos Tagihan Bulanan (Fixed) dan memotong pagu Kebutuhan periode ini
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     setActiveTab('debt');
                   }}
-                  className="px-2.5 py-1 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[11px] font-bold text-gray-600 dark:text-gray-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+                  className="px-3 py-1.5 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[11px] font-bold text-gray-700 dark:text-gray-200 flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap"
                 >
                   <span>Kelola Utang</span>
+                  <ArrowUpRight size={12} />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowDebtSection((prev) => !prev);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-[11px] font-extrabold text-amber-700 dark:text-amber-300 flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap"
+                >
+                  <span>{showDebtSection ? 'Sembunyikan' : 'Tampilkan Rincian'}</span>
+                  {showDebtSection ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                 </button>
               </div>
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowDebtSection((prev) => !prev);
-                }}
-                className="px-3 py-1 rounded-xl bg-gray-100 dark:bg-gray-800 group-hover:bg-gray-200 dark:group-hover:bg-gray-700 text-[11px] font-bold text-gray-600 dark:text-gray-300 flex items-center gap-1.5 cursor-pointer transition-colors"
-                title={showDebtSection ? 'Sembunyikan daftar cicilan & utang' : 'Klik untuk menampilkan daftar cicilan & utang'}
-              >
-                <span>{showDebtSection ? 'Sembunyikan' : 'Klik untuk Tampilkan'}</span>
-                {showDebtSection ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-              </button>
             </div>
 
-            {/* Section-Level Progress Bar & Labels */}
-            <div
-              onClick={() => setShowDebtSection((prev) => !prev)}
-              className="space-y-1.5 px-1 cursor-pointer"
-            >
-              <div className="w-full h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+            {/* Section Progress Bar */}
+            <div className="space-y-2">
+              <div className="w-full h-2.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
                 <div
                   className="h-full rounded-full bg-amber-400 transition-all duration-500"
                   style={{
@@ -1693,175 +1941,155 @@ export function BudgetTab() {
                   }}
                 />
               </div>
-              <div className="flex items-center justify-between text-[10px] font-extrabold tracking-wider uppercase tabular-nums">
-                <span className="text-gray-400">
-                  TERBAYAR PERIODE INI: {formatRupiah(debtTotalSpent, hide)}
+              <div className="flex items-center justify-between text-[11px] font-bold text-gray-500 dark:text-gray-400 tabular-nums">
+                <span>
+                  Terbayar Periode Ini:{' '}
+                  <strong className="text-gray-900 dark:text-white">
+                    {formatRupiah(debtTotalSpent, hide)}
+                  </strong>
                 </span>
-                <span className="text-gray-400">
-                  TAGIHAN CICILAN: {formatRupiah(debtTotalAllocated, hide)}
+                <span>
+                  Tagihan Cicilan:{' '}
+                  <strong className="text-gray-900 dark:text-white">
+                    {formatRupiah(debtTotalAllocated, hide)}
+                  </strong>
                 </span>
               </div>
             </div>
 
-            {!showDebtSection ? (
-              <button
-                type="button"
-                onClick={() => setShowDebtSection(true)}
-                className="w-full py-3 px-4 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-[#16181D]/60 hover:border-amber-400/60 dark:hover:border-amber-400/50 text-xs font-bold text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white flex items-center justify-between gap-2 cursor-pointer transition-all"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <span>💳</span>
-                  <span className="truncate">
-                    {visibleDebtSubs.length > 0
-                      ? `${visibleDebtSubs.length} daftar cicilan & utang disembunyikan (${visibleDebtSubs.map((s) => s.name).join(', ')})`
-                      : `${deferredNextPeriodDebts.length} utang dijadwalkan mulai bulan depan`}
-                  </span>
-                </div>
-                <span className="text-[11px] font-extrabold text-amber-600 dark:text-amber-400 shrink-0 flex items-center gap-1">
-                  <span>Tampilkan</span>
-                  <ChevronDown size={14} />
-                </span>
-              </button>
-            ) : (
-              <div className="space-y-3 pt-1">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                  {visibleDebtSubs.map((sub) => {
-                    const spent = subSpentMap[sub.id] || 0;
-                    const rawPct = sub.allocatedAmount > 0 ? Math.round((spent / sub.allocatedAmount) * 100) : 0;
-                    const pct = Math.min(100, rawPct);
-                    const isMenuOpen = activeMenuSubId === sub.id;
-                    const isPaidThisMonth = sub.allocatedAmount > 0 && spent >= sub.allocatedAmount;
+            {showDebtSection && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
+                {visibleDebtSubs.map((sub) => {
+                  const spent = subSpentMap[sub.id] || 0;
+                  const rawPct =
+                    sub.allocatedAmount > 0 ? Math.round((spent / sub.allocatedAmount) * 100) : 0;
+                  const pct = Math.min(100, rawPct);
+                  const isMenuOpen = activeMenuSubId === sub.id;
+                  const isPaidThisMonth = sub.allocatedAmount > 0 && spent >= sub.allocatedAmount;
 
-                    return (
-                      <div
-                        key={sub.id}
-                        className={`rounded-[22px] px-5 py-4 border transition-all flex items-center gap-4 relative group ${
-                          isMenuOpen
-                            ? 'border-[#D4F826] shadow-[0_4px_20px_rgba(212,248,38,0.15)] bg-white dark:bg-[#16181D]'
-                            : 'border-gray-100 dark:border-gray-800/80 hover:border-amber-400/70 shadow-[0_2px_10px_rgba(0,0,0,0.02)] bg-white dark:bg-[#16181D]'
-                        }`}
-                      >
-                        <div className="relative shrink-0">
-                          <div className="text-[28px] leading-none w-9 text-center select-none">
-                            {sub.emoji || '💳'}
-                          </div>
-                        </div>
+                  return (
+                    <div
+                      key={sub.id}
+                      className="rounded-2xl p-4 border border-gray-200/75 dark:border-gray-800/90 bg-gray-50/40 dark:bg-[#161920] flex items-start gap-3.5 relative"
+                    >
+                      <div className="w-11 h-11 rounded-2xl bg-white dark:bg-[#1E222B] border border-gray-200/60 dark:border-gray-800 flex items-center justify-center text-2xl shrink-0 select-none">
+                        {sub.emoji || '💳'}
+                      </div>
 
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-baseline justify-between gap-2 mb-2">
-                            <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
-                              <span className="text-[13px] font-extrabold truncate text-gray-900 dark:text-white">
-                                {sub.name}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2 mb-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                            <span className="text-[13px] font-extrabold truncate text-gray-900 dark:text-white">
+                              {sub.name}
+                            </span>
+                            {sub.dueDateDay && (
+                              <span className="text-[10px] font-semibold text-gray-400">
+                                · Tgl {sub.dueDateDay}
                               </span>
-                              {sub.dueDateDay && (
-                                <button
-                                  type="button"
-                                  onClick={() => setActiveTab('debt')}
-                                  className="text-[10px] font-semibold text-gray-400 hover:text-amber-500 shrink-0 cursor-pointer transition-colors"
-                                >
-                                  · Tgl {sub.dueDateDay}
-                                </button>
-                              )}
-                              {isPaidThisMonth && (
-                                <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-md border border-emerald-500/20">
-                                  Lunas Bulan Ini
-                                </span>
-                              )}
-                            </div>
-
-                            <span className="text-[13px] font-black tabular-nums shrink-0 text-gray-900 dark:text-white">
-                              {formatRupiah(spent, hide)}
-                            </span>
-                          </div>
-
-                          <div className="w-full h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all duration-300 ${
-                                isPaidThisMonth ? 'bg-emerald-500' : 'bg-amber-400'
-                              }`}
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-
-                          <div className="flex items-center justify-between mt-1.5 gap-2">
-                            <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 tabular-nums">
-                              Sisa {formatRupiah(Math.max(0, sub.allocatedAmount - spent), hide)}
-                            </span>
-                            <span className="text-[11px] font-semibold text-gray-400 tabular-nums shrink-0">
-                              dari {formatRupiah(sub.allocatedAmount, hide)}
-                            </span>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setActiveMenuSubId(isMenuOpen ? null : sub.id)}
-                          className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-colors text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
-                        >
-                          <MoreVertical size={15} />
-                        </button>
-
-                        {isMenuOpen && (
-                          <div className="absolute right-4 top-14 z-30 bg-white dark:bg-[#1E2026] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[140px] text-xs font-bold space-y-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActiveMenuSubId(null);
-                                setActiveTab('debt');
-                              }}
-                              className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
-                            >
-                              <Pencil size={12} />
-                              <span>Kelola di Utang</span>
-                            </button>
-                            {!sub.id.startsWith('sub-debt-') && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  deleteBudgetSubcategory(sub.id);
-                                  setActiveMenuSubId(null);
-                                }}
-                                className="w-full text-left px-3 py-1.5 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40 text-red-600 dark:text-red-400 flex items-center gap-2 cursor-pointer"
-                              >
-                                <Trash2 size={12} />
-                                <span>Hapus</span>
-                              </button>
+                            )}
+                            {isPaidThisMonth && (
+                              <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400">
+                                · Lunas Bulan Ini
+                              </span>
                             )}
                           </div>
-                        )}
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[13px] font-black tabular-nums text-gray-900 dark:text-white">
+                              {formatRupiah(spent, hide)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setActiveMenuSubId(isMenuOpen ? null : sub.id)}
+                              className="w-7 h-7 rounded-xl flex items-center justify-center shrink-0 cursor-pointer text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200/60 dark:hover:bg-gray-800"
+                            >
+                              <MoreVertical size={14} />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="w-full h-1.5 rounded-full bg-gray-200/80 dark:bg-gray-800 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-300 ${
+                              isPaidThisMonth ? 'bg-emerald-500' : 'bg-amber-400'
+                            }`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between mt-2 gap-2 text-[11px] tabular-nums">
+                          <span className="font-medium text-gray-500 dark:text-gray-400">
+                            Sisa {formatRupiah(Math.max(0, sub.allocatedAmount - spent), hide)}
+                          </span>
+                          <span className="font-semibold text-gray-400 dark:text-gray-500 shrink-0">
+                            Tagihan {formatRupiah(sub.allocatedAmount, hide)}
+                          </span>
+                        </div>
                       </div>
-                    );
-                  })}
-                </div>
+
+                      {isMenuOpen && (
+                        <div className="absolute right-4 top-12 z-30 bg-white dark:bg-[#1E2026] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-xl p-1.5 min-w-[145px] text-xs font-bold space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditSub(sub)}
+                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
+                          >
+                            <Pencil size={12} />
+                            <span>Ubah Cicilan</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveMenuSubId(null);
+                              setActiveTab('debt');
+                            }}
+                            className="w-full text-left px-3 py-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-800 dark:text-gray-200 flex items-center gap-2 cursor-pointer"
+                          >
+                            <ArrowUpRight size={12} />
+                            <span>Buka Menu Utang</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
-          </div>
+          </section>
         )}
 
         {renderGroupSection({
           group: 'keinginan',
-          title: 'KEINGINAN',
+          groupPercent: budgetConfig.wantsPercent,
+          title: 'Keinginan & Gaya Hidup',
+          subtitle: 'Hiburan, nongkrong, langganan streaming, hobi, dan belanja',
           tooltip: `Alokasi Gaya Hidup, Hiburan & Keinginan (${budgetConfig.wantsPercent}%)`,
-          dotColor: 'bg-pink-400',
+          accentTextClass: 'text-pink-600 dark:text-pink-400',
+          accentBgSoftClass: 'bg-pink-50/50 dark:bg-pink-950/15',
+          accentBorderClass: 'border-pink-200/60 dark:border-pink-800/40',
           sectionBarColor: 'bg-pink-500',
           itemBarColor: 'bg-pink-400',
           subs: showArchived ? wantsSubs : wantsSubs.filter((s) => s.isSubscriptionActive !== false),
           groupSpent: wantsSpent,
           groupLimit: wantsLimit,
-          spentLabel: 'TERPAKAI',
+          spentLabel: 'Terpakai',
         })}
 
         {renderGroupSection({
           group: 'tabungan',
-          title: 'TABUNGAN',
+          groupPercent: budgetConfig.savingsPercent,
+          title: 'Tabungan & Investasi',
+          subtitle: 'Dana darurat, tabungan berjangka, dan investasi masa depan',
           tooltip: `Alokasi Dana Darurat, Tabungan & Investasi (${budgetConfig.savingsPercent}%)`,
-          dotColor: 'bg-teal-400',
+          accentTextClass: 'text-teal-600 dark:text-teal-400',
+          accentBgSoftClass: 'bg-teal-50/50 dark:bg-teal-950/15',
+          accentBorderClass: 'border-teal-200/60 dark:border-teal-800/40',
           sectionBarColor: 'bg-teal-500',
           itemBarColor: 'bg-teal-400',
           subs: savingsSubs,
           groupSpent: savingsSpent,
           groupLimit: savingsLimit,
-          spentLabel: 'REALISASI',
+          spentLabel: 'Realisasi',
         })}
       </div>
 
@@ -1877,7 +2105,7 @@ export function BudgetTab() {
             >
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
-                  Ubah Pemasukan
+                  Atur Basis Pemasukan
                 </h3>
                 <button
                   type="button"
@@ -1891,50 +2119,39 @@ export function BudgetTab() {
               <form onSubmit={handleSaveIncome} className="space-y-4">
                 <div>
                   <label className="text-xs font-bold text-gray-500 block mb-1.5">
-                    Perkiraan Pemasukan Bulanan
+                    Basis Pemasukan Periode Ini ({budgetPeriod.periodShortLabel})
                   </label>
                   <input
                     type="text"
                     inputMode="numeric"
                     value={tempIncomeInput}
                     onChange={(e) => setTempIncomeInput(formatNominalInput(e.target.value))}
-                    placeholder="Contoh: 5.000.000"
-                    className="w-full p-3.5 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-2xl text-base font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                    placeholder="Contoh: 6.764.000"
+                    className="w-full p-3.5 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-2xl text-base font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826] tabular-nums"
                   />
-                  <p className="text-[11px] text-gray-400 mt-1.5">
-                    Setiap kali Anda mencatat transaksi Pemasukan baru, nominalnya otomatis ditambahkan ke Perkiraan Pemasukan ini.
+                  <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
+                    Secara default, anggaran otomatis mengikuti total transaksi pemasukan yang tercatat pada periode aktif. Anda juga bisa menentukan target pemasukan manual di sini.
                   </p>
                 </div>
 
-                {recordedPeriodIncome > 0 && (
-                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
-                    <div className="flex items-center justify-between text-[11px]">
+                {periodRecordedIncome > 0 && (
+                  <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-2.5">
+                    <div className="flex items-center justify-between text-xs">
                       <span className="font-bold text-emerald-700 dark:text-emerald-300">
-                        Total Pemasukan Tercatat:
+                        Transaksi Pemasukan Periode Ini:
                       </span>
                       <span className="font-black text-emerald-700 dark:text-emerald-300 tabular-nums">
-                        {formatRupiah(recordedPeriodIncome)}
+                        {formatRupiah(periodRecordedIncome)}
                       </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setTempIncomeInput(formatNominalInput(recordedPeriodIncome))}
-                        className="py-1.5 px-2 rounded-xl bg-white dark:bg-gray-800 border border-emerald-500/30 text-[10px] font-extrabold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-gray-700 transition-colors cursor-pointer"
-                      >
-                        Samakan Nominal
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const cur = parseNominalInput(tempIncomeInput);
-                          setTempIncomeInput(formatNominalInput(cur + recordedPeriodIncome));
-                        }}
-                        className="py-1.5 px-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-[10px] font-extrabold text-white transition-colors cursor-pointer"
-                      >
-                        + Tambahkan
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setTempIncomeInput(formatNominalInput(periodRecordedIncome))}
+                      className="w-full py-2 px-3 rounded-xl bg-white dark:bg-gray-800 border border-emerald-500/30 text-xs font-extrabold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-gray-700 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <Check size={13} strokeWidth={2.5} />
+                      <span>Gunakan Nominal Transaksi ({formatRupiah(periodRecordedIncome)})</span>
+                    </button>
                   </div>
                 )}
 
@@ -1992,8 +2209,18 @@ export function BudgetTab() {
                 const previewDay = Math.max(1, Math.min(31, Number(tempPaydayDay) || 1));
                 const DAYS_ID = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
                 const MONTHS_ID = [
-                  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-                  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+                  'Januari',
+                  'Februari',
+                  'Maret',
+                  'April',
+                  'Mei',
+                  'Juni',
+                  'Juli',
+                  'Agustus',
+                  'September',
+                  'Oktober',
+                  'November',
+                  'Desember',
                 ];
                 const toIso = (y: number, mIdx: number, d: number) =>
                   `${y}-${String(mIdx + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
@@ -2005,34 +2232,46 @@ export function BudgetTab() {
                   return `${DAYS_ID[dt.getDay()]}, ${d} ${MONTHS_ID[m - 1]} ${y}`;
                 };
 
-                // Detect if regular paydayDay this month falls on Saturday (6) or Sunday (0)
                 const refYear = activeYear;
                 const refMonth = activeMonth;
                 const maxDayRefMonth = new Date(refYear, refMonth + 1, 0).getDate();
                 const clampedRefPayday = Math.min(previewDay, maxDayRefMonth);
                 const thisMonthPaydayDate = new Date(refYear, refMonth, clampedRefPayday, 12, 0, 0);
-                const thisMonthPaydayDow = thisMonthPaydayDate.getDay(); // 0 = Minggu, 6 = Sabtu
-                const isWeekendPayday = previewDay > 1 && (thisMonthPaydayDow === 0 || thisMonthPaydayDow === 6);
-                const fridayShiftOffset = thisMonthPaydayDow === 0 ? 2 : thisMonthPaydayDow === 6 ? 1 : 0;
+                const thisMonthPaydayDow = thisMonthPaydayDate.getDay();
+                const isWeekendPayday =
+                  previewDay > 1 && (thisMonthPaydayDow === 0 || thisMonthPaydayDow === 6);
+                const fridayShiftOffset =
+                  thisMonthPaydayDow === 0 ? 2 : thisMonthPaydayDow === 6 ? 1 : 0;
                 const shiftedFridayDay = Math.max(1, clampedRefPayday - fridayShiftOffset);
                 const shiftedFridayIso = toIso(refYear, refMonth, shiftedFridayDay);
 
-                // Next month regular payday (e.g. tetap tgl 25 bulan depan)
                 const nextMonthObj = new Date(refYear, refMonth + 1, 1);
                 const nextYear = nextMonthObj.getFullYear();
                 const nextMonthIdx = nextMonthObj.getMonth();
                 const maxDayNextMonth = new Date(nextYear, nextMonthIdx + 1, 0).getDate();
-                const nextRegularPaydayDay = Math.min(previewDay > 1 ? previewDay : 25, maxDayNextMonth);
+                const nextRegularPaydayDay = Math.min(
+                  previewDay > 1 ? previewDay : 25,
+                  maxDayNextMonth
+                );
                 const nextRegularPaydayIso = toIso(nextYear, nextMonthIdx, nextRegularPaydayDay);
 
-                // Also compute Friday before regular payday for ANY month (even if not weekend, for manual shortcut)
                 const regularTargetDay = previewDay > 1 ? previewDay : 25;
                 const clampedTargetThisMonth = Math.min(regularTargetDay, maxDayRefMonth);
-                const targetThisMonthDate = new Date(refYear, refMonth, clampedTargetThisMonth, 12, 0, 0);
+                const targetThisMonthDate = new Date(
+                  refYear,
+                  refMonth,
+                  clampedTargetThisMonth,
+                  12,
+                  0,
+                  0
+                );
                 const targetDow = targetThisMonthDate.getDay();
                 const offsetToFriday =
                   targetDow === 0 ? 2 : targetDow === 6 ? 1 : targetDow === 5 ? 0 : 2;
-                const suggestedStartFridayDay = Math.max(1, clampedTargetThisMonth - offsetToFriday);
+                const suggestedStartFridayDay = Math.max(
+                  1,
+                  clampedTargetThisMonth - offsetToFriday
+                );
                 const suggestedStartFridayIso = toIso(refYear, refMonth, suggestedStartFridayDay);
                 const suggestedNext25Iso = toIso(
                   nextYear,
@@ -2058,7 +2297,6 @@ export function BudgetTab() {
                   previewDay
                 );
 
-                // Custom flexible period preview
                 let customPreview = autoPeriod;
                 if (tempCustomStart && tempCustomNext && tempCustomNext > tempCustomStart) {
                   const [csY, csM, csD] = tempCustomStart.split('-').map(Number);
@@ -2078,7 +2316,9 @@ export function BudgetTab() {
 
                 const previewDailyQuota =
                   selectedPreview.totalDays > 0
-                    ? Math.round(dashboardSummary.monthlyVariableBudget / selectedPreview.totalDays)
+                    ? Math.round(
+                        dashboardSummary.monthlyVariableBudget / selectedPreview.totalDays
+                      )
                     : 0;
 
                 const presets = [
@@ -2093,7 +2333,7 @@ export function BudgetTab() {
 
                 return (
                   <form onSubmit={handleSavePeriod} className="space-y-4">
-                    {/* Mode Switcher: Tanggal Tetap vs Periode Fleksibel Manual */}
+                    {/* Mode Switcher */}
                     <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-gray-100 dark:bg-gray-800/80 border border-gray-200/70 dark:border-gray-700/70">
                       <button
                         type="button"
@@ -2110,7 +2350,11 @@ export function BudgetTab() {
                         type="button"
                         onClick={() => {
                           setTempPeriodMode('custom');
-                          if (!tempCustomStart || !tempCustomNext || tempCustomNext <= tempCustomStart) {
+                          if (
+                            !tempCustomStart ||
+                            !tempCustomNext ||
+                            tempCustomNext <= tempCustomStart
+                          ) {
                             setTempCustomStart(suggestedStartFridayIso);
                             setTempCustomNext(suggestedNext25Iso);
                           }
@@ -2127,13 +2371,17 @@ export function BudgetTab() {
 
                     {tempPeriodMode === 'standard' ? (
                       <>
-                        {/* Smart Weekend Alert when payday falls on Saturday/Sunday */}
                         {isWeekendPayday && (
                           <div className="p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/60 space-y-2">
                             <div className="text-[11px] text-amber-900 dark:text-amber-200 leading-snug">
-                              💡 <strong>Tgl {clampedRefPayday} {MONTHS_ID[refMonth]}</strong> jatuh di hari{' '}
-                              <strong>{DAYS_ID[thisMonthPaydayDow]}</strong>! Jika gajian bulan ini dimajukan ke hari{' '}
-                              <strong>Jumat Tgl {shiftedFridayDay}</strong> dan bulan depan tetap <strong>Tgl {nextRegularPaydayDay}</strong>:
+                              💡{' '}
+                              <strong>
+                                Tgl {clampedRefPayday} {MONTHS_ID[refMonth]}
+                              </strong>{' '}
+                              jatuh di hari <strong>{DAYS_ID[thisMonthPaydayDow]}</strong>! Jika
+                              gajian bulan ini dimajukan ke hari{' '}
+                              <strong>Jumat Tgl {shiftedFridayDay}</strong> dan bulan depan tetap{' '}
+                              <strong>Tgl {nextRegularPaydayDay}</strong>:
                             </div>
                             <button
                               type="button"
@@ -2144,12 +2392,14 @@ export function BudgetTab() {
                               }}
                               className="w-full py-2 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-black text-[11px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
                             >
-                              <span>Atur Gajian Maju ke Jumat Tgl {shiftedFridayDay} (s/d {nextRegularPaydayDay} {MONTHS_ID[nextMonthIdx].slice(0, 3)})</span>
+                              <span>
+                                Atur Gajian Maju ke Jumat Tgl {shiftedFridayDay} (s/d{' '}
+                                {nextRegularPaydayDay} {MONTHS_ID[nextMonthIdx].slice(0, 3)})
+                              </span>
                             </button>
                           </div>
                         )}
 
-                        {/* Quick Presets */}
                         <div className="space-y-1.5">
                           <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
                             Pilihan Cepat Tanggal Gajian
@@ -2172,7 +2422,6 @@ export function BudgetTab() {
                           </div>
                         </div>
 
-                        {/* 1-31 Calendar Date Selector Grid */}
                         <div className="space-y-1.5">
                           <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
                             Atau Pilih Tanggal Gajian (1 - 31)
@@ -2183,7 +2432,7 @@ export function BudgetTab() {
                                 key={dayNum}
                                 type="button"
                                 onClick={() => setTempPaydayDay(dayNum)}
-                                className={`h-9 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                                className={`h-9 rounded-xl text-xs font-black transition-all cursor-pointer tabular-nums ${
                                   previewDay === dayNum
                                     ? 'bg-[#D4F826] text-black shadow-xs scale-105 ring-2 ring-black/10 dark:ring-white/20'
                                     : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -2195,64 +2444,70 @@ export function BudgetTab() {
                           </div>
                         </div>
 
-                        {/* Option to choose active cycle if today is before paydayDay */}
-                        {previewDay > 1 && autoPeriod.periodFullLabel !== thisMonthStartPeriod.periodFullLabel && (
-                          <div className="space-y-1.5">
-                            <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
-                              Tampilkan Siklus Periode
-                            </label>
-                            <div className="grid grid-cols-1 gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setTempCycleMode('auto')}
-                                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
-                                  tempCycleMode === 'auto'
-                                    ? 'bg-[#D4F826]/15 border-[#D4F826] text-gray-900 dark:text-white'
-                                    : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
-                                }`}
-                              >
-                                <div>
-                                  <span className="text-xs font-black block">
-                                    Siklus Berjalan Saat Ini ({autoPeriod.periodShortLabel})
-                                  </span>
-                                  <span className="text-[10px] text-gray-500 dark:text-gray-400">
-                                    Hari ini masuk di siklus {autoPeriod.periodFullLabel}
-                                  </span>
-                                </div>
-                                {tempCycleMode === 'auto' && <Check size={16} className="text-lime-600 dark:text-[#D4F826]" />}
-                              </button>
+                        {previewDay > 1 &&
+                          autoPeriod.periodFullLabel !== thisMonthStartPeriod.periodFullLabel && (
+                            <div className="space-y-1.5">
+                              <label className="text-[11px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
+                                Tampilkan Siklus Periode
+                              </label>
+                              <div className="grid grid-cols-1 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setTempCycleMode('auto')}
+                                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                                    tempCycleMode === 'auto'
+                                      ? 'bg-[#D4F826]/15 border-[#D4F826] text-gray-900 dark:text-white'
+                                      : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
+                                  }`}
+                                >
+                                  <div>
+                                    <span className="text-xs font-black block">
+                                      Siklus Berjalan Saat Ini ({autoPeriod.periodShortLabel})
+                                    </span>
+                                    <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                                      Hari ini masuk di siklus {autoPeriod.periodFullLabel}
+                                    </span>
+                                  </div>
+                                  {tempCycleMode === 'auto' && (
+                                    <Check size={16} className="text-lime-600 dark:text-[#D4F826]" />
+                                  )}
+                                </button>
 
-                              <button
-                                type="button"
-                                onClick={() => setTempCycleMode('thisMonthStart')}
-                                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
-                                  tempCycleMode === 'thisMonthStart'
-                                    ? 'bg-[#D4F826]/15 border-[#D4F826] text-gray-900 dark:text-white'
-                                    : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
-                                }`}
-                              >
-                                <div>
-                                  <span className="text-xs font-black block">
-                                    Siklus Gajian Tgl {previewDay} Bulan Ini ({thisMonthStartPeriod.periodShortLabel})
-                                  </span>
-                                  <span className="text-[10px] text-gray-500 dark:text-gray-400">
-                                    Atur budget untuk {thisMonthStartPeriod.periodFullLabel}
-                                  </span>
-                                </div>
-                                {tempCycleMode === 'thisMonthStart' && <Check size={16} className="text-lime-600 dark:text-[#D4F826]" />}
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setTempCycleMode('thisMonthStart')}
+                                  className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between ${
+                                    tempCycleMode === 'thisMonthStart'
+                                      ? 'bg-[#D4F826]/15 border-[#D4F826] text-gray-900 dark:text-white'
+                                      : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400'
+                                  }`}
+                                >
+                                  <div>
+                                    <span className="text-xs font-black block">
+                                      Siklus Gajian Tgl {previewDay} Bulan Ini (
+                                      {thisMonthStartPeriod.periodShortLabel})
+                                    </span>
+                                    <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                                      Atur budget untuk {thisMonthStartPeriod.periodFullLabel}
+                                    </span>
+                                  </div>
+                                  {tempCycleMode === 'thisMonthStart' && (
+                                    <Check size={16} className="text-lime-600 dark:text-[#D4F826]" />
+                                  )}
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          )}
                       </>
                     ) : (
-                      /* MODE PERIODE FLEKSIBEL / MANUAL (Misal Gajian Maju ke Jumat Tgl 23 -> Bulan Depan Tetap Tgl 25 = >31 Hari) */
                       <div className="space-y-3.5">
                         <div className="p-3 rounded-2xl bg-lime-500/10 dark:bg-[#D4F826]/10 border border-lime-500/30 dark:border-[#D4F826]/30 text-[11px] text-gray-700 dark:text-gray-200 leading-relaxed">
-                          Cocok saat tanggal gajian bulan ini <strong>dimajukan/dimundurkan</strong> (misal Tgl 25 jatuh di hari Minggu sehingga gajian maju ke <strong>Jumat Tgl 23</strong>, sedangkan bulan depan tetap <strong>Tgl 25</strong> → durasi <strong>33 hari</strong>).
+                          Cocok saat tanggal gajian bulan ini <strong>dimajukan/dimundurkan</strong>{' '}
+                          (misal Tgl 25 jatuh di hari Minggu sehingga gajian maju ke{' '}
+                          <strong>Jumat Tgl 23</strong>, sedangkan bulan depan tetap{' '}
+                          <strong>Tgl 25</strong> → durasi <strong>33 hari</strong>).
                         </div>
 
-                        {/* Quick Scenario Presets */}
                         <div className="space-y-1.5">
                           <label className="text-[10px] font-extrabold text-gray-500 dark:text-gray-400 uppercase tracking-wider block">
                             Skenario Cepat Gajian Maju (Weekend)
@@ -2263,7 +2518,9 @@ export function BudgetTab() {
                               onClick={() => {
                                 setTempPaydayDay(25);
                                 setTempCustomStart(toIso(refYear, refMonth, 23));
-                                setTempCustomNext(toIso(nextYear, nextMonthIdx, Math.min(25, maxDayNextMonth)));
+                                setTempCustomNext(
+                                  toIso(nextYear, nextMonthIdx, Math.min(25, maxDayNextMonth))
+                                );
                               }}
                               className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer border ${
                                 tempCustomStart.endsWith('-23') && tempCustomNext.endsWith('-25')
@@ -2278,7 +2535,9 @@ export function BudgetTab() {
                               onClick={() => {
                                 setTempPaydayDay(25);
                                 setTempCustomStart(toIso(refYear, refMonth, 24));
-                                setTempCustomNext(toIso(nextYear, nextMonthIdx, Math.min(25, maxDayNextMonth)));
+                                setTempCustomNext(
+                                  toIso(nextYear, nextMonthIdx, Math.min(25, maxDayNextMonth))
+                                );
                               }}
                               className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer border ${
                                 tempCustomStart.endsWith('-24') && tempCustomNext.endsWith('-25')
@@ -2291,7 +2550,6 @@ export function BudgetTab() {
                           </div>
                         </div>
 
-                        {/* Input 1: Tanggal Gajian / Mulai Periode Ini */}
                         <div className="space-y-1">
                           <div className="flex items-center justify-between">
                             <label className="text-xs font-extrabold text-gray-700 dark:text-gray-200">
@@ -2310,7 +2568,6 @@ export function BudgetTab() {
                           />
                         </div>
 
-                        {/* Input 2: Tanggal Gajian Bulan Depan */}
                         <div className="space-y-1">
                           <div className="flex items-center justify-between">
                             <label className="text-xs font-extrabold text-gray-700 dark:text-gray-200">
@@ -2329,7 +2586,8 @@ export function BudgetTab() {
                             className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                           />
                           <p className="text-[10px] text-gray-400">
-                            Kuota harian akan dihitung agar uang gajian cukup sampai H-1 tanggal gajian bulan depan.
+                            Kuota harian akan dihitung agar uang gajian cukup sampai H-1 tanggal
+                            gajian bulan depan.
                           </p>
                         </div>
                       </div>
@@ -2345,11 +2603,12 @@ export function BudgetTab() {
                       </div>
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-gray-400 font-bold">Durasi Siklus:</span>
-                        <span className="font-extrabold text-white">
-                          {selectedPreview.totalDays} Hari (cukup s/d {selectedPreview.endShortLabel})
+                        <span className="font-extrabold text-white tabular-nums">
+                          {selectedPreview.totalDays} Hari (cukup s/d {selectedPreview.endShortLabel}
+                          )
                         </span>
                       </div>
-                      {budgetConfig.estimatedIncome > 0 && (
+                      {totalIncome > 0 && (
                         <div className="flex items-center justify-between text-xs pt-2 border-t border-white/10">
                           <span className="text-gray-400 font-bold">Jatah Harian Operasional:</span>
                           <span className="font-black text-[#D4F826] tabular-nums">
@@ -2382,7 +2641,7 @@ export function BudgetTab() {
         )}
       </AnimatePresence>
 
-      {/* Modal: Ubah Kategori (0% - 100% Flexible Sliders) */}
+      {/* Modal: Ubah Kategori (0% - 100% Flexible Sliders + Auto-Balance) */}
       <AnimatePresence>
         {isEditPercentagesOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
@@ -2390,15 +2649,15 @@ export function BudgetTab() {
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white dark:bg-[#16181D] rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800 max-h-[90vh] overflow-y-auto"
+              className="bg-white dark:bg-[#16181D] rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800 max-h-[90vh] overflow-y-auto"
             >
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
-                    Ubah Alokasi Anggaran
+                    Ubah Porsi Alokasi Anggaran
                   </h3>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                    Bebas atur 0% – 100% sesuai prioritas (Total harus 100%)
+                    Bebas atur 0% – 100% sesuai kondisi bulan ini (Total harus 100%)
                   </p>
                 </div>
                 <button
@@ -2414,8 +2673,9 @@ export function BudgetTab() {
               <div className="flex flex-wrap gap-1.5 pt-0.5">
                 {[
                   { label: '50/30/20 (Standar)', n: 50, w: 30, s: 20 },
-                  { label: '80/20/0 (Fokus Utang)', n: 80, w: 20, s: 0 },
-                  { label: '85/15/0 (Tanpa Nabung)', n: 85, w: 15, s: 0 },
+                  { label: '70/20/10 (Realistis)', n: 70, w: 20, s: 10 },
+                  { label: '80/20/0 (Tanpa Nabung)', n: 80, w: 20, s: 0 },
+                  { label: '85/15/0 (Fokus Kebutuhan)', n: 85, w: 15, s: 0 },
                   { label: '100/0/0 (Full Kebutuhan)', n: 100, w: 0, s: 0 },
                 ].map((preset) => {
                   const isActivePreset =
@@ -2431,7 +2691,7 @@ export function BudgetTab() {
                         setWantsPercent(preset.w);
                         setSavingsPercent(preset.s);
                       }}
-                      className={`px-2.5 py-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer border ${
+                      className={`px-2.5 py-1.5 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer border ${
                         isActivePreset
                           ? 'bg-[#D4F826] text-black border-[#D4F826] shadow-2xs'
                           : 'bg-gray-50 dark:bg-gray-800/80 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-gray-400'
@@ -2443,44 +2703,39 @@ export function BudgetTab() {
                 })}
               </div>
 
-              {/* Sliders */}
               {(() => {
-                const totalSubNeeds = needsSubs.reduce((acc, s) => acc + s.allocatedAmount, 0);
-                const minNeedsPct = Math.min(100, Math.ceil((totalSubNeeds / (totalIncome || 1)) * 100));
-                const isNeedsOverflow = totalIncome > 0 && (totalIncome * needsPercent) / 100 < totalSubNeeds;
+                const totalSubNeeds =
+                  needsSubs.reduce((acc, s) => acc + s.allocatedAmount, 0) + debtTotalAllocated;
+                const minNeedsPct = Math.min(
+                  100,
+                  Math.ceil((totalSubNeeds / (totalIncome || 1)) * 100)
+                );
+                const isNeedsOverflow =
+                  totalIncome > 0 && (totalIncome * needsPercent) / 100 < totalSubNeeds;
 
                 return (
                   <>
                     <div className="space-y-4 pt-1">
                       {/* Kebutuhan */}
-                      <div className="space-y-2">
+                      <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 space-y-2">
                         <div className="flex items-center justify-between text-xs">
                           <div>
-                            <span className="font-extrabold text-violet-600 block">KEBUTUHAN</span>
+                            <span className="font-extrabold text-violet-600 dark:text-violet-400 block">
+                              KEBUTUHAN POKOK & CICILAN
+                            </span>
                             {isNeedsOverflow && (
-                              <span className="text-[10px] font-bold text-amber-500 dark:text-amber-400">
+                              <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
                                 Disarankan min {minNeedsPct}% ({formatRupiah(totalSubNeeds)})
                               </span>
                             )}
                           </div>
-                          <div className="text-right flex items-center gap-2">
-                            {needsPercent > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => setNeedsPercent(0)}
-                                className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 cursor-pointer"
-                              >
-                                Set 0%
-                              </button>
-                            )}
-                            <div>
-                              <span className="font-black text-gray-900 dark:text-white">
-                                {needsPercent}%
-                              </span>
-                              <span className="text-[10px] text-gray-400 block tabular-nums">
-                                {formatRupiah((totalIncome * needsPercent) / 100, hide)}
-                              </span>
-                            </div>
+                          <div className="text-right">
+                            <span className="text-sm font-black text-gray-900 dark:text-white tabular-nums">
+                              {needsPercent}%
+                            </span>
+                            <span className="text-[10px] text-gray-400 block tabular-nums">
+                              {formatRupiah((totalIncome * needsPercent) / 100, hide)}
+                            </span>
                           </div>
                         </div>
                         <input
@@ -2491,12 +2746,41 @@ export function BudgetTab() {
                           onChange={(e) => setNeedsPercent(Number(e.target.value))}
                           className="w-full accent-violet-600 cursor-pointer"
                         />
+                        <div className="flex items-center justify-between gap-1 pt-0.5">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setNeedsPercent((p) => Math.max(0, p - 5))}
+                              className="px-2 py-0.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-[10px] font-bold cursor-pointer"
+                            >
+                              -5%
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setNeedsPercent((p) => Math.min(100, p + 5))}
+                              className="px-2 py-0.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-[10px] font-bold cursor-pointer"
+                            >
+                              +5%
+                            </button>
+                          </div>
+                          {needsPercent !== 100 - wantsPercent - savingsPercent && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setNeedsPercent(Math.max(0, 100 - wantsPercent - savingsPercent))
+                              }
+                              className="text-[10px] font-extrabold text-violet-600 dark:text-violet-400 hover:underline cursor-pointer"
+                            >
+                              Pas {Math.max(0, 100 - wantsPercent - savingsPercent)}%
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       {/* Keinginan */}
-                      <div className="space-y-2">
+                      <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 space-y-2">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-extrabold text-pink-500">KEINGINAN</span>
+                          <span className="font-extrabold text-pink-500">KEINGINAN & HIBURAN</span>
                           <div className="text-right flex items-center gap-2">
                             {wantsPercent > 0 && (
                               <button
@@ -2504,16 +2788,17 @@ export function BudgetTab() {
                                 onClick={() => {
                                   const freed = wantsPercent;
                                   setWantsPercent(0);
-                                  setNeedsPercent((prev) => Math.min(100 - savingsPercent, prev + freed));
+                                  setNeedsPercent((prev) =>
+                                    Math.min(100 - savingsPercent, prev + freed)
+                                  );
                                 }}
-                                className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 cursor-pointer"
-                                title="Jadikan 0% dan pindahkan ke Kebutuhan"
+                                className="px-2 py-0.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 cursor-pointer"
                               >
                                 Set 0%
                               </button>
                             )}
                             <div>
-                              <span className="font-black text-gray-900 dark:text-white">
+                              <span className="text-sm font-black text-gray-900 dark:text-white tabular-nums">
                                 {wantsPercent}%
                               </span>
                               <span className="text-[10px] text-gray-400 block tabular-nums">
@@ -2530,12 +2815,42 @@ export function BudgetTab() {
                           onChange={(e) => setWantsPercent(Number(e.target.value))}
                           className="w-full accent-pink-500 cursor-pointer"
                         />
+                        <div className="flex items-center justify-between gap-1 pt-0.5">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setWantsPercent((p) => Math.max(0, p - 5))}
+                              className="px-2 py-0.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-[10px] font-bold cursor-pointer"
+                            >
+                              -5%
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setWantsPercent((p) => Math.min(100, p + 5))}
+                              className="px-2 py-0.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-[10px] font-bold cursor-pointer"
+                            >
+                              +5%
+                            </button>
+                          </div>
+                          {wantsPercent !== 100 - needsPercent - savingsPercent &&
+                            100 - needsPercent - savingsPercent >= 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setWantsPercent(Math.max(0, 100 - needsPercent - savingsPercent))
+                                }
+                                className="text-[10px] font-extrabold text-pink-500 hover:underline cursor-pointer"
+                              >
+                                Isi Sisa ({Math.max(0, 100 - needsPercent - savingsPercent)}%)
+                              </button>
+                            )}
+                        </div>
                       </div>
 
                       {/* Tabungan */}
-                      <div className="space-y-2">
+                      <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 space-y-2">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-extrabold text-teal-500">TABUNGAN</span>
+                          <span className="font-extrabold text-teal-500">TABUNGAN & INVESTASI</span>
                           <div className="text-right flex items-center gap-2">
                             {savingsPercent > 0 && (
                               <button
@@ -2543,16 +2858,17 @@ export function BudgetTab() {
                                 onClick={() => {
                                   const freed = savingsPercent;
                                   setSavingsPercent(0);
-                                  setNeedsPercent((prev) => Math.min(100 - wantsPercent, prev + freed));
+                                  setNeedsPercent((prev) =>
+                                    Math.min(100 - wantsPercent, prev + freed)
+                                  );
                                 }}
-                                className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 cursor-pointer"
-                                title="Jadikan 0% dan pindahkan ke Kebutuhan"
+                                className="px-2 py-0.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 cursor-pointer"
                               >
                                 Set 0%
                               </button>
                             )}
                             <div>
-                              <span className="font-black text-gray-900 dark:text-white">
+                              <span className="text-sm font-black text-gray-900 dark:text-white tabular-nums">
                                 {savingsPercent}%
                               </span>
                               <span className="text-[10px] text-gray-400 block tabular-nums">
@@ -2569,32 +2885,84 @@ export function BudgetTab() {
                           onChange={(e) => setSavingsPercent(Number(e.target.value))}
                           className="w-full accent-teal-500 cursor-pointer"
                         />
+                        <div className="flex items-center justify-between gap-1 pt-0.5">
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setSavingsPercent((p) => Math.max(0, p - 5))}
+                              className="px-2 py-0.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-[10px] font-bold cursor-pointer"
+                            >
+                              -5%
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSavingsPercent((p) => Math.min(100, p + 5))}
+                              className="px-2 py-0.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-[10px] font-bold cursor-pointer"
+                            >
+                              +5%
+                            </button>
+                          </div>
+                          {savingsPercent !== 100 - needsPercent - wantsPercent &&
+                            100 - needsPercent - wantsPercent >= 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSavingsPercent(Math.max(0, 100 - needsPercent - wantsPercent))
+                                }
+                                className="text-[10px] font-extrabold text-teal-500 hover:underline cursor-pointer"
+                              >
+                                Isi Sisa ({Math.max(0, 100 - needsPercent - wantsPercent)}%)
+                              </button>
+                            )}
+                        </div>
                       </div>
                     </div>
 
-                    {/* Total indicator */}
-                    <div className="text-center pt-2">
-                      <span
-                        className={`text-xs font-black px-3 py-1 rounded-full ${
-                          totalPercentage === 100
-                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                            : 'bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-300'
-                        }`}
-                      >
-                        TOTAL: {totalPercentage}% / 100%
-                      </span>
+                    {/* Total indicator & 1-click Auto-Balance */}
+                    <div className="p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200/70 dark:border-gray-700/70 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-gray-600 dark:text-gray-300">
+                          Total Alokasi:
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`text-xs font-black tabular-nums ${
+                              totalPercentage === 100
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-rose-600 dark:text-rose-400'
+                            }`}
+                          >
+                            {totalPercentage}% / 100%
+                          </span>
+                          {totalPercentage !== 100 && (
+                            <button
+                              type="button"
+                              onClick={handleAutoBalancePercentages}
+                              className="px-2.5 py-1 rounded-lg bg-[#D4F826] text-black text-[10px] font-black cursor-pointer hover:bg-[#c6ec15]"
+                            >
+                              Seimbangkan 100%
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
                       {totalPercentage !== 100 ? (
-                        <p className="text-[11px] text-red-500 mt-1 font-semibold">
-                          Pastikan total 100% (kurang/lebih {Math.abs(100 - totalPercentage)}%)
+                        <p className="text-[11px] text-rose-500 font-semibold">
+                          Total saat ini {totalPercentage}% (selisih{' '}
+                          {Math.abs(100 - totalPercentage)}%). Klik &ldquo;Seimbangkan 100%&rdquo;
+                          untuk merapikan otomatis.
                         </p>
                       ) : isNeedsOverflow ? (
-                        <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-2 font-medium bg-amber-50 dark:bg-amber-950/40 p-2.5 rounded-xl border border-amber-200 dark:border-amber-900/40 text-left">
-                          Catatan: Total sub-kategori Kebutuhan ({formatRupiah(totalSubNeeds)}) lebih besar dari batas alokasi ({formatRupiah((totalIncome * needsPercent) / 100)}). Anda tetap bisa menyimpan alokasi ini.
+                        <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium leading-relaxed">
+                          Catatan: Total subkategori Kebutuhan & Cicilan (
+                          {formatRupiah(totalSubNeeds)}) lebih besar dari batas {needsPercent}% (
+                          {formatRupiah((totalIncome * needsPercent) / 100)}). Anda tetap dapat
+                          menyimpan ini.
                         </p>
                       ) : null}
                     </div>
 
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex gap-2 pt-1">
                       <button
                         type="button"
                         onClick={() => setIsEditPercentagesOpen(false)}
@@ -2608,7 +2976,7 @@ export function BudgetTab() {
                         onClick={handleSavePercentages}
                         className="flex-1 py-3 rounded-2xl bg-[#D4F826] disabled:opacity-50 text-black text-xs font-black shadow-xs cursor-pointer hover:bg-[#c6ec15]"
                       >
-                        Simpan
+                        Simpan Alokasi
                       </button>
                     </div>
                   </>
@@ -2619,7 +2987,7 @@ export function BudgetTab() {
         )}
       </AnimatePresence>
 
-      {/* Modal: Tambah Subkategori */}
+      {/* Modal: Tambah / Edit Subkategori */}
       <AnimatePresence>
         {isAddSubOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
@@ -2631,7 +2999,8 @@ export function BudgetTab() {
             >
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
-                  {editingSubId ? 'Edit Subkategori' : 'Tambah Subkategori'} ({targetGroup.toUpperCase()})
+                  {editingSubId ? 'Edit Subkategori' : 'Tambah Subkategori'} (
+                  {targetGroup.toUpperCase()})
                 </h3>
                 <button
                   type="button"
@@ -2652,18 +3021,22 @@ export function BudgetTab() {
                       type="text"
                       value={newSubName}
                       onChange={(e) => setNewSubName(e.target.value)}
-                      placeholder="e.g. Netflix, Wifi, Bensin"
+                      placeholder="Contoh: Listrik, Bensin, Belanja Bulanan"
                       required
                       className="flex-1 p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                     />
                     <button
                       type="button"
                       onClick={() => setIsEmojiPickerOpen(true)}
-                      className="w-14 h-12 flex flex-col items-center justify-center rounded-2xl bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border-2 border-dashed border-gray-300 dark:border-gray-600 hover:border-[#D4F826] transition-all cursor-pointer group shrink-0 active:scale-95"
+                      className="w-14 h-12 flex flex-col items-center justify-center rounded-2xl bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 border-2 border-dashed border-gray-300 dark:border-gray-600 hover:border-[#D4F826] transition-all cursor-pointer group shrink-0"
                       title="Pilih Icon / Emoticon"
                     >
-                      <span className="text-xl group-hover:scale-110 transition-transform leading-none">{newSubEmoji || '📦'}</span>
-                      <span className="text-[9px] font-black text-gray-500 dark:text-gray-400 leading-none mt-0.5">Icon</span>
+                      <span className="text-xl group-hover:scale-110 transition-transform leading-none">
+                        {newSubEmoji || '📦'}
+                      </span>
+                      <span className="text-[9px] font-black text-gray-500 dark:text-gray-400 leading-none mt-0.5">
+                        Icon
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -2690,7 +3063,7 @@ export function BudgetTab() {
                         className={`w-8 h-8 rounded-xl flex items-center justify-center text-base transition-all cursor-pointer ${
                           newSubEmoji === emoji
                             ? 'bg-[#D4F826] text-black shadow-xs scale-110 ring-2 ring-black dark:ring-white font-black'
-                            : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 hover:scale-105'
+                            : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700'
                         }`}
                         title={`Pilih ${emoji}`}
                       >
@@ -2702,22 +3075,22 @@ export function BudgetTab() {
 
                 <div>
                   <label className="text-xs font-bold text-gray-500 block mb-1">
-                    Jumlah Alokasi (Rp)
+                    Jumlah Alokasi Pagu (Rp)
                   </label>
                   <input
                     type="text"
                     inputMode="numeric"
                     value={newSubAmount}
                     onChange={(e) => setNewSubAmount(formatNominalInput(e.target.value))}
-                    placeholder="Contoh: 200.000"
+                    placeholder="Contoh: 500.000"
                     required
-                    className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
+                    className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826] tabular-nums"
                   />
                 </div>
 
                 <div>
                   <label className="text-xs font-bold text-gray-500 block mb-1">
-                    Jatuh Tempo (Opsional)
+                    Tanggal Jatuh Tempo Rutin (Opsional)
                   </label>
                   <input
                     type="number"
@@ -2725,7 +3098,7 @@ export function BudgetTab() {
                     max="31"
                     value={newSubDueDay}
                     onChange={(e) => setNewSubDueDay(e.target.value)}
-                    placeholder="Hari (1-31)"
+                    placeholder="Kosongkan jika bukan tagihan tanggal tetap (1-31)"
                     className="w-full p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826]"
                   />
                 </div>
@@ -2745,7 +3118,7 @@ export function BudgetTab() {
                         🛍️ Pos Keperluan Pribadi (Tidak Dibebankan Kuota Harian)
                       </span>
                       <span className="text-[10px] text-gray-500 dark:text-gray-400">
-                        Anggaran tidak dibagi harian (untuk belanja bulanan, amplop, keperluan pribadi)
+                        Untuk belanja bulanan, amplop, atau kebutuhan non-harian
                       </span>
                     </div>
                     <div
@@ -2793,14 +3166,15 @@ export function BudgetTab() {
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400 bg-amber-500/15 px-2.5 py-0.5 rounded-full">
-                    KONSEP FLEKSIBEL: MENGIKUTI SISA SALDO POS HARIAN
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-600 dark:text-amber-400">
+                    SIMULASI POS KEPERLUAN PRIBADI & KUOTA HARIAN
                   </span>
-                  <h3 className="text-base sm:text-lg font-extrabold text-gray-900 dark:text-white mt-1">
+                  <h3 className="text-base sm:text-lg font-extrabold text-gray-900 dark:text-white mt-0.5">
                     Keperluan Pribadi (Tidak Dibebankan Kuota Harian)
                   </h3>
                   <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
-                    Semua pengeluaran yang tidak dibebankan ke jatah harian (seperti belanja bulanan, amplop nikahan, ngado, sedekah, dll) digabung dalam 1 menu <strong>Keperluan Pribadi</strong> — <strong>mengurangi saldo pos harian & otomatis menyesuaikan kuota harian!</strong>
+                    Semua pengeluaran yang tidak dibebankan ke jatah harian (seperti belanja bulanan, amplop nikahan, ngado, sedekah, dll) digabung dalam 1 menu{' '}
+                    <strong>Keperluan Pribadi</strong> — mengurangi saldo pos harian & otomatis menyesuaikan kuota harian.
                   </p>
                 </div>
                 <button
@@ -2828,7 +3202,9 @@ export function BudgetTab() {
                 const dailyQuotaAfterTodayShop = Math.round(poolAfterTodayShop / daysLeft);
 
                 const poolAfterNextWeekShop = Math.max(0, poolAfterTodayShop - shopNextWeek);
-                const dailyQuotaAfterNextWeekShop = Math.round(poolAfterNextWeekShop / nextWeekDaysLeft);
+                const dailyQuotaAfterNextWeekShop = Math.round(
+                  poolAfterNextWeekShop / nextWeekDaysLeft
+                );
                 const totalPersonalSpent =
                   (dashboardSummary.monthlyGroceryExpense || 0) +
                   (dashboardSummary.monthlyNonDailyExpense || 0);
@@ -2866,7 +3242,8 @@ export function BudgetTab() {
                           Sisa Saldo Pos Harian ({daysLeft} hari s/d gajian):
                         </span>
                         <span className="font-black text-emerald-600 dark:text-[#D4F826] text-sm tabular-nums">
-                          {formatRupiah(dashboardSummary.remainingVariableBudget, hide)} (~{formatRupiah(currentDailyQuota, hide)}/hari)
+                          {formatRupiah(dashboardSummary.remainingVariableBudget, hide)} (~
+                          {formatRupiah(currentDailyQuota, hide)}/hari)
                         </span>
                       </div>
                     </div>
@@ -2878,7 +3255,6 @@ export function BudgetTab() {
                       </label>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {/* Tahap 1: Hari Ini */}
                         <div className="p-3 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-800/50 space-y-1.5">
                           <label className="text-[11px] font-black text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
                             <span>🛍️</span>
@@ -2888,23 +3264,28 @@ export function BudgetTab() {
                             type="text"
                             inputMode="numeric"
                             value={tempGroceryBudgetInput}
-                            onChange={(e) => setTempGroceryBudgetInput(formatNominalInput(e.target.value))}
+                            onChange={(e) =>
+                              setTempGroceryBudgetInput(formatNominalInput(e.target.value))
+                            }
                             placeholder="1.000.000"
                             className="w-full p-2.5 bg-white dark:bg-gray-900 border border-amber-300 dark:border-amber-700 rounded-xl text-sm font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-400 tabular-nums"
                           />
                           <div className="text-[10px] text-amber-800 dark:text-amber-300 font-semibold space-y-0.5 pt-0.5">
                             <div className="flex justify-between">
                               <span>Sisa saldo:</span>
-                              <strong className="tabular-nums">{formatRupiah(poolAfterTodayShop, hide)}</strong>
+                              <strong className="tabular-nums">
+                                {formatRupiah(poolAfterTodayShop, hide)}
+                              </strong>
                             </div>
                             <div className="flex justify-between">
                               <span>Kuota harian baru:</span>
-                              <strong className="tabular-nums">~{formatRupiah(dailyQuotaAfterTodayShop, hide)}/hr</strong>
+                              <strong className="tabular-nums">
+                                ~{formatRupiah(dailyQuotaAfterTodayShop, hide)}/hr
+                              </strong>
                             </div>
                           </div>
                         </div>
 
-                        {/* Tahap 2: Minggu Depan */}
                         <div className="p-3 rounded-2xl bg-sky-50/60 dark:bg-sky-950/20 border border-sky-200/80 dark:border-sky-800/50 space-y-1.5">
                           <label className="text-[11px] font-black text-sky-800 dark:text-sky-300 flex items-center gap-1.5">
                             <span>🛍️</span>
@@ -2914,41 +3295,28 @@ export function BudgetTab() {
                             type="text"
                             inputMode="numeric"
                             value={tempEatOutBudgetInput}
-                            onChange={(e) => setTempEatOutBudgetInput(formatNominalInput(e.target.value))}
+                            onChange={(e) =>
+                              setTempEatOutBudgetInput(formatNominalInput(e.target.value))
+                            }
                             placeholder="500.000"
                             className="w-full p-2.5 bg-white dark:bg-gray-900 border border-sky-300 dark:border-sky-700 rounded-xl text-sm font-black text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-400 tabular-nums"
                           />
                           <div className="text-[10px] text-sky-800 dark:text-sky-300 font-semibold space-y-0.5 pt-0.5">
                             <div className="flex justify-between">
                               <span>Sisa saldo lagi:</span>
-                              <strong className="tabular-nums">{formatRupiah(poolAfterNextWeekShop, hide)}</strong>
+                              <strong className="tabular-nums">
+                                {formatRupiah(poolAfterNextWeekShop, hide)}
+                              </strong>
                             </div>
                             <div className="flex justify-between">
                               <span>Kuota harian ikut turun:</span>
-                              <strong className="tabular-nums">~{formatRupiah(dailyQuotaAfterNextWeekShop, hide)}/hr</strong>
+                              <strong className="tabular-nums">
+                                ~{formatRupiah(dailyQuotaAfterNextWeekShop, hide)}/hr
+                              </strong>
                             </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-
-                    {/* Cara Kerja di Aplikasi */}
-                    <div className="p-3.5 rounded-2xl bg-[#121316] text-white space-y-2 border border-white/10 text-[11px] leading-relaxed">
-                      <div className="font-black text-[#D4F826] flex items-center gap-1.5">
-                        <span>💡</span>
-                        <span>Bagaimana Cara Mencatatnya?</span>
-                      </div>
-                      <ul className="space-y-1.5 text-gray-300 list-disc pl-4">
-                        <li>
-                          Saat ada pengeluaran yang tidak dibebankan ke kuota harian (misal belanja bulanan, amplop nikahan, ngado, dll), klik <strong>+ Catat</strong> lalu pilih <strong>🛍️ Keperluan Pribadi</strong>.
-                        </li>
-                        <li>
-                          Pengeluaran tersebut <strong>tidak bikin kuota makan/harian hari ini merah/jebol</strong>, melainkan mengurangi <strong>Sisa Saldo Pos Harian</strong> sehingga <strong>Kuota Harian otomatis menyesuaikan sisa saldo</strong>.
-                        </li>
-                        <li>
-                          Untuk pengeluaran operasional harian (beli makan luar, jajan, bensin), pilih <strong>🥪 Makan Luar / Harian</strong> — otomatis memotong kuota harian hari ini.
-                        </li>
-                      </ul>
                     </div>
 
                     <div className="flex flex-col sm:flex-row gap-2 pt-1">

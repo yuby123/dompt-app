@@ -846,7 +846,7 @@ export function resolveEffectivePeriodIncome(
     rawEstimatedIncome !== periodRecordedIncome * 2;
 
   const effectiveIncome = hasExplicitManualForThisPeriod
-    ? Math.max(rawEstimatedIncome, periodRecordedIncome)
+    ? rawEstimatedIncome
     : periodRecordedIncome > 0
     ? periodRecordedIncome
     : rawEstimatedIncome;

@@ -95,6 +95,7 @@ import {
   isDebtScheduledForBudgetPeriod,
   isFixedExpense,
   parseLocalDay,
+  resolveEffectivePeriodIncome,
 } from '@/lib/budgetUtils';
 import {
   auth,
@@ -2427,9 +2428,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       debts,
     });
 
-    // Liquid assets: Bank + E-wallet + Cash + Savings wallets + extra liquidAssets from AssetsTab
+    // Liquid assets: All positive non-credit/non-paylater wallets + extra liquidAssets from AssetsTab
     const walletLiquidTotal = walletsWithBalance
-      .filter((w) => w.type === 'bank' || w.type === 'ewallet' || w.type === 'cash' || w.type === 'savings')
+      .filter((w) => w.type !== 'credit' && w.type !== 'paylater')
       .reduce((acc, w) => acc + Math.max(0, w.balance), 0);
     const extraLiquidAssetsTotal = (liquidAssets || []).reduce((acc, a) => acc + Math.max(0, a.amount || 0), 0);
     const liquidTotal = walletLiquidTotal + extraLiquidAssetsTotal;
@@ -2442,9 +2443,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
     const baselineMonthlyExpense = actualOrBudgetedExpense > 0 ? actualOrBudgetedExpense : 3000000;
     const runwayMonths = liquidTotal > 0 ? Number((liquidTotal / baselineMonthlyExpense).toFixed(1)) : 0;
-    const estIncome = Math.max(
-      typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0,
-      totalIncome
+    const { effectiveIncome: estIncome } = resolveEffectivePeriodIncome(
+      budgetConfig,
+      transactions,
+      budgetPeriod
     );
 
     return {
@@ -2557,8 +2559,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let nextBudgetConfig = budgetConfig;
     const isLoanDisbursement = Boolean(data.note && /^pencairan utang:/i.test(data.note.trim()));
     if (data.type === 'income' && data.amount > 0 && !isLoanDisbursement) {
-      const currentEst = Math.max(0, Number(budgetConfig.estimatedIncome) || 0);
-      const nextEst = currentEst + data.amount;
+      const { periodRecordedIncome } = resolveEffectivePeriodIncome(
+        budgetConfig,
+        [newTx, ...transactions],
+        budgetPeriod
+      );
+      const nextEst =
+        periodRecordedIncome > 0
+          ? periodRecordedIncome
+          : Math.max(0, Number(budgetConfig.estimatedIncome) || 0) + data.amount;
       nextBudgetConfig = {
         ...budgetConfig,
         estimatedIncome: nextEst,

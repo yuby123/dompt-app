@@ -22,7 +22,14 @@ import {
 import { motion } from 'motion/react';
 import { TabType, useApp } from '../AppContext';
 import { formatRupiah } from '@/lib/formatters';
-import { isDateInBudgetPeriod } from '@/lib/budgetUtils';
+import {
+  getMonthlyDebtInstallmentAmount,
+  isDateInBudgetPeriod,
+  isDebtScheduledForBudgetPeriod,
+  isSavingsExpense,
+  parseLocalDay,
+  resolveEffectivePeriodIncome,
+} from '@/lib/budgetUtils';
 
 export function AnalyticsTab() {
   const {
@@ -62,30 +69,35 @@ export function AnalyticsTab() {
   // Unified Health Metrics & Analytics Calculation
   const metrics = useMemo(() => {
     let explicitSaved = 0;
-    let txCount = 0;
+    let expenseTxCount = 0;
+    let periodConsumptionExpense = 0;
     const catMap = new Map<string, number>();
     const dayExpenseMap = new Map<string, { label: string; amount: number }>();
     const elapsedDaysInPeriod = Math.max(1, budgetPeriod.currentDayOfPeriod);
     const walletTypeMap = new Map(wallets.map((w) => [w.id, w.type]));
+    const catInfoMap = new Map(categories.map((c) => [c.id, c]));
+    const recordedTxIds = new Set<string>();
 
     transactions.forEach((tx) => {
-      const d = new Date(tx.date);
+      recordedTxIds.add(tx.id);
+      const d = parseLocalDay(tx.date);
       if (isDateInBudgetPeriod(d, budgetPeriod)) {
-        txCount += 1;
+        const cat = tx.categoryId ? catInfoMap.get(tx.categoryId) || null : null;
         const targetWalletType = tx.transferWalletId
           ? walletTypeMap.get(tx.transferWalletId)
           : undefined;
         const isSavingsTx =
-          tx.budgetGroup === 'tabungan' ||
-          tx.categoryId === 'cat-tabungan' ||
-          tx.categoryId === 'cat-investasi' ||
+          isSavingsExpense(tx, cat) ||
           (tx.type === 'transfer' &&
-            (targetWalletType === 'savings' || targetWalletType === 'investment'));
+            (tx.budgetGroup === 'tabungan' ||
+              targetWalletType === 'savings' ||
+              targetWalletType === 'investment'));
 
         if (isSavingsTx) {
           explicitSaved += tx.amount;
-        }
-        if (tx.type === 'expense') {
+        } else if (tx.type === 'expense') {
+          expenseTxCount += 1;
+          periodConsumptionExpense += tx.amount;
           const key = tx.categoryId || 'cat-lainnya';
           catMap.set(key, (catMap.get(key) || 0) + tx.amount);
           const dateKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -100,20 +112,48 @@ export function AnalyticsTab() {
       }
     });
 
-    const actualIncome = dashboardSummary.monthlyIncome || totalIncome || 0;
-    const estIncome = budgetConfig?.estimatedIncome || 0;
-    const monthlyIncome = actualIncome > 0 ? actualIncome : estIncome;
+    // Also include standalone payable debt payments recorded in DebtTab during this period
+    (debts || []).forEach((debt) => {
+      if (debt.type !== 'payable') return;
+      (debt.payments || []).forEach((p) => {
+        if (p.transactionId && recordedTxIds.has(p.transactionId)) return;
+        const pd = parseLocalDay(p.date);
+        if (isDateInBudgetPeriod(pd, budgetPeriod)) {
+          expenseTxCount += 1;
+          periodConsumptionExpense += p.amount;
+          catMap.set('cat-tagihan', (catMap.get('cat-tagihan') || 0) + p.amount);
+          const dateKey = `${pd.getFullYear()}-${pd.getMonth()}-${pd.getDate()}`;
+          const mShort = pd.toLocaleString('id-ID', { month: 'short' });
+          const dLabel = `${String(pd.getDate()).padStart(2, '0')} ${mShort}`;
+          const prev = dayExpenseMap.get(dateKey);
+          dayExpenseMap.set(dateKey, {
+            label: dLabel,
+            amount: (prev?.amount || 0) + p.amount,
+          });
+        }
+      });
+    });
+
+    const {
+      effectiveIncome: monthlyIncome,
+      periodRecordedIncome: actualIncome,
+      rawEstimatedIncome: estIncome,
+    } = resolveEffectivePeriodIncome(budgetConfig, transactions, budgetPeriod);
+
     const hasActualIncome = actualIncome > 0;
-    const monthlyExpense = dashboardSummary.monthlyExpense || totalExpense || 0;
-    const budgetLimit = dashboardSummary.budgetLimit || 0;
-    const runwayMonths = dashboardSummary.emergencyFundRunwayMonths || 0;
+    const monthlyExpense = periodConsumptionExpense;
 
-    // Baseline monthly living cost used for emergency fund target
-    const baselineLivingCost =
-      Math.max(budgetLimit > 0 ? budgetLimit : 0, monthlyExpense) || 3000000;
-    const minEmergencyTarget = baselineLivingCost * 3; // Minimal 3 bulan biaya hidup
+    const needsPct = typeof budgetConfig?.needsPercent === 'number' ? budgetConfig.needsPercent : 50;
+    const wantsPct = typeof budgetConfig?.wantsPercent === 'number' ? budgetConfig.wantsPercent : 30;
+    const savingsBudgetPct =
+      typeof budgetConfig?.savingsPercent === 'number' ? budgetConfig.savingsPercent : 20;
 
-    // Liquid balance (positive non-credit wallets + extra liquidAssets) vs Credit/Paylater + Active Payable Debts
+    const budgetLimit =
+      monthlyIncome > 0
+        ? Math.round((monthlyIncome * (needsPct + wantsPct)) / 100)
+        : dashboardSummary.budgetLimit || 0;
+
+    // Liquid balance (positive non-credit wallets + extra liquidAssets)
     const walletLiquid = walletsWithBalance
       .filter((w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance > 0)
       .reduce((acc, w) => acc + w.balance, 0);
@@ -123,13 +163,34 @@ export function AnalyticsTab() {
     );
     const liquidAssets = walletLiquid + extraLiquid;
 
+    // Baseline monthly living cost used for emergency fund target & runway
+    const baselineLivingCost =
+      Math.max(budgetLimit > 0 ? budgetLimit : 0, monthlyExpense) || 3000000;
+    const minEmergencyTarget = baselineLivingCost * 3; // Batas aman minimal: 3 bulan biaya hidup
+    const idealEmergencyTarget = baselineLivingCost * 6; // Target ideal penuh: 6 bulan biaya hidup
+    const runwayMonths =
+      liquidAssets > 0 ? Number((liquidAssets / baselineLivingCost).toFixed(1)) : 0;
+
+    // Debt obligations: Active payable debts (total remaining principal vs period installment DSR)
     const creditWalletDebt = walletsWithBalance
       .filter((w) => (w.type === 'credit' || w.type === 'paylater') && w.balance < 0)
       .reduce((acc, w) => acc + Math.abs(w.balance), 0);
 
-    const activePayableDebt = (debts || [])
-      .filter((d) => d.type === 'payable' && d.status === 'active')
-      .reduce((acc, d) => acc + Math.max(0, d.remainingAmount ?? d.totalAmount), 0);
+    const activePayableDebts = (debts || []).filter(
+      (d) =>
+        d.type === 'payable' &&
+        d.status === 'active' &&
+        Math.max(0, d.remainingAmount ?? d.totalAmount) > 0
+    );
+
+    const activePayableDebt = activePayableDebts.reduce(
+      (acc, d) => acc + Math.max(0, d.remainingAmount ?? d.totalAmount),
+      0
+    );
+
+    const monthlyDebtInstallment = activePayableDebts
+      .filter((d) => isDebtScheduledForBudgetPeriod(d, budgetPeriod))
+      .reduce((acc, d) => acc + getMonthlyDebtInstallmentAmount(d), 0);
 
     const creditDebt = creditWalletDebt + activePayableDebt;
 
@@ -138,30 +199,56 @@ export function AnalyticsTab() {
       creditDebt === 0 &&
       monthlyIncome === 0 &&
       monthlyExpense === 0 &&
+      explicitSaved === 0 &&
       goals.length === 0;
 
     // 1. Savings Rate Pillar (Max 30 pts) — Target >= 20%
-    let savingsRatePct = 0;
-    let savingsScore = 0;
-    const realSurplus = actualIncome > 0 ? Math.max(0, actualIncome - monthlyExpense) : 0;
-    const netSavings = Math.max(explicitSaved, realSurplus);
+    // IMPORTANT: Unspent salary in the middle of the period is Sisa Kas Berjalan, NOT savings!
+    // "Ditabung / Disisihkan" comes ONLY from:
+    //   (a) Explicit savings/investment transactions or transfers (`explicitSaved`), OR
+    //   (b) Budget savings allocation (`savingsBudgetPct > 0`), capped by remaining unspent income if overspent.
+    // When the user sets `0%` for Tabungan in Budget and has `Rp 0` savings transactions, `netSavings` is `Rp 0 (0%)`.
+    const remainingCashflow =
+      monthlyIncome > 0 ? Math.max(0, monthlyIncome - monthlyExpense - explicitSaved) : 0;
+    const rawBudgetedSavings =
+      monthlyIncome > 0 && savingsBudgetPct > 0
+        ? Math.round((monthlyIncome * savingsBudgetPct) / 100)
+        : 0;
+    const effectiveBudgetedSavings =
+      savingsBudgetPct > 0
+        ? Math.min(rawBudgetedSavings, Math.max(0, monthlyIncome - monthlyExpense))
+        : 0;
+
+    const netSavings = Math.max(explicitSaved, effectiveBudgetedSavings);
     const idealSavingsAmount = monthlyIncome > 0 ? Math.round(monthlyIncome * 0.2) : 0;
 
-    if (monthlyIncome > 0) {
-      savingsRatePct = Math.min(100, Math.max(0, Math.round((netSavings / monthlyIncome) * 100)));
-      if (savingsRatePct >= 20) {
+    const rawSavingsRatePct =
+      monthlyIncome > 0 ? Math.min(100, Math.max(0, (netSavings / monthlyIncome) * 100)) : 0;
+    const savingsRatePct = Math.round(rawSavingsRatePct);
+    const savingsRateDisplay =
+      netSavings > 0 && rawSavingsRatePct > 0 && rawSavingsRatePct < 1
+        ? rawSavingsRatePct.toFixed(1).replace('.', ',')
+        : String(savingsRatePct);
+
+    let savingsScore = 0;
+    if (monthlyIncome > 0 && netSavings > 0) {
+      if (rawSavingsRatePct >= 20) {
         savingsScore = 30;
-      } else if (savingsRatePct > 0) {
-        savingsScore = Math.round((savingsRatePct / 20) * 30);
       } else {
-        savingsScore = 0;
+        savingsScore = Math.max(1, Math.round((rawSavingsRatePct / 20) * 30));
       }
-    } else if (liquidAssets > 0 && monthlyExpense === 0) {
-      savingsRatePct = 100;
-      savingsScore = 25;
     }
 
-    // 2. Emergency Fund Runway Pillar (Max 25 pts) — Target >= 6 months
+    const savingsSourceLabel =
+      explicitSaved > 0 && explicitSaved >= effectiveBudgetedSavings
+        ? `Dari transaksi tabungan · Rasio ${savingsRateDisplay}%`
+        : savingsBudgetPct > 0 && netSavings > 0
+        ? `Disisihkan dari budget ${savingsBudgetPct}% (Ideal ≥ 20%)`
+        : savingsBudgetPct === 0
+        ? 'Budget tabungan 0% · Rasio 0% (Ideal ≥ 20%)'
+        : `Rasio menabung ${savingsRateDisplay}% (Ideal ≥ 20%)`;
+
+    // 2. Emergency Fund Runway Pillar (Max 25 pts) — Target >= 6 months (Safe min >= 3 months)
     let runwayScore = 0;
     if (runwayMonths >= 6) {
       runwayScore = 25;
@@ -170,21 +257,27 @@ export function AnalyticsTab() {
     }
     const runwayPct = Math.min(100, Math.round((runwayMonths / 6) * 100));
 
-    // 3. Budget Discipline Pillar (Max 25 pts) — Target <= 100% of budgetLimit
+    // 3. Budget Discipline Pillar (Max 25 pts) — Target <= 85%–100% of budgetLimit
     let budgetUsagePct = 0;
+    let budgetUsageDisplay = '0';
     let budgetDisciplinePct = 0;
     let budgetScore = 0;
     if (budgetLimit > 0) {
-      budgetUsagePct = Math.round((monthlyExpense / budgetLimit) * 100);
+      const rawBudgetUsagePct = (monthlyExpense / budgetLimit) * 100;
+      budgetUsagePct = Math.round(rawBudgetUsagePct);
+      budgetUsageDisplay =
+        monthlyExpense > 0 && rawBudgetUsagePct > 0 && rawBudgetUsagePct < 1
+          ? rawBudgetUsagePct.toFixed(1).replace('.', ',')
+          : String(budgetUsagePct);
       budgetDisciplinePct =
-        budgetUsagePct <= 100
+        rawBudgetUsagePct <= 100
           ? 100
-          : Math.max(0, Math.round(100 - (budgetUsagePct - 100)));
-      if (budgetUsagePct <= 80) {
+          : Math.max(0, Math.round(100 - (rawBudgetUsagePct - 100)));
+      if (rawBudgetUsagePct <= 85) {
         budgetScore = 25;
-      } else if (budgetUsagePct <= 100) {
+      } else if (rawBudgetUsagePct <= 100) {
         budgetScore = 20;
-      } else if (budgetUsagePct <= 120) {
+      } else if (rawBudgetUsagePct <= 120) {
         budgetScore = 10;
       } else {
         budgetScore = 0;
@@ -194,26 +287,45 @@ export function AnalyticsTab() {
       budgetDisciplinePct = 0;
     } else {
       budgetUsagePct = 100;
+      budgetUsageDisplay = '100';
       budgetScore = 10;
       budgetDisciplinePct = 50;
     }
 
-    // 4. Debt Ratio Pillar (Max 20 pts) — Target 0% or < 20%
+    // 4. Debt Ratio Pillar (Max 20 pts) — Evaluates Debt Service Ratio (Cicilan Bulanan terhadap Pemasukan, Ideal <= 20%, Aman <= 30%)
     let debtRatioPct = 0;
+    let debtRatioDisplay = '0';
     let debtScore = isZeroState ? 0 : 20;
-    const debtDenominator = Math.max(liquidAssets, monthlyIncome);
-    const safeDebtLimit = Math.round(debtDenominator * 0.2);
+    const debtDenominator = monthlyIncome > 0 ? monthlyIncome : Math.max(liquidAssets, 1);
+    const safeDebtLimit = Math.round(debtDenominator * 0.3);
+    const periodDebtBurden =
+      creditWalletDebt + (monthlyDebtInstallment > 0 ? monthlyDebtInstallment : 0);
 
     if (creditDebt > 0) {
-      debtRatioPct = debtDenominator > 0 ? Math.round((creditDebt / debtDenominator) * 100) : 100;
-      if (debtRatioPct <= 15) {
-        debtScore = 17;
-      } else if (debtRatioPct <= 30) {
-        debtScore = 12;
-      } else if (debtRatioPct <= 50) {
-        debtScore = 6;
+      if (periodDebtBurden === 0 && activePayableDebt > 0) {
+        // Active debt is scheduled to start in a future period (Rp 0 installment due this period)
+        const totalVsLiquidPct =
+          liquidAssets > 0 ? (activePayableDebt / liquidAssets) * 100 : 35;
+        debtRatioPct = 0;
+        debtRatioDisplay = '0';
+        debtScore = totalVsLiquidPct <= 50 ? 18 : 14;
       } else {
-        debtScore = 0;
+        const rawDebtRatioPct =
+          debtDenominator > 0 ? (periodDebtBurden / debtDenominator) * 100 : 100;
+        debtRatioPct = Math.round(rawDebtRatioPct);
+        debtRatioDisplay =
+          periodDebtBurden > 0 && rawDebtRatioPct > 0 && rawDebtRatioPct < 1
+            ? rawDebtRatioPct.toFixed(1).replace('.', ',')
+            : String(debtRatioPct);
+        if (rawDebtRatioPct <= 20) {
+          debtScore = 18;
+        } else if (rawDebtRatioPct <= 30) {
+          debtScore = 14;
+        } else if (rawDebtRatioPct <= 40) {
+          debtScore = 8;
+        } else {
+          debtScore = 0;
+        }
       }
     }
 
@@ -242,11 +354,10 @@ export function AnalyticsTab() {
       : 'Skor Anda masih di bawah 50 karena porsi tabungan atau dana darurat masih di bawah target ideal. Cek rincian 4 pilar di bawah untuk melihat angka yang perlu diperbaiki.';
 
     // Category sorting for donut & list
-    const catInfoMap = new Map(categories.map((c) => [c.id, c]));
     const list = Array.from(catMap.entries())
       .map(([catId, amount]) => {
         const cat = catInfoMap.get(catId);
-        const pctNum = totalExpense > 0 ? (amount / totalExpense) * 100 : 0;
+        const pctNum = monthlyExpense > 0 ? (amount / monthlyExpense) * 100 : 0;
         const pct = pctNum.toFixed(1) + '%';
         return {
           name: cat?.name || 'Lainnya',
@@ -259,7 +370,7 @@ export function AnalyticsTab() {
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 6);
 
-    const avgDaily = Math.round(totalExpense / elapsedDaysInPeriod);
+    const avgDaily = Math.round(monthlyExpense / elapsedDaysInPeriod);
 
     let maxDayLabel = '';
     let maxDayAmt = 0;
@@ -283,34 +394,44 @@ export function AnalyticsTab() {
       grade,
       summaryText,
       monthlyIncome,
+      monthlyExpense,
+      remainingCashflow,
       hasActualIncome,
       estIncome,
       budgetLimit,
+      savingsBudgetPct,
+      explicitSaved,
+      savingsSourceLabel,
       savingsScore,
       savingsRatePct,
+      savingsRateDisplay,
       idealSavingsAmount,
       runwayScore,
       runwayMonths,
       runwayPct,
       baselineLivingCost,
       minEmergencyTarget,
+      idealEmergencyTarget,
       budgetScore,
       budgetUsagePct,
+      budgetUsageDisplay,
       budgetDisciplinePct,
       debtScore,
       debtRatioPct,
+      debtRatioDisplay,
       creditDebt,
+      monthlyDebtInstallment: periodDebtBurden,
       safeDebtLimit,
       liquidAssets,
       savedAmount: Math.max(0, netSavings),
-      savingsRateStr: savingsRatePct.toString(),
+      savingsRateStr: savingsRateDisplay,
       topCategories:
         list.length > 0
           ? list
           : [{ name: 'Belum ada data', emoji: '🍽️', amount: 0, pct: '0%', pctNum: 0 }],
       avgDailyExpense: avgDaily,
       maxExpenseDayLabel: maxDayStr,
-      txCountThisMonth: txCount,
+      txCountThisMonth: expenseTxCount,
       zeroExpenseDays: zeroDays,
     };
   }, [
@@ -324,28 +445,27 @@ export function AnalyticsTab() {
     goals.length,
     debts,
     categories,
-    totalIncome,
-    totalExpense,
     hide,
   ]);
 
   const pillars = useMemo(() => {
     const savingsShortfall = Math.max(0, metrics.idealSavingsAmount - metrics.savedAmount);
-    const emergencyShortfall = Math.max(0, metrics.minEmergencyTarget - metrics.liquidAssets);
+    const minEmergencyShortfall = Math.max(0, metrics.minEmergencyTarget - metrics.liquidAssets);
+    const idealEmergencyShortfall = Math.max(0, metrics.idealEmergencyTarget - metrics.liquidAssets);
 
     return [
       {
         id: 'savings',
         step: '1',
         title: 'Rasio Menabung',
-        subtitle: 'Seberapa besar pemasukan yang berhasil disisihkan',
+        subtitle: 'Porsi pemasukan yang benar-benar disisihkan untuk tabungan/investasi',
         icon: PiggyBank,
         score: metrics.savingsScore,
         maxScore: 30,
-        currentLabel: 'Ditabung Saat Ini',
+        currentLabel: 'Ditabung / Disisihkan',
         currentValue:
           metrics.monthlyIncome > 0
-            ? `${metrics.savingsRatePct}% (${formatRupiah(metrics.savedAmount, hide)})`
+            ? `${metrics.savingsRateDisplay}% (${formatRupiah(metrics.savedAmount, hide)})`
             : formatRupiah(metrics.savedAmount, hide),
         targetLabel: 'Target Ideal (Min. 20%)',
         targetValue:
@@ -355,8 +475,10 @@ export function AnalyticsTab() {
         advice:
           metrics.monthlyIncome === 0
             ? 'Isi estimasi pemasukan di menu Budget agar target tabungan 20% dapat dihitung.'
+            : metrics.savingsBudgetPct === 0 && metrics.savedAmount === 0
+            ? `Alokasi tabungan di Budget saat ini diatur 0% (Rp 0). Saat kondisi memungkinkan, sisihkan min. ${formatRupiah(metrics.idealSavingsAmount, hide)} (20%) untuk meraih 30 poin.`
             : savingsShortfall > 0
-            ? `Sisihkan ${formatRupiah(savingsShortfall, hide)} lagi bulan ini untuk meraih poin penuh (30 poin).`
+            ? `Sisihkan ${formatRupiah(savingsShortfall, hide)} lagi periode ini untuk mencapai target 20% dan meraih 30 poin penuh.`
             : 'Target tabungan minimal 20% dari pemasukan sudah tercapai.',
         actionTab: 'budget' as TabType,
         actionLabel: 'Atur Tabungan',
@@ -365,18 +487,20 @@ export function AnalyticsTab() {
         id: 'runway',
         step: '2',
         title: 'Ketahanan Dana Darurat',
-        subtitle: 'Berapa bulan kas likuid bisa menopang biaya hidup',
+        subtitle: 'Berapa bulan kas likuid bisa menopang biaya hidup rutin',
         icon: ShieldCheck,
         score: metrics.runwayScore,
         maxScore: 25,
         currentLabel: 'Ketahanan Kas Saat Ini',
         currentValue: `${metrics.runwayMonths} Bulan (${formatRupiah(metrics.liquidAssets, hide)})`,
-        targetLabel: 'Target Aman (3–6 Bulan)',
-        targetValue: `Min. ${formatRupiah(metrics.minEmergencyTarget, hide)}`,
+        targetLabel: 'Aman (3 Bln) · Ideal (6 Bln)',
+        targetValue: `${formatRupiah(metrics.minEmergencyTarget, hide)} – ${formatRupiah(metrics.idealEmergencyTarget, hide)}`,
         advice:
-          emergencyShortfall > 0
-            ? `Dihitung dari biaya hidup ${formatRupiah(metrics.baselineLivingCost, hide)}/bln. Tambah kas/tabungan ${formatRupiah(emergencyShortfall, hide)} untuk capai batas aman 3 bulan.`
-            : 'Dana likuid Anda sudah mencukupi minimal 3 bulan biaya hidup rutin.',
+          minEmergencyShortfall > 0
+            ? `Dihitung dari biaya hidup ${formatRupiah(metrics.baselineLivingCost, hide)}/bln. Tambah kas/tabungan ${formatRupiah(minEmergencyShortfall, hide)} untuk capai batas aman minimal 3 bulan.`
+            : idealEmergencyShortfall > 0
+            ? `Batas aman 3 bulan sudah terlampaui! Tambah ${formatRupiah(idealEmergencyShortfall, hide)} lagi untuk mencapai target ideal 6 bulan (25 poin penuh).`
+            : 'Dana likuid Anda sudah sangat kuat (mencukupi ≥ 6 bulan biaya hidup rutin).',
         actionTab: 'goals' as TabType,
         actionLabel: 'Buka Dana Darurat',
       },
@@ -391,8 +515,8 @@ export function AnalyticsTab() {
         currentLabel: 'Pengeluaran Saat Ini',
         currentValue:
           metrics.budgetLimit > 0
-            ? `${metrics.budgetUsagePct}% (${formatRupiah(totalExpense, hide)})`
-            : formatRupiah(totalExpense, hide),
+            ? `${metrics.budgetUsageDisplay}% (${formatRupiah(metrics.monthlyExpense, hide)})`
+            : formatRupiah(metrics.monthlyExpense, hide),
         targetLabel: 'Batas Aman Budget (≤ 85%)',
         targetValue:
           metrics.budgetLimit > 0
@@ -401,8 +525,8 @@ export function AnalyticsTab() {
         advice:
           metrics.budgetLimit === 0
             ? 'Tentukan batas anggaran bulanan di menu Atur Budget untuk memantau kedisiplinan belanja.'
-            : metrics.budgetUsagePct <= 80
-            ? `Sangat terkendali! Anda baru memakai ${metrics.budgetUsagePct}% dari kuota anggaran.`
+            : metrics.budgetUsagePct <= 85
+            ? `Sangat terkendali! Anda baru memakai ${metrics.budgetUsageDisplay}% dari kuota anggaran (${formatRupiah(metrics.budgetLimit, hide)}).`
             : metrics.budgetUsagePct <= 100
             ? 'Pengeluaran mendekati batas kuota. Rem belanja non-prioritas hingga akhir periode.'
             : 'Pengeluaran sudah melewati batas budget bulanan. Evaluasi pos yang bocor.',
@@ -413,31 +537,40 @@ export function AnalyticsTab() {
         id: 'debt',
         step: '4',
         title: 'Kesehatan Beban Utang',
-        subtitle: 'Perbandingan total tagihan kredit/utang terhadap aset likuid',
+        subtitle: 'Rasio cicilan utang periode ini terhadap pemasukan (DSR)',
         icon: CreditCard,
         score: metrics.debtScore,
         maxScore: 20,
-        currentLabel: 'Total Utang & Kredit',
+        currentLabel:
+          metrics.monthlyDebtInstallment > 0 && metrics.monthlyDebtInstallment < metrics.creditDebt
+            ? 'Cicilan Periode Ini'
+            : 'Total Utang & Kredit',
         currentValue:
           metrics.creditDebt === 0
             ? 'Rp 0 (0% Bebas Utang)'
-            : `${metrics.debtRatioPct}% (${formatRupiah(metrics.creditDebt, hide)})`,
-        targetLabel: 'Batas Maksimal (< 20%)',
+            : metrics.monthlyDebtInstallment === 0
+            ? `Rp 0 periode ini (Sisa pokok ${formatRupiah(metrics.creditDebt, hide)})`
+            : `${metrics.debtRatioDisplay}% (${formatRupiah(metrics.monthlyDebtInstallment, hide)}/bln)`,
+        targetLabel: 'Batas Aman DSR (≤ 30%)',
         targetValue:
           metrics.safeDebtLimit > 0
-            ? `Maks. ${formatRupiah(metrics.safeDebtLimit, hide)}`
-            : 'Di bawah 20% kas',
+            ? `Maks. ${formatRupiah(metrics.safeDebtLimit, hide)}/bln`
+            : 'Di bawah 30% pemasukan',
         advice:
           metrics.creditDebt === 0
             ? 'Sangat sehat! Anda tidak memiliki beban tagihan kredit atau utang konsumtif aktif.'
+            : metrics.monthlyDebtInstallment === 0
+            ? `Terdapat sisa utang ${formatRupiah(metrics.creditDebt, hide)} yang dijadwalkan pada periode berikutnya.`
             : metrics.debtRatioPct <= 20
-            ? 'Rasio kewajiban utang dan kartu kredit masih dalam batas aman (< 20%).'
-            : 'Beban utang cukup tinggi dibanding kas likuid. Prioritaskan pelunasan tagihan berbunga.',
+            ? `Rasio cicilan sangat sehat (${metrics.debtRatioDisplay}% dari pemasukan). Total sisa pokok utang: ${formatRupiah(metrics.creditDebt, hide)}.`
+            : metrics.debtRatioPct <= 30
+            ? `Rasio cicilan masih dalam batas aman (≤ 30%). Total sisa pokok utang: ${formatRupiah(metrics.creditDebt, hide)}.`
+            : `Beban cicilan (${metrics.debtRatioDisplay}%) melebihi batas aman 30% pemasukan. Prioritaskan pelunasan utang (${formatRupiah(metrics.creditDebt, hide)}).`,
         actionTab: 'debt' as TabType,
         actionLabel: 'Pantau Utang',
       },
     ];
-  }, [metrics, totalExpense, hide]);
+  }, [metrics, hide]);
 
   const priorityActions = useMemo(() => {
     return [...pillars]
@@ -659,7 +792,7 @@ export function AnalyticsTab() {
               <span>Kas Likuid Bersih</span>
             </span>
             <div className="text-lg sm:text-xl font-black text-white tabular-nums truncate">
-              {formatRupiah(totalBalance, hide)}
+              {formatRupiah(metrics.liquidAssets, hide)}
             </div>
             <span className="text-[11px] text-gray-400 block">
               Total saldo aktif di dompet
@@ -676,7 +809,7 @@ export function AnalyticsTab() {
             </div>
             <span className="text-[11px] text-gray-400 block">
               {metrics.hasActualIncome
-                ? 'Dari transaksi pemasukan'
+                ? `Dari transaksi · Sisa kas ${formatRupiah(metrics.remainingCashflow, hide)}`
                 : metrics.estIncome > 0
                 ? 'Dari estimasi menu Budget'
                 : 'Belum ada pemasukan'}
@@ -689,12 +822,12 @@ export function AnalyticsTab() {
               <span>Total Pengeluaran</span>
             </span>
             <div className="text-lg sm:text-xl font-black text-rose-400 tabular-nums truncate">
-              {formatRupiah(totalExpense, hide)}
+              {formatRupiah(metrics.monthlyExpense, hide)}
             </div>
             <span className="text-[11px] text-gray-400 block">
               {metrics.budgetLimit > 0
-                ? `${metrics.budgetUsagePct}% dari batas budget`
-                : `${metrics.txCountThisMonth} transaksi tercatat`}
+                ? `${metrics.budgetUsageDisplay}% dari batas budget (${formatRupiah(metrics.budgetLimit, hide)})`
+                : `${metrics.txCountThisMonth} transaksi pengeluaran`}
             </span>
           </div>
 
@@ -707,7 +840,7 @@ export function AnalyticsTab() {
               {formatRupiah(metrics.savedAmount, hide)}
             </div>
             <span className="text-[11px] text-gray-400 block">
-              Rasio menabung {metrics.savingsRatePct}% (Ideal ≥ 20%)
+              {metrics.savingsSourceLabel}
             </span>
           </div>
         </div>
@@ -936,7 +1069,7 @@ export function AnalyticsTab() {
                   strokeWidth="10"
                   className="dark:stroke-gray-800"
                 />
-                {totalExpense > 0 &&
+                {metrics.monthlyExpense > 0 &&
                   (() => {
                     let accumulatedPct = 0;
                     return metrics.topCategories.map((cat, idx) => {
@@ -964,7 +1097,7 @@ export function AnalyticsTab() {
               <div className="absolute inset-0 flex flex-col items-center justify-center px-2 text-center">
                 <span className="text-[10px] font-bold text-gray-400">Total Keluar</span>
                 <span className="text-xs font-black text-gray-900 dark:text-white tabular-nums">
-                  {formatRupiah(totalExpense, hide)}
+                  {formatRupiah(metrics.monthlyExpense, hide)}
                 </span>
               </div>
             </div>
@@ -1077,9 +1210,10 @@ export function AnalyticsTab() {
                   Skor keuangan Anda saat ini <strong>{metrics.totalScore}/100</strong> (
                   <strong>{metrics.grade}</strong>). Dari pemasukan{' '}
                   <strong>{formatRupiah(metrics.monthlyIncome, hide)}</strong>, pengeluaran tercatat{' '}
-                  <strong>{formatRupiah(totalExpense, hide)}</strong> dan dana yang ditabung{' '}
+                  <strong>{formatRupiah(metrics.monthlyExpense, hide)}</strong> (sisa kas berjalan{' '}
+                  <strong>{formatRupiah(metrics.remainingCashflow, hide)}</strong>) dan dana yang ditabung/disisihkan{' '}
                   <strong>
-                    {formatRupiah(metrics.savedAmount, hide)} ({metrics.savingsRatePct}%)
+                    {formatRupiah(metrics.savedAmount, hide)} ({metrics.savingsRateDisplay}%)
                   </strong>
                   .
                 </p>

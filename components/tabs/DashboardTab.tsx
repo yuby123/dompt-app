@@ -30,7 +30,7 @@ import {
 import { motion } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatCompactRupiah, formatRupiah, formatFullDateIndo } from '@/lib/formatters';
-import { isDateInBudgetPeriod } from '@/lib/budgetUtils';
+import { isDateInBudgetPeriod, resolveEffectivePeriodIncome } from '@/lib/budgetUtils';
 
 export function DashboardTab() {
   const {
@@ -174,12 +174,20 @@ export function DashboardTab() {
     setSelectedDayState({ monthKey: `${y}-${mIdx}`, day: today.getDate() });
   };
 
-  // Dynamic 50/30/20 percentages
-  const { needsPct, wantsPct, savingsPct } = useMemo(() => {
-    const estIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
-    const needsBudget = (estIncome * (budgetConfig?.needsPercent || 50)) / 100;
-    const wantsBudget = (estIncome * (budgetConfig?.wantsPercent || 30)) / 100;
-    const savingsBudget = (estIncome * (budgetConfig?.savingsPercent || 20)) / 100;
+  // Dynamic 50/30/20 percentages (supports 0% for any group)
+  const { needsPct, wantsPct, savingsPct, savingsBudgetCfgPct } = useMemo(() => {
+    const { effectiveIncome: estIncome } = resolveEffectivePeriodIncome(
+      budgetConfig,
+      transactions,
+      budgetPeriod
+    );
+    const nCfgPct = typeof budgetConfig?.needsPercent === 'number' ? budgetConfig.needsPercent : 50;
+    const wCfgPct = typeof budgetConfig?.wantsPercent === 'number' ? budgetConfig.wantsPercent : 30;
+    const sCfgPct = typeof budgetConfig?.savingsPercent === 'number' ? budgetConfig.savingsPercent : 20;
+
+    const needsBudget = (estIncome * nCfgPct) / 100;
+    const wantsBudget = (estIncome * wCfgPct) / 100;
+    const savingsBudget = (estIncome * sCfgPct) / 100;
 
     let nSpent = 0;
     let wSpent = 0;
@@ -208,9 +216,10 @@ export function DashboardTab() {
     });
 
     return {
-      needsPct: Math.min(100, Math.round((nSpent / (needsBudget || 1)) * 100)),
-      wantsPct: Math.min(100, Math.round((wSpent / (wantsBudget || 1)) * 100)),
-      savingsPct: Math.min(100, Math.round((sSpent / (savingsBudget || 1)) * 100)),
+      needsPct: needsBudget > 0 ? Math.min(100, Math.round((nSpent / needsBudget) * 100)) : 0,
+      wantsPct: wantsBudget > 0 ? Math.min(100, Math.round((wSpent / wantsBudget) * 100)) : 0,
+      savingsPct: savingsBudget > 0 ? Math.min(100, Math.round((sSpent / savingsBudget) * 100)) : 0,
+      savingsBudgetCfgPct: sCfgPct,
     };
   }, [transactions, budgetConfig, categories, budgetPeriod]);
 
@@ -735,7 +744,9 @@ export function DashboardTab() {
                     TABUNGAN
                   </span>
                   <span className="text-gray-400 text-[10px]">
-                    {savingsPct >= 100
+                    {savingsBudgetCfgPct === 0
+                      ? 'Alokasi budget 0% periode ini'
+                      : savingsPct >= 100
                       ? 'Target tercapai!'
                       : savingsPct > 50
                       ? 'Sedang menabung'

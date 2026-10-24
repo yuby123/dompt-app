@@ -227,6 +227,7 @@ export interface AppSettings {
   periodMode?: 'standard' | 'custom';
   customPeriodStart?: string;
   customNextPayday?: string;
+  manualIncomePeriodKey?: string;
 }
 
 export interface WalletWithBalance extends Wallet {

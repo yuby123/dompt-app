@@ -806,6 +806,59 @@ export interface BudgetBreakdownResult {
 }
 
 /**
+ * Resolves the effective monthly income for the given budget period.
+ * - If the user has recorded actual income transactions in this period (`periodRecordedIncome > 0`),
+ *   uses `periodRecordedIncome` unless the user explicitly saved a manual override for this specific `periodKey`.
+ * - This prevents cross-period income accumulation or double-counted `estimatedIncome` from inflating
+ *   the current period's budget limit or emergency fund baseline.
+ */
+export function resolveEffectivePeriodIncome(
+  budgetConfig: BudgetConfig | undefined | null,
+  transactions: Transaction[],
+  periodInfo: BudgetPeriodInfo
+): {
+  effectiveIncome: number;
+  periodRecordedIncome: number;
+  rawEstimatedIncome: number;
+} {
+  let periodRecordedIncome = 0;
+  transactions.forEach((tx) => {
+    if (tx.type === 'income') {
+      const isLoanDisbursement = Boolean(tx.note && /^pencairan utang:/i.test(tx.note.trim()));
+      if (!isLoanDisbursement) {
+        const d = parseLocalDay(tx.date);
+        if (isDateInBudgetPeriod(d, periodInfo)) {
+          periodRecordedIncome += tx.amount;
+        }
+      }
+    }
+  });
+
+  const rawEstimatedIncome =
+    typeof budgetConfig?.estimatedIncome === 'number'
+      ? Math.max(0, budgetConfig.estimatedIncome)
+      : 0;
+
+  const manualPeriodKey = budgetConfig?.settings?.manualIncomePeriodKey;
+  const hasExplicitManualForThisPeriod =
+    Boolean(manualPeriodKey && manualPeriodKey === periodInfo.periodKey) &&
+    rawEstimatedIncome > 0 &&
+    rawEstimatedIncome !== periodRecordedIncome * 2;
+
+  const effectiveIncome = hasExplicitManualForThisPeriod
+    ? Math.max(rawEstimatedIncome, periodRecordedIncome)
+    : periodRecordedIncome > 0
+    ? periodRecordedIncome
+    : rawEstimatedIncome;
+
+  return {
+    effectiveIncome,
+    periodRecordedIncome,
+    rawEstimatedIncome,
+  };
+}
+
+/**
  * Calculates structured period budget allocation and daily budget remaining.
  * Supports custom payday cycles (e.g. Tanggal 25 -> Tanggal 25 bulan selanjutnya)
  * and manual flexible periods (e.g. 23 Okt -> 25 Nov = 33 Hari).
@@ -838,21 +891,11 @@ export function calculateBudgetBreakdown({
   const periodInfo = getBudgetPeriodInfo(activeYear, activeMonth, activeDay, rawPayday, customPeriod);
   const daysInMonth = periodInfo.totalDays;
 
-  let periodRecordedIncome = 0;
-  transactions.forEach((tx) => {
-    if (tx.type === 'income') {
-      const isLoanDisbursement = Boolean(tx.note && /^pencairan utang:/i.test(tx.note.trim()));
-      if (!isLoanDisbursement) {
-        const d = parseLocalDay(tx.date);
-        if (isDateInBudgetPeriod(d, periodInfo)) {
-          periodRecordedIncome += tx.amount;
-        }
-      }
-    }
-  });
-
-  const rawEstIncome = typeof budgetConfig?.estimatedIncome === 'number' ? budgetConfig.estimatedIncome : 0;
-  const estIncome = Math.max(rawEstIncome, periodRecordedIncome);
+  const { effectiveIncome: estIncome } = resolveEffectivePeriodIncome(
+    budgetConfig,
+    transactions,
+    periodInfo
+  );
 
   // 1. Total spending limit: Needs + Wants (supports 0% for any group)
   const needsPct = typeof budgetConfig?.needsPercent === 'number' ? budgetConfig.needsPercent : 50;

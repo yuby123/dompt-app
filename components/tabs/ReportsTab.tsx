@@ -16,7 +16,13 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { formatRupiah } from '@/lib/formatters';
-import { getBudgetPeriodInfo, isDateInBudgetPeriod } from '@/lib/budgetUtils';
+import {
+  getBudgetPeriodInfo,
+  getMonthlyDebtInstallmentAmount,
+  isDateInBudgetPeriod,
+  isDebtScheduledForBudgetPeriod,
+  resolveEffectivePeriodIncome,
+} from '@/lib/budgetUtils';
 
 export function ReportsTab() {
   const {
@@ -168,15 +174,28 @@ export function ReportsTab() {
     const expChangePct =
       prevExp > 0 ? Math.round(((exp - prevExp) / prevExp) * 100) : null;
 
-    const baseIncome = inc > 0 ? inc : budgetConfig.estimatedIncome || 0;
-    const nTarget = Math.round((baseIncome * (budgetConfig.needsPercent || 50)) / 100);
-    const wTarget = Math.round((baseIncome * (budgetConfig.wantsPercent || 30)) / 100);
-    const sTarget = Math.round((baseIncome * (budgetConfig.savingsPercent || 20)) / 100);
+    const { effectiveIncome: baseIncome } = resolveEffectivePeriodIncome(
+      budgetConfig,
+      transactions,
+      budgetPeriod
+    );
+    const needsPctCfg =
+      typeof budgetConfig.needsPercent === 'number' ? budgetConfig.needsPercent : 50;
+    const wantsPctCfg =
+      typeof budgetConfig.wantsPercent === 'number' ? budgetConfig.wantsPercent : 30;
+    const savingsPctCfg =
+      typeof budgetConfig.savingsPercent === 'number' ? budgetConfig.savingsPercent : 20;
+
+    const nTarget = Math.round((baseIncome * needsPctCfg) / 100);
+    const wTarget = Math.round((baseIncome * wantsPctCfg) / 100);
+    const sTarget = Math.round((baseIncome * savingsPctCfg) / 100);
 
     const net = inc - exp;
-    const realCashflowSurplus = inc > 0 ? Math.max(0, net) : 0;
-    const effectiveSaved = Math.max(sSpent, realCashflowSurplus);
-    const ratio = baseIncome > 0 ? Math.min(100, Math.max(0, Math.round((effectiveSaved / baseIncome) * 100))) : 0;
+    const effectiveBudgetedSavings =
+      savingsPctCfg > 0 ? Math.min(sTarget, Math.max(0, baseIncome - exp)) : 0;
+    const effectiveSaved = Math.max(sSpent, effectiveBudgetedSavings);
+    const ratio =
+      baseIncome > 0 ? Math.min(100, Math.max(0, Math.round((effectiveSaved / baseIncome) * 100))) : 0;
 
     const totalCategorizedExp = exp + sSpent;
     const sortedCats = Array.from(catTotals.entries())
@@ -193,7 +212,7 @@ export function ReportsTab() {
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
 
-    // Unified 4-Pillar Financial Health Score (aligned with HealthScoreTab & AnalyticsTab)
+    // Unified 4-Pillar Financial Health Score (aligned with AnalyticsTab)
     const walletLiquid = walletsWithBalance
       .filter((w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance > 0)
       .reduce((acc, w) => acc + w.balance, 0);
@@ -203,9 +222,19 @@ export function ReportsTab() {
     const creditWalletDebt = walletsWithBalance
       .filter((w) => (w.type === 'credit' || w.type === 'paylater') && w.balance < 0)
       .reduce((acc, w) => acc + Math.abs(w.balance), 0);
-    const activePayableDebt = (debts || [])
-      .filter((d) => d.type === 'payable' && d.status === 'active')
-      .reduce((acc, d) => acc + Math.max(0, d.remainingAmount ?? d.totalAmount), 0);
+    const activePayableDebts = (debts || []).filter(
+      (d) =>
+        d.type === 'payable' &&
+        d.status === 'active' &&
+        Math.max(0, d.remainingAmount ?? d.totalAmount) > 0
+    );
+    const activePayableDebt = activePayableDebts.reduce(
+      (acc, d) => acc + Math.max(0, d.remainingAmount ?? d.totalAmount),
+      0
+    );
+    const monthlyDebtInstallment = activePayableDebts
+      .filter((d) => isDebtScheduledForBudgetPeriod(d, budgetPeriod))
+      .reduce((acc, d) => acc + getMonthlyDebtInstallmentAmount(d), 0);
     const totalDebt = creditWalletDebt + activePayableDebt;
 
     const isZeroState =
@@ -213,24 +242,26 @@ export function ReportsTab() {
       totalDebt === 0 &&
       baseIncome === 0 &&
       exp === 0 &&
+      sSpent === 0 &&
       goals.length === 0;
 
     let savingsScore = 0;
-    if (baseIncome > 0) {
-      savingsScore = ratio >= 20 ? 30 : ratio > 0 ? Math.round((ratio / 20) * 30) : 0;
-    } else if (liquidAssets > 0 && exp === 0) {
-      savingsScore = 25;
+    if (baseIncome > 0 && effectiveSaved > 0) {
+      const rawSavPct = (effectiveSaved / baseIncome) * 100;
+      savingsScore = rawSavPct >= 20 ? 30 : Math.max(1, Math.round((rawSavPct / 20) * 30));
     }
 
-    const runwayMonths = dashboardSummary.emergencyFundRunwayMonths || 0;
+    const budgetLimit = nTarget + wTarget;
+    const baselineLivingCost = Math.max(budgetLimit > 0 ? budgetLimit : 0, exp) || 3000000;
+    const runwayMonths =
+      liquidAssets > 0 ? Number((liquidAssets / baselineLivingCost).toFixed(1)) : 0;
     const runwayScore =
       runwayMonths >= 6 ? 25 : runwayMonths > 0 ? Math.min(25, Math.round((runwayMonths / 6) * 25)) : 0;
 
-    const budgetLimit = nTarget + wTarget;
     let budgetScore = 0;
     if (budgetLimit > 0) {
-      const usagePct = Math.round((exp / budgetLimit) * 100);
-      budgetScore = usagePct <= 80 ? 25 : usagePct <= 100 ? 20 : usagePct <= 120 ? 10 : 0;
+      const rawUsagePct = (exp / budgetLimit) * 100;
+      budgetScore = rawUsagePct <= 85 ? 25 : rawUsagePct <= 100 ? 20 : rawUsagePct <= 120 ? 10 : 0;
     } else if (exp === 0) {
       budgetScore = isZeroState ? 0 : 15;
     } else {
@@ -239,9 +270,15 @@ export function ReportsTab() {
 
     let debtScore = isZeroState ? 0 : 20;
     if (totalDebt > 0) {
-      const denom = Math.max(liquidAssets, baseIncome);
-      const dRatio = denom > 0 ? Math.round((totalDebt / denom) * 100) : 100;
-      debtScore = dRatio <= 15 ? 17 : dRatio <= 30 ? 12 : dRatio <= 50 ? 6 : 0;
+      const periodBurden = creditWalletDebt + (monthlyDebtInstallment > 0 ? monthlyDebtInstallment : 0);
+      if (periodBurden === 0 && activePayableDebt > 0) {
+        const totalVsLiquidPct = liquidAssets > 0 ? (activePayableDebt / liquidAssets) * 100 : 35;
+        debtScore = totalVsLiquidPct <= 50 ? 18 : 14;
+      } else {
+        const denom = baseIncome > 0 ? baseIncome : Math.max(liquidAssets, 1);
+        const dRatio = (periodBurden / denom) * 100;
+        debtScore = dRatio <= 20 ? 18 : dRatio <= 30 ? 14 : dRatio <= 40 ? 8 : 0;
+      }
     }
 
     const isBudgetCompliant =

@@ -35,6 +35,7 @@ import {
   isDebtOrInstallmentSubcategory,
   isDebtScheduledForBudgetPeriod,
   isGrocerySubcategory,
+  resolveEffectivePeriodIncome,
 } from '@/lib/budgetUtils';
 
 export function BudgetTab() {
@@ -134,10 +135,13 @@ export function BudgetTab() {
     return ['💰', '🪙', '🏦', '📈', '🏅', '🎯', '💵', '🔒', '💎', '🏡', '🥇', '📊', '🧾', '🏧'];
   }, [targetGroup]);
 
-  // Group limits (automatically includes recorded income if higher than manual estimate)
+  // Group limits (resolved accurately per active budget period)
   const rawEstimatedIncome = budgetConfig.estimatedIncome ?? 0;
   const recordedPeriodIncome = dashboardSummary.monthlyIncome ?? 0;
-  const totalIncome = Math.max(rawEstimatedIncome, recordedPeriodIncome);
+  const { effectiveIncome: totalIncome } = useMemo(
+    () => resolveEffectivePeriodIncome(budgetConfig, transactions, budgetPeriod),
+    [budgetConfig, transactions, budgetPeriod]
+  );
   const needsLimit = Math.round((totalIncome * budgetConfig.needsPercent) / 100);
   const wantsLimit = Math.round((totalIncome * budgetConfig.wantsPercent) / 100);
   const savingsLimit = Math.round((totalIncome * budgetConfig.savingsPercent) / 100);
@@ -553,7 +557,13 @@ export function BudgetTab() {
   const handleSaveIncome = (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseNominalInput(tempIncomeInput);
-    updateBudgetConfig({ estimatedIncome: val });
+    updateBudgetConfig({
+      estimatedIncome: val,
+      settings: {
+        ...(budgetConfig.settings || {}),
+        manualIncomePeriodKey: budgetPeriod.periodKey,
+      },
+    });
     setIsEditIncomeOpen(false);
   };
 
@@ -1169,18 +1179,25 @@ export function BudgetTab() {
                 <span className="bg-emerald-500/15 border border-emerald-400/30 px-2.5 py-1 rounded-xl text-emerald-300 text-[10px] font-bold flex items-center gap-1.5 tabular-nums">
                   <span>💰 Pemasukan Tercatat Periode Ini: {formatRupiah(recordedPeriodIncome, hide)}</span>
                 </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const merged = rawEstimatedIncome + recordedPeriodIncome;
-                    updateBudgetConfig({ estimatedIncome: merged });
-                  }}
-                  className="bg-white/10 hover:bg-white/20 border border-white/15 px-2.5 py-1 rounded-xl text-[#D4F826] text-[10px] font-extrabold flex items-center gap-1 transition-colors cursor-pointer"
-                  title="Tambahkan pemasukan tercatat yang belum masuk ke angka Perkiraan Pemasukan"
-                >
-                  <Plus size={11} strokeWidth={2.8} />
-                  <span>Gabungkan (+{formatRupiah(recordedPeriodIncome, hide)})</span>
-                </button>
+                {totalIncome !== recordedPeriodIncome && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateBudgetConfig({
+                        estimatedIncome: recordedPeriodIncome,
+                        settings: {
+                          ...(budgetConfig.settings || {}),
+                          manualIncomePeriodKey: budgetPeriod.periodKey,
+                        },
+                      });
+                    }}
+                    className="bg-white/10 hover:bg-white/20 border border-white/15 px-2.5 py-1 rounded-xl text-[#D4F826] text-[10px] font-extrabold flex items-center gap-1 transition-colors cursor-pointer"
+                    title="Sesuaikan Perkiraan Pemasukan dengan Pemasukan Tercatat Periode Ini"
+                  >
+                    <Check size={11} strokeWidth={2.8} />
+                    <span>Gunakan Pemasukan Tercatat ({formatRupiah(recordedPeriodIncome, hide)})</span>
+                  </button>
+                )}
               </div>
             )}
 

@@ -7,7 +7,14 @@ import { useApp } from './AppContext';
 import { ExpenseNature, TransactionType } from '@/lib/types';
 import { CategoryIcon } from './CategoryIcon';
 import { formatNumberOnly, formatRupiah } from '@/lib/formatters';
-import { detectExpenseNature, isDateInBudgetPeriod, isGrocerySubcategory, parseLocalDay } from '@/lib/budgetUtils';
+import {
+  detectExpenseNature,
+  isDateInBudgetPeriod,
+  isGrocerySubcategory,
+  matchTransactionToSubcategory,
+  normalizeBudgetMatchText,
+  parseLocalDay,
+} from '@/lib/budgetUtils';
 
 function AddTransactionForm() {
   const {
@@ -30,6 +37,7 @@ function AddTransactionForm() {
     budgetPeriod,
     dashboardSummary,
     transactions,
+    debts,
     getWalletBalance,
     triggerInsufficientBalanceAlert,
   } = useApp();
@@ -151,17 +159,17 @@ function AddTransactionForm() {
 
     if (isTabunganCat) {
       setExpenseNature('savings');
-      setIsManualExpenseNature(false);
+      setIsManualExpenseNature(true);
     } else if (chosenCat?.expenseNature === 'grocery' || catId === 'cat-belanja-bulanan') {
       setExpenseNature('grocery');
-      setIsManualExpenseNature(false);
+      setIsManualExpenseNature(true);
     } else if (
       chosenCat?.expenseNature === 'non_daily' ||
       catId === 'cat-kondangan' ||
       catId === 'cat-sedekah'
     ) {
       setExpenseNature('non_daily');
-      setIsManualExpenseNature(false);
+      setIsManualExpenseNature(true);
     } else if (!isManualExpenseNature || expenseNature === 'savings') {
       const catMap = new Map(categories.map((c) => [c.id, c]));
       setExpenseNature(detectExpenseNature(catId, note, catMap));
@@ -171,14 +179,56 @@ function AddTransactionForm() {
 
   const handleNoteChange = (newNote: string) => {
     setNote(newNote);
+    let nextCatId = selectedCategoryId;
+
+    if (type === 'expense' && newNote.trim().length >= 3) {
+      const normNote = normalizeBudgetMatchText(newNote);
+      const expenseCats = categories.filter((c) => c.type === 'expense');
+      // Check if the note matches a custom subcategory or specific expense category
+      const matchedSub = matchTransactionToSubcategory(
+        {
+          categoryId: selectedCategoryId,
+          note: newNote,
+          expenseNature,
+        },
+        budgetConfig?.subcategories || [],
+        { debts }
+      );
+      if (matchedSub) {
+        const subCatMatch = expenseCats.find(
+          (c) =>
+            c.id === matchedSub.id ||
+            c.id === `cat-${matchedSub.id}` ||
+            normalizeBudgetMatchText(c.name) === normalizeBudgetMatchText(matchedSub.name)
+        );
+        if (subCatMatch) {
+          nextCatId = subCatMatch.id;
+          setSelectedCategoryId(subCatMatch.id);
+        }
+      } else {
+        const directCatMatch = expenseCats.find(
+          (c) => normalizeBudgetMatchText(c.name) === normNote
+        );
+        if (directCatMatch) {
+          nextCatId = directCatMatch.id;
+          setSelectedCategoryId(directCatMatch.id);
+        }
+      }
+    }
+
     if (!isManualExpenseNature) {
       const catMap = new Map(categories.map((c) => [c.id, c]));
-      const detected = detectExpenseNature(selectedCategoryId, newNote, catMap);
-      setExpenseNature(detected);
-      if (detected === 'non_daily' && selectedCategoryId === 'cat-makan') {
-        const kondanganCat = categories.find((c) => c.id === 'cat-kondangan');
-        if (kondanganCat) {
-          setSelectedCategoryId(kondanganCat.id);
+      const chosenCat = catMap.get(nextCatId);
+      if (chosenCat && !chosenCat.isDefault && chosenCat.expenseNature) {
+        setExpenseNature(chosenCat.expenseNature);
+      } else {
+        const detected = detectExpenseNature(nextCatId, newNote, catMap);
+        setExpenseNature(detected);
+        if (detected === 'non_daily' && nextCatId === 'cat-makan') {
+          const kondanganCat = categories.find((c) => c.id === 'cat-kondangan');
+          if (kondanganCat) {
+            setSelectedCategoryId(kondanganCat.id);
+          }
         }
       }
     }
@@ -206,8 +256,6 @@ function AddTransactionForm() {
   const matchingSubcategory = useMemo(() => {
     if (type !== 'expense' || !selectedCategoryId) return null;
     const chosenCat = categories.find((c) => c.id === selectedCategoryId);
-    const catNameLower = (chosenCat?.name || '').toLowerCase().trim();
-    const noteLower = (note || '').toLowerCase().trim();
     const isTabungan =
       expenseNature === 'savings' ||
       chosenCat?.budgetGroup === 'tabungan' ||
@@ -216,26 +264,24 @@ function AddTransactionForm() {
       selectedCategoryId === 'cat-investasi';
 
     const subs = budgetConfig?.subcategories || [];
+    const candidateSubs = isTabungan ? subs.filter((s) => s.group === 'tabungan') : subs;
 
-    const directMatch = subs.find((s) => {
-      if (isTabungan && s.group !== 'tabungan') return false;
-      const sNameLower = s.name.toLowerCase().trim();
-      if (s.id.replace('sub-', '') === selectedCategoryId.replace('cat-', '')) return true;
-      if (noteLower && sNameLower && (noteLower.includes(sNameLower) || sNameLower.includes(noteLower))) {
-        return true;
+    const matched = matchTransactionToSubcategory(
+      {
+        categoryId: selectedCategoryId,
+        note,
+        budgetGroup: isTabungan ? 'tabungan' : chosenCat?.budgetGroup,
+        expenseNature,
+      },
+      candidateSubs,
+      {
+        catName: chosenCat?.name,
+        txGroup: isTabungan ? 'tabungan' : chosenCat?.budgetGroup,
+        debts,
       }
-      if (sNameLower && (catNameLower === sNameLower || catNameLower.includes(sNameLower) || sNameLower.includes(catNameLower))) {
-        return true;
-      }
-      return false;
-    });
+    );
 
-    if (directMatch) return directMatch;
-
-    if (expenseNature === 'grocery') {
-      const grocerySub = subs.find((s) => isGrocerySubcategory(s));
-      if (grocerySub) return grocerySub;
-    }
+    if (matched) return matched;
 
     if (isTabungan) {
       const savingsSubs = subs.filter((s) => s.group === 'tabungan');
@@ -250,11 +296,12 @@ function AddTransactionForm() {
     }
 
     return null;
-  }, [type, selectedCategoryId, note, categories, budgetConfig?.subcategories, expenseNature]);
+  }, [type, selectedCategoryId, note, categories, budgetConfig?.subcategories, expenseNature, debts]);
 
   const subcategoryBudgetStatus = useMemo(() => {
     if (!matchingSubcategory || matchingSubcategory.allocatedAmount <= 0) return null;
 
+    const subs = budgetConfig?.subcategories || [];
     let spentSoFar = 0;
     (transactions || []).forEach((tx) => {
       if (editingTransaction && tx.id === editingTransaction.transaction.id) return;
@@ -263,19 +310,18 @@ function AddTransactionForm() {
       if (!isDateInBudgetPeriod(d, budgetPeriod)) return;
 
       const txCat = tx.categoryId ? categories.find((c) => c.id === tx.categoryId) : undefined;
-      const txCatName = (txCat?.name || '').toLowerCase().trim();
-      const txNote = (tx.note || '').toLowerCase().trim();
-      const sName = matchingSubcategory.name.toLowerCase().trim();
+      const txGroup =
+        tx.expenseNature === 'savings' || tx.budgetGroup === 'tabungan'
+          ? 'tabungan'
+          : tx.budgetGroup || txCat?.budgetGroup || 'kebutuhan';
 
-      const isDirectMatch =
-        (tx.categoryId && matchingSubcategory.id.replace('sub-', '') === tx.categoryId.replace('cat-', '')) ||
-        (sName && (txCatName.includes(sName) || sName.includes(txCatName))) ||
-        (txNote && sName && (txNote.includes(sName) || sName.includes(txNote))) ||
-        (matchingSubcategory.group === 'tabungan' &&
-          tx.categoryId === 'cat-tabungan' &&
-          /nabung|tabung|darurat|simpan/i.test(sName));
+      const matchedForTx = matchTransactionToSubcategory(tx, subs, {
+        catName: txCat?.name,
+        txGroup,
+        debts,
+      });
 
-      if (isDirectMatch) {
+      if (matchedForTx && matchedForTx.id === matchingSubcategory.id) {
         spentSoFar += tx.amount;
       }
     });
@@ -296,7 +342,7 @@ function AddTransactionForm() {
       overAmount,
       remainingBefore,
     };
-  }, [matchingSubcategory, transactions, budgetPeriod, currentAmount, editingTransaction, categories]);
+  }, [matchingSubcategory, transactions, budgetPeriod, currentAmount, editingTransaction, categories, budgetConfig?.subcategories, debts]);
 
   const handleSave = () => {
     if (currentAmount <= 0) return;
@@ -321,8 +367,14 @@ function AddTransactionForm() {
       return;
     }
 
-    const [y, m, d] = selectedDate.split('-').map(Number);
-    const targetDate = new Date(y, m - 1, d, 12, 0, 0, 0);
+    const parts = (selectedDate || '').split('-').map(Number);
+    let targetDate =
+      parts.length === 3 && !parts.some((n) => Number.isNaN(n))
+        ? new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0, 0)
+        : new Date();
+    if (Number.isNaN(targetDate.getTime())) {
+      targetDate = new Date();
+    }
     if (editingTransaction?.transaction.date) {
       const orig = new Date(editingTransaction.transaction.date);
       if (!Number.isNaN(orig.getTime())) {
@@ -364,9 +416,15 @@ function AddTransactionForm() {
       const effectiveBudgetGroup =
         type === 'expense' && expenseNature === 'savings'
           ? 'tabungan'
-          : type === 'expense' && expenseNature === 'grocery'
-          ? 'kebutuhan'
+          : type === 'expense' && matchingSubcategory?.group
+          ? matchingSubcategory.group
+          : type === 'expense' && (expenseNature === 'grocery' || expenseNature === 'non_daily')
+          ? chosenCat?.budgetGroup || 'kebutuhan'
           : chosenCat?.budgetGroup;
+
+      const effectiveNote =
+        note.trim() ||
+        (type === 'expense' && chosenCat && !chosenCat.isDefault ? chosenCat.name : undefined);
 
       if (editingTransaction) {
         const ok = updateTransaction(editingTransaction.transaction.id, {
@@ -378,7 +436,7 @@ function AddTransactionForm() {
           expenseNature: type === 'expense' ? expenseNature : undefined,
           transferWalletId: null,
           date: finalDateIso,
-          note: note.trim() || undefined,
+          note: effectiveNote,
         });
         if (!ok) return;
       } else {
@@ -391,7 +449,7 @@ function AddTransactionForm() {
           expenseNature: type === 'expense' ? expenseNature : undefined,
           transferWalletId: null,
           date: finalDateIso,
-          note: note.trim() || undefined,
+          note: effectiveNote,
         });
         if (!createdId) return;
       }
@@ -765,7 +823,11 @@ function AddTransactionForm() {
                       className="w-8 h-8 rounded-full flex items-center justify-center mb-1 text-white shadow-xs"
                       style={{ backgroundColor: c.colorValue }}
                     >
-                      <CategoryIcon iconKey={c.iconKey} size={15} />
+                      {c.emoji && !c.isDefault ? (
+                        <span className="text-sm leading-none">{c.emoji}</span>
+                      ) : (
+                        <CategoryIcon iconKey={c.iconKey} size={15} />
+                      )}
                     </div>
                     <span className="text-[10px] leading-tight line-clamp-1 w-full">{c.name}</span>
                   </button>

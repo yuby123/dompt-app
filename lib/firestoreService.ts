@@ -936,16 +936,7 @@ export async function saveUserTransaction(userId: string, tx: Transaction): Prom
 
   try {
     const docRef = doc(db, 'users', userId, 'transactions', tx.id);
-    const payload: Record<string, any> = {
-      ...restPayload,
-      budgetGroup: tx.budgetGroup ? tx.budgetGroup : deleteField(),
-      expenseNature: tx.expenseNature ? tx.expenseNature : deleteField(),
-      note: tx.note ? tx.note.substring(0, 500) : deleteField(),
-      transferWalletId: tx.transferWalletId ? tx.transferWalletId : deleteField(),
-      imageReceiptUrl: tx.receiptImageUrl ? tx.receiptImageUrl.substring(0, 500) : deleteField(),
-    };
-
-    await setDoc(docRef, payload, { merge: true });
+    await setDoc(docRef, restPayload);
   } catch (error) {
     const setRes = await cloudRestApi('set', path, restPayload, false);
     if (setRes?.ok) return;

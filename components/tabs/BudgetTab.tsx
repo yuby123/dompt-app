@@ -37,6 +37,7 @@ import {
   isDebtScheduledForBudgetPeriod,
   isGrocerySubcategory,
   isSavingsExpense,
+  matchTransactionToSubcategory,
   parseLocalDay,
   resolveEffectivePeriodIncome,
 } from '@/lib/budgetUtils';
@@ -370,139 +371,11 @@ export function BudgetTab() {
             ? 'tabungan'
             : (tx.budgetGroup as BudgetGroup) || catInfo?.group || 'kebutuhan';
 
-          const cleanTxNote = (tx.note || '')
-            .toLowerCase()
-            .replace(
-              /\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)|bayar cicilan utang:|cicilan utang:/gi,
-              ''
-            )
-            .trim();
-          const rawTxNote = (tx.note || '').toLowerCase().trim();
-
-          // 1. Try matching subcategory in the same budget group first
-          let matchSub = effectiveSubcategories.find((s) => {
-            if (txGroup && s.group !== txGroup) return false;
-
-            const subNameLower = s.name.toLowerCase().trim();
-            const cleanSubName = subNameLower.replace(/^cicilan\s+/i, '').trim();
-
-            // A. Direct ID match (e.g. sub-makan vs cat-makan)
-            if (tx.categoryId && s.id.replace('sub-', '') === tx.categoryId.replace('cat-', '')) {
-              return true;
-            }
-
-            // B. Note matches subcategory name
-            if (subNameLower) {
-              if (
-                cleanTxNote === subNameLower ||
-                (cleanSubName.length >= 3 && cleanTxNote.includes(cleanSubName)) ||
-                (subNameLower.length >= 3 &&
-                  (rawTxNote.includes(subNameLower) || cleanTxNote.includes(subNameLower))) ||
-                (cleanTxNote.length >= 4 && subNameLower.includes(cleanTxNote))
-              ) {
-                return true;
-              }
-
-              // C. Keyword overlap
-              const subWords = subNameLower
-                .split(/[\s&/,-]+/)
-                .filter((w) => w.length >= 3 && w !== 'cicilan');
-              const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
-              if (subWords.length > 0 && noteWords.length > 0) {
-                const hasCommon = subWords.some((sw) =>
-                  noteWords.some(
-                    (nw) =>
-                      nw === sw ||
-                      (sw.length >= 4 && nw.length >= 4 && (nw.includes(sw) || sw.includes(nw)))
-                  )
-                );
-                if (hasCommon) return true;
-              }
-            }
-
-            // D. Category Name matches subcategory name
-            if (catName.length >= 4 && subNameLower.length >= 4) {
-              if (catName.includes(subNameLower) || subNameLower.includes(catName)) {
-                return true;
-              }
-            }
-
-            // E. Synonym matches for common Indonesian categories
-            if (
-              (tx.categoryId === 'cat-transport' || /transport|bensin|parkir|ojol|tol/i.test(catName)) &&
-              /bensin|transport|parkir|ojol|bbm|kendaraan/i.test(subNameLower)
-            ) {
-              return true;
-            }
-            if (
-              (tx.categoryId === 'cat-makan' || /makan|minum|kuliner/i.test(catName)) &&
-              !isGrocerySubcategory(s) &&
-              /makan|minum|jajan|konsumsi/i.test(subNameLower)
-            ) {
-              return true;
-            }
-            if (
-              (tx.categoryId === 'cat-kuota' || /kuota|internet|wifi|pulsa/i.test(catName)) &&
-              /wifi|wi-fi|internet|kuota|pulsa/i.test(subNameLower)
-            ) {
-              return true;
-            }
-            if (
-              (tx.categoryId === 'cat-listrik' || /listrik|pln|token/i.test(catName)) &&
-              /listrik|pln|token/i.test(subNameLower)
-            ) {
-              return true;
-            }
-            if (
-              txGroup === 'tabungan' &&
-              (tx.categoryId === 'cat-tabungan' ||
-                tx.categoryId === 'cat-investasi' ||
-                /tabung|nabung|simpan|investasi/i.test(catName)) &&
-              /nabung|tabung|darurat|simpan|investasi/i.test(subNameLower)
-            ) {
-              return true;
-            }
-            if (
-              (tx.expenseNature === 'grocery' ||
-                tx.expenseNature === 'non_daily' ||
-                tx.categoryId === 'cat-belanja-bulanan' ||
-                tx.categoryId === 'cat-kondangan') &&
-              isGrocerySubcategory(s)
-            ) {
-              return true;
-            }
-
-            return false;
+          const matchSub = matchTransactionToSubcategory(tx, effectiveSubcategories, {
+            catName,
+            txGroup,
+            debts,
           });
-
-          // 2. If no match within group and transaction had no explicit budgetGroup override, search by note
-          if (!matchSub && !tx.budgetGroup && (cleanTxNote || rawTxNote)) {
-            matchSub = effectiveSubcategories.find((s) => {
-              const subNameLower = s.name.toLowerCase().trim();
-              const cleanSubName = subNameLower.replace(/^cicilan\s+/i, '').trim();
-              if (!subNameLower) return false;
-              if (
-                cleanTxNote === subNameLower ||
-                (cleanSubName.length >= 3 && cleanTxNote.includes(cleanSubName)) ||
-                (subNameLower.length >= 3 &&
-                  (rawTxNote.includes(subNameLower) || cleanTxNote.includes(subNameLower))) ||
-                (cleanTxNote.length >= 4 && subNameLower.includes(cleanTxNote))
-              ) {
-                return true;
-              }
-              const subWords = subNameLower
-                .split(/[\s&/,-]+/)
-                .filter((w) => w.length >= 3 && w !== 'cicilan');
-              const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
-              return subWords.some((sw) =>
-                noteWords.some(
-                  (nw) =>
-                    nw === sw ||
-                    (sw.length >= 4 && nw.length >= 4 && (nw.includes(sw) || sw.includes(nw)))
-                )
-              );
-            });
-          }
 
           if (matchSub) {
             map[matchSub.id] = (map[matchSub.id] || 0) + tx.amount;
@@ -1381,22 +1254,25 @@ export function BudgetTab() {
                     </div>
 
                     {unmappedItems.length > 0 && (
-                      <div className="pt-0.5">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            openAddForGroup(group, {
-                              name: unmappedItems[0].label,
-                              amount: unmappedSpent,
-                              emoji: unmappedItems[0].emoji,
-                              isGrocery: unmappedItems[0].isPersonalNeed,
-                            })
-                          }
-                          className="text-[11px] font-extrabold text-amber-700 dark:text-amber-300 hover:underline flex items-center gap-1 cursor-pointer"
-                        >
-                          <Plus size={12} />
-                          <span>Buat Subkategori ({unmappedItems[0].label})</span>
-                        </button>
+                      <div className="pt-0.5 flex flex-wrap gap-2">
+                        {unmappedItems.slice(0, 3).map((item, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() =>
+                              openAddForGroup(group, {
+                                name: item.label,
+                                amount: item.amount,
+                                emoji: item.emoji,
+                                isGrocery: item.isPersonalNeed,
+                              })
+                            }
+                            className="text-[11px] font-extrabold text-amber-700 dark:text-amber-300 hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus size={12} />
+                            <span>Buat Subkategori ({item.label})</span>
+                          </button>
+                        ))}
                       </div>
                     )}
                   </div>

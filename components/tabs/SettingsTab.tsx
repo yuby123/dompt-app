@@ -60,8 +60,11 @@ export function SettingsTab() {
 
   // Sync local form inputs whenever user session or settings change
   useEffect(() => {
-    setUserNameInput(settings.userName || user?.displayName || 'Pengguna');
-    setEmailInput(user?.email || settings.userEmail || '');
+    const timer = setTimeout(() => {
+      setUserNameInput(settings.userName || user?.displayName || 'Pengguna');
+      setEmailInput(user?.email || settings.userEmail || '');
+    }, 0);
+    return () => clearTimeout(timer);
   }, [settings.userName, settings.userEmail, user?.displayName, user?.email, dataResetVersion]);
 
   const themeChoice = settings.themeMode || 'light';

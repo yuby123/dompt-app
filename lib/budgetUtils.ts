@@ -1,4 +1,4 @@
-import { BudgetConfig, Category, Debt, ExpenseNature, FoodLifestyleMode, RecurringItem, Transaction } from './types';
+import { BudgetConfig, BudgetGroup, BudgetSubcategory, Category, Debt, ExpenseNature, FoodLifestyleMode, RecurringItem, Transaction } from './types';
 
 // Category IDs that represent fixed monthly obligations
 export const FIXED_CATEGORY_IDS = new Set([
@@ -174,6 +174,7 @@ export function isNonDailyExpense(
 ): boolean {
   if (tx.expenseNature === 'non_daily') return true;
   if (
+    tx.expenseNature === 'variable' ||
     tx.expenseNature === 'grocery' ||
     tx.expenseNature === 'fixed' ||
     tx.expenseNature === 'savings'
@@ -236,6 +237,297 @@ export function isGrocerySubcategory(sub: {
     return true;
   }
   return GROCERY_EXPENSE_KEYWORDS_REGEX.test(sub.name);
+}
+
+/**
+ * Normalizes transaction notes or subcategory names for deterministic matching:
+ * - Lowercases, strips automated tags, normalizes Indonesian spelling variants ("servis" -> "service").
+ */
+export function normalizeBudgetMatchText(rawText?: string | null): string {
+  if (!rawText) return '';
+  return rawText
+    .toLowerCase()
+    .replace(
+      /\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)|bayar cicilan utang:|cicilan utang:/gi,
+      ''
+    )
+    .replace(/\bservis\b/gi, 'service')
+    .replace(/\bservice\s+kendaraan\b/gi, 'service motor')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const DEFAULT_SUB_ID_EXPECTED_KEYWORDS: Record<string, RegExp> = {
+  'sub-makan': /makan|minum|kuliner|konsumsi|sarapan|jajan/i,
+  'sub-belanja-bulanan': /belanja|masak|dapur|sembako|grocer/i,
+  'sub-transport': /bensin|transport|parkir|ojol|tol|bbm|kendaraan/i,
+  'sub-listrik': /listrik|pln|token/i,
+  'sub-air': /\bair\b|pdam|pam/i,
+  'sub-kuota': /kuota|internet|wifi|wi-fi|pulsa|indihome|biznet/i,
+  'sub-sewa': /sewa|kost|kosan|kontrakan|kpr/i,
+  'sub-bpjs': /bpjs|kesehatan|obat|klinik|dokter|rs|medis/i,
+  'sub-Hiburan': /hiburan|nonton|game|bioskop|rekreasi/i,
+  'sub-hiburan': /hiburan|nonton|game|bioskop|rekreasi/i,
+  'sub-nongkrong': /nongkrong|kopi|jajan|cafe|cemilan/i,
+  'sub-belanja': /belanja|shopping|lifestyle|baju|fashion|skincare/i,
+  'sub-langganan': /langganan|netflix|spotify|youtube|premium|subscription/i,
+  'sub-kondangan': /kondangan|amplop|sosial|kado|nikahan|hajatan/i,
+  'sub-sedekah': /sedekah|amal|donasi|zakat|infaq|infak/i,
+  'sub-tabungan': /tabungan|darurat|nabung|simpan/i,
+  'sub-investasi': /investasi|saham|reksa|emas|crypto|aset/i,
+};
+
+const GENERIC_MODIFIER_WORDS = new Set([
+  'motor',
+  'mobil',
+  'rumah',
+  'anak',
+  'kantor',
+  'pribadi',
+  'bulanan',
+  'harian',
+  'mingguan',
+  'uang',
+  'biaya',
+  'bayar',
+  'beli',
+  'dana',
+  'pos',
+]);
+
+/**
+ * Priority-scored matcher that maps an expense transaction to the most accurate BudgetSubcategory.
+ * Prevents false positives where:
+ * - "service motor" or "service" was hijacked by "Cicilan Motor" (via shared word "motor") or "Parkir" (via generic cat-transport synonym)
+ * - A subcategory marked as Pos Non-Harian (isGroceryStock) swallowed ALL non_daily/grocery transactions in the period.
+ */
+export function matchTransactionToSubcategory<
+  T extends {
+    id: string;
+    name: string;
+    group?: BudgetGroup | string;
+    subscriptionId?: string;
+    dueDateDay?: number;
+    isGroceryStock?: boolean;
+  }
+>(
+  tx: {
+    categoryId?: string | null;
+    note?: string | null;
+    budgetGroup?: BudgetGroup | string | null;
+    expenseNature?: ExpenseNature | null;
+  },
+  subcategories: T[],
+  options?: {
+    catName?: string | null;
+    txGroup?: BudgetGroup | string | null;
+    debts?: Debt[];
+  }
+): T | null {
+  if (!subcategories || subcategories.length === 0) return null;
+
+  const rawNote = (tx.note || '').toLowerCase().trim();
+  const cleanTxNote = normalizeBudgetMatchText(tx.note);
+  const cleanCatName = normalizeBudgetMatchText(options?.catName);
+  const txGroup = options?.txGroup || tx.budgetGroup || undefined;
+  const debts = options?.debts || [];
+
+  const txHasExplicitDebtIntent =
+    /\b(cicilan|angsuran|utang|hutang|kpr|paylater|kredit|pinjaman)\b/i.test(rawNote) ||
+    tx.categoryId === 'cat-tagihan';
+
+  let bestSub: T | null = null;
+  let bestScore = 0;
+
+  for (const s of subcategories) {
+    const subNameNorm = normalizeBudgetMatchText(s.name);
+    if (!subNameNorm) continue;
+
+    const isSubDebt = isDebtOrInstallmentSubcategory(s, debts);
+    const cleanSubNoCicilan = subNameNorm
+      .replace(/^(cicilan|angsuran|utang|hutang)\s+/i, '')
+      .trim();
+
+    const sameGroup = !txGroup || !s.group || s.group === txGroup;
+    const groupBonus = sameGroup ? 15 : 0;
+
+    // If this subcategory is a Debt/Installment ("Cicilan Motor"), NEVER let non-debt transactions
+    // like "service motor", "bensin motor", or "parkir motor" match it unless the transaction note
+    // explicitly mentions cicilan/utang/tagihan or exactly equals the full subcategory name.
+    if (isSubDebt && !txHasExplicitDebtIntent && cleanTxNote !== subNameNorm) {
+      continue;
+    }
+
+    let score = 0;
+
+    // TIER 1: Exact Note Match (Highest Priority — overrides category group mismatch)
+    if (cleanTxNote && cleanTxNote === subNameNorm) {
+      score = Math.max(score, 1000 + groupBonus);
+    }
+    if (
+      cleanTxNote &&
+      isSubDebt &&
+      txHasExplicitDebtIntent &&
+      cleanSubNoCicilan.length >= 3 &&
+      cleanTxNote === cleanSubNoCicilan
+    ) {
+      score = Math.max(score, 960 + groupBonus);
+    }
+
+    // TIER 2: Direct Custom Subcategory ID selected as Category in AddTransactionModal (e.g. categoryId === s.id)
+    if (tx.categoryId && tx.categoryId === s.id) {
+      score = Math.max(score, 940 + groupBonus);
+    }
+
+    // TIER 3: Full Phrase Inclusion in Note (e.g. note "service motor" vs sub "Service Motor", or note "service motor honda" vs sub "Service Motor")
+    if (cleanTxNote && subNameNorm.length >= 3) {
+      if (cleanTxNote.includes(subNameNorm)) {
+        // Longer subcategory name match is more specific ("service motor" > "service")
+        score = Math.max(score, 850 + Math.min(40, subNameNorm.length) + groupBonus);
+      } else if (cleanTxNote.length >= 4 && subNameNorm.includes(cleanTxNote)) {
+        // Note is a prefix/keyword of the subcategory (e.g. note "service" -> sub "Service Motor")
+        const noteTokens = cleanTxNote.split(/[\s&/,-]+/).filter(Boolean);
+        const isOnlyGenericModifier =
+          noteTokens.length === 1 && GENERIC_MODIFIER_WORDS.has(noteTokens[0]);
+        if (!isOnlyGenericModifier) {
+          score = Math.max(score, 780 + Math.min(30, cleanTxNote.length) + groupBonus);
+        }
+      }
+    }
+
+    // For debt subcategories when tx HAS debt intent (e.g. "Bayar cicilan utang: Motor")
+    if (
+      isSubDebt &&
+      txHasExplicitDebtIntent &&
+      cleanSubNoCicilan.length >= 3 &&
+      cleanTxNote.includes(cleanSubNoCicilan)
+    ) {
+      score = Math.max(score, 840 + Math.min(30, cleanSubNoCicilan.length) + groupBonus);
+    }
+
+    // TIER 4: Meaningful Word Overlap between Note and Subcategory Name
+    // (Excludes generic object modifiers like "motor", "mobil", "rumah" when the main action word differs!)
+    if (cleanTxNote && score < 750) {
+      const subWords = subNameNorm
+        .split(/[\s&/,-]+/)
+        .filter((w) => w.length >= 3 && !/^(cicilan|angsuran|utang|hutang)$/i.test(w));
+      const noteWords = cleanTxNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
+
+      if (subWords.length > 0 && noteWords.length > 0) {
+        const matchedWords = subWords.filter((sw) =>
+          noteWords.some(
+            (nw) =>
+              nw === sw ||
+              (sw.length >= 5 && nw.length >= 5 && (nw.includes(sw) || sw.includes(nw)))
+          )
+        );
+        const hasSpecificNonModifierMatch = matchedWords.some(
+          (w) => !GENERIC_MODIFIER_WORDS.has(w)
+        );
+
+        if (matchedWords.length > 0 && hasSpecificNonModifierMatch) {
+          const ratio = matchedWords.length / subWords.length;
+          score = Math.max(
+            score,
+            Math.round(620 + ratio * 100 + matchedWords.length * 15) + groupBonus
+          );
+        }
+      }
+    }
+
+    // TIER 5: Category / Default ID / Synonym Fallbacks (ONLY within the same budget group & when note doesn't conflict)
+    if (sameGroup && score === 0) {
+      // 5A. Default ID match (e.g. sub-transport <-> cat-transport), ONLY if the user hasn't renamed the default subcategory to something unrelated
+      if (tx.categoryId && s.id.replace('sub-', '') === tx.categoryId.replace('cat-', '')) {
+        const expectedRegex = DEFAULT_SUB_ID_EXPECTED_KEYWORDS[s.id];
+        const isStillOriginalConcept = !expectedRegex || expectedRegex.test(subNameNorm);
+        if (isStillOriginalConcept) {
+          score = Math.max(score, 420 + groupBonus);
+        }
+      }
+
+      // 5B. Category Name matches Subcategory Name
+      if (cleanCatName.length >= 4 && subNameNorm.length >= 4) {
+        if (cleanCatName === subNameNorm) {
+          score = Math.max(score, 480 + groupBonus);
+        } else if (cleanCatName.includes(subNameNorm) || subNameNorm.includes(cleanCatName)) {
+          score = Math.max(score, 400 + groupBonus);
+        }
+      }
+
+      // 5C. Synonym fallback for standard categories (ONLY when the transaction note doesn't specify a different custom activity like "service")
+      const noteSpecifiesCustomService = /\b(service|bengkel|oli|ban|sparepart|turun mesin)\b/i.test(
+        cleanTxNote
+      );
+
+      if (
+        !noteSpecifiesCustomService &&
+        (tx.categoryId === 'cat-transport' ||
+          /transport|bensin|parkir|ojol|tol/i.test(cleanCatName)) &&
+        /bensin|transport|parkir|ojol|bbm|kendaraan/i.test(subNameNorm)
+      ) {
+        // Prefer general "transport/bensin" over specific "parkir" when note is empty or generic
+        const isParkirSub = /parkir/i.test(subNameNorm);
+        const noteMentionsParkir = /parkir/i.test(cleanTxNote);
+        if (!isParkirSub || noteMentionsParkir) {
+          score = Math.max(score, (noteMentionsParkir && isParkirSub ? 520 : 310) + groupBonus);
+        }
+      }
+
+      if (
+        (tx.categoryId === 'cat-makan' || /makan|minum|kuliner/i.test(cleanCatName)) &&
+        !isGrocerySubcategory(s) &&
+        /makan|minum|jajan|konsumsi/i.test(subNameNorm)
+      ) {
+        score = Math.max(score, 320 + groupBonus);
+      }
+
+      if (
+        (tx.categoryId === 'cat-kuota' || /kuota|internet|wifi|pulsa/i.test(cleanCatName)) &&
+        /wifi|wi-fi|internet|kuota|pulsa/i.test(subNameNorm)
+      ) {
+        score = Math.max(score, 320 + groupBonus);
+      }
+
+      if (
+        (tx.categoryId === 'cat-listrik' || /listrik|pln|token/i.test(cleanCatName)) &&
+        /listrik|pln|token/i.test(subNameNorm)
+      ) {
+        score = Math.max(score, 320 + groupBonus);
+      }
+
+      if (
+        txGroup === 'tabungan' &&
+        (tx.categoryId === 'cat-tabungan' ||
+          tx.categoryId === 'cat-investasi' ||
+          /tabung|nabung|simpan|investasi/i.test(cleanCatName)) &&
+        /nabung|tabung|darurat|simpan|investasi/i.test(subNameNorm)
+      ) {
+        score = Math.max(score, 320 + groupBonus);
+      }
+
+      // 5D. Bulk Grocery fallback ONLY for actual grocery categories/notes and actual grocery-named subcategories
+      // (Never dump unrelated non_daily / Pribadi transactions into a custom subcategory like "Service Motor" just because isGroceryStock is true!)
+      if (
+        (tx.categoryId === 'cat-belanja-bulanan' ||
+          GROCERY_EXPENSE_KEYWORDS_REGEX.test(cleanTxNote) ||
+          GROCERY_EXPENSE_KEYWORDS_REGEX.test(cleanCatName)) &&
+        (s.id === 'sub-belanja-bulanan' ||
+          s.id === 'sub-bahan-masak' ||
+          s.id === 'sub-masak' ||
+          GROCERY_EXPENSE_KEYWORDS_REGEX.test(subNameNorm))
+      ) {
+        score = Math.max(score, 340 + groupBonus);
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestSub = s;
+    }
+  }
+
+  return bestScore > 0 ? bestSub : null;
 }
 
 /**
@@ -1050,50 +1342,18 @@ export function calculateBudgetBreakdown({
     catNameStr: string,
     categoryId?: string | null
   ) => {
-    const cleanNote = noteStr
-      .toLowerCase()
-      .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)|bayar cicilan utang:|cicilan utang:/gi, '')
-      .trim();
-    const rawNote = noteStr.toLowerCase().trim();
-
-    return list.find((s) => {
-      const subNameLower = s.name.toLowerCase().trim();
-      const cleanSubName = subNameLower.replace(/^cicilan\s+/i, '').trim();
-      if (categoryId && s.id.replace('sub-', '') === categoryId.replace('cat-', '')) {
-        return true;
+    return matchTransactionToSubcategory(
+      {
+        categoryId,
+        note: noteStr,
+        expenseNature: 'fixed',
+      },
+      list,
+      {
+        catName: catNameStr,
+        debts: payableDebts,
       }
-      if (
-        cleanNote === subNameLower ||
-        (cleanSubName.length >= 3 && cleanNote.includes(cleanSubName)) ||
-        (subNameLower.length >= 3 && (rawNote.includes(subNameLower) || cleanNote.includes(subNameLower))) ||
-        (cleanNote.length >= 4 && subNameLower.includes(cleanNote))
-      ) {
-        return true;
-      }
-      const subWords = subNameLower.split(/[\s&/,-]+/).filter((w) => w.length >= 3 && w !== 'cicilan');
-      const noteWords = cleanNote.split(/[\s&/,-]+/).filter((w) => w.length >= 3);
-      if (subWords.length > 0 && noteWords.length > 0) {
-        if (
-          subWords.some((sw) =>
-            noteWords.some(
-              (nw) =>
-                nw === sw ||
-                (sw.length >= 4 && nw.length >= 4 && (nw.includes(sw) || sw.includes(nw)))
-            )
-          )
-        ) {
-          return true;
-        }
-      }
-      if (
-        catNameStr.length >= 4 &&
-        subNameLower.length >= 4 &&
-        (catNameStr.includes(subNameLower) || subNameLower.includes(catNameStr))
-      ) {
-        return true;
-      }
-      return false;
-    });
+    );
   };
 
   // 3. Partition transactions in the active budget period into Variable (Harian), Non-Daily (Kondangan/Sosial), Grocery (Belanja Bulanan), and Fixed (Tagihan)

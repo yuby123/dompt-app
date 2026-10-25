@@ -16,23 +16,43 @@ function createNoCacheResponse(body: any, status = 200) {
   });
 }
 
-function parseNaturalLanguageTransaction(message: string, availableWallets: string[], availableCategories: string[]) {
-  const lower = message.toLowerCase();
+function escapeRegExp(str: string) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
-  // Check if message looks like recording a transaction
+function parseNaturalLanguageTransaction(
+  message: string,
+  availableWallets: string[],
+  availableCategories: string[]
+) {
+  const trimmed = message.trim();
+  const lower = trimmed.toLowerCase();
+
+  // Do not treat questions (e.g. "Bisa beli HP 3jt?") as transaction recording unless explicitly prefixed with "catat"
+  const isQuestion =
+    trimmed.endsWith('?') ||
+    /^(bisa|boleh|apakah|gimana|bagaimana|kapan|berapa|aman|mending|sebaiknya)\b/i.test(trimmed);
+  const startsWithCatat = /^catat\b/i.test(trimmed);
+
+  if (isQuestion && !startsWithCatat) {
+    return null;
+  }
+
   const txKeywords = [
     'catat',
     'beli',
     'belanja',
     'bayar',
     'makan',
+    'sarapan',
     'jajan',
     'ngopi',
     'kopi',
     'bensin',
     'parkir',
-    'transfer',
+    'ojol',
     'gaji',
+    'bonus',
     'terima',
     'masuk',
     'topup',
@@ -58,7 +78,6 @@ function parseNaturalLanguageTransaction(message: string, availableWallets: stri
     const numPart = match[1];
     const unit = match[2];
 
-    // Skip if it looks like a year (2024-2030) or date day (1-31) without unit and < 100
     const cleanVal = parseFloat(numPart.replace(/\./g, '').replace(',', '.'));
     if (!unit && cleanVal >= 2020 && cleanVal <= 2035) continue;
     if (!unit && cleanVal < 500 && !numPart.includes('.')) continue;
@@ -95,8 +114,9 @@ function parseNaturalLanguageTransaction(message: string, availableWallets: stri
     lower.includes('thr') ||
     lower.includes('cuan');
 
-  // Detect wallet
-  let matchedWallet = availableWallets.find((w) => lower.includes(w.toLowerCase())) || '';
+  // Sort wallets by length descending so multi-word wallets ("Dompet Utama") match first
+  const sortedWallets = [...availableWallets].sort((a, b) => b.length - a.length);
+  let matchedWallet = sortedWallets.find((w) => lower.includes(w.toLowerCase())) || '';
   if (!matchedWallet) {
     if (lower.includes('bca')) matchedWallet = 'BCA';
     else if (lower.includes('mandiri')) matchedWallet = 'Mandiri';
@@ -108,15 +128,20 @@ function parseNaturalLanguageTransaction(message: string, availableWallets: stri
     else matchedWallet = availableWallets[0] || 'Tunai';
   }
 
-  // Detect category
-  let matchedCategory = availableCategories.find((c) => lower.includes(c.toLowerCase())) || '';
+  // Sort categories by length descending
+  const sortedCategories = [...availableCategories].sort((a, b) => b.length - a.length);
+  let matchedCategory = sortedCategories.find((c) => lower.includes(c.toLowerCase())) || '';
   if (!matchedCategory) {
     if (isIncome) matchedCategory = 'Gaji';
-    else if (lower.includes('makan') || lower.includes('sarapan') || lower.includes('bahan makanan')) matchedCategory = 'Makan';
-    else if (lower.includes('kopi') || lower.includes('ngopi') || lower.includes('jajan') || lower.includes('cemilan')) matchedCategory = 'Jajan';
-    else if (lower.includes('bensin') || lower.includes('ojol') || lower.includes('parkir') || lower.includes('transport')) matchedCategory = 'Transportasi';
-    else if (lower.includes('listrik') || lower.includes('pln')) matchedCategory = 'Listrik';
-    else if (lower.includes('belanja')) matchedCategory = 'Belanja Online';
+    else if (lower.includes('makan') || lower.includes('sarapan') || lower.includes('siang') || lower.includes('malam'))
+      matchedCategory = 'Makan';
+    else if (lower.includes('kopi') || lower.includes('ngopi') || lower.includes('jajan') || lower.includes('cemilan'))
+      matchedCategory = 'Jajan';
+    else if (lower.includes('bensin') || lower.includes('ojol') || lower.includes('parkir') || lower.includes('transport'))
+      matchedCategory = 'Transportasi';
+    else if (lower.includes('listrik') || lower.includes('pln') || lower.includes('wifi') || lower.includes('kuota'))
+      matchedCategory = 'Tagihan';
+    else if (lower.includes('belanja')) matchedCategory = 'Belanja';
     else matchedCategory = 'Makan';
   }
 
@@ -136,7 +161,9 @@ function parseNaturalLanguageTransaction(message: string, availableWallets: stri
     desember: '12',
   };
   let dateStr = new Date().toISOString().split('T')[0];
-  const dateMatch = lower.match(/(?:tgl|tanggal)?\s*(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)(?:\s+(\d{4}))?/i);
+  const dateMatch = lower.match(
+    /(?:tgl|tanggal)?\s*(\d{1,2})\s+(januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)(?:\s+(\d{4}))?/i
+  );
   if (dateMatch) {
     const day = String(dateMatch[1]).padStart(2, '0');
     const month = monthsMap[dateMatch[2].toLowerCase()] || '01';
@@ -144,11 +171,21 @@ function parseNaturalLanguageTransaction(message: string, availableWallets: stri
     dateStr = `${year}-${month}-${day}`;
   }
 
-  // Build clean note
-  const cleanNote = message
+  // Build clean note and strip wallet phrase cleanly (including multi-word wallet names)
+  let cleanNote = trimmed
     .replace(/^catat\s+/i, '')
-    .replace(matchedAmountRaw, '')
-    .replace(/\b(pakai|pake|via|dengan)\s+\w+/gi, '')
+    .replace(matchedAmountRaw, '');
+
+  if (matchedWallet) {
+    const walletPattern = new RegExp(
+      `\\b(pakai|pake|via|dengan|di|ke)?\\s*${escapeRegExp(matchedWallet)}\\b`,
+      'gi'
+    );
+    cleanNote = cleanNote.replace(walletPattern, '');
+  }
+
+  cleanNote = cleanNote
+    .replace(/\b(pakai|pake|via|dengan)\s+\S+/gi, '')
     .replace(/\b(tgl|tanggal)\s*\d{1,2}\s+\w+(\s+\d{4})?/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -156,7 +193,7 @@ function parseNaturalLanguageTransaction(message: string, availableWallets: stri
   return {
     type: isIncome ? 'income' : 'expense',
     amount: detectedAmount,
-    note: cleanNote ? cleanNote.charAt(0).toUpperCase() + cleanNote.slice(1) : 'Transaksi Baru',
+    note: cleanNote ? cleanNote.charAt(0).toUpperCase() + cleanNote.slice(1) : matchedCategory,
     category: matchedCategory,
     wallet: matchedWallet,
     date: dateStr,
@@ -165,32 +202,45 @@ function parseNaturalLanguageTransaction(message: string, availableWallets: stri
 
 function buildFallbackResponse(message: string, contextData: any): string {
   const walletsList: string[] = contextData?.wallets || ['Tunai', 'Rekening Bank', 'E-Wallet'];
-  const categoriesList: string[] = contextData?.categories || ['Makan', 'Jajan', 'Transportasi', 'Belanja Online', 'Listrik', 'Gaji'];
+  const categoriesList: string[] = contextData?.categories || [
+    'Makan',
+    'Jajan',
+    'Transportasi',
+    'Belanja',
+    'Tagihan',
+    'Gaji',
+  ];
 
   const parsedTx = parseNaturalLanguageTransaction(message, walletsList, categoriesList);
   if (parsedTx) {
-    return `Siap! Aku sudah menyiapkan kartu catatan transaksimu di bawah ini. Klik **Catat Sekarang** untuk menyimpannya ke dompet **${parsedTx.wallet}**:\n\n\`\`\`transaction_json\n${JSON.stringify(parsedTx, null, 2)}\n\`\`\``;
+    return `Draf transaksi sudah siap. Periksa detail di bawah lalu klik **Simpan**:\n\n\`\`\`transaction_json\n${JSON.stringify(parsedTx, null, 2)}\n\`\`\``;
   }
 
   const lower = message.toLowerCase();
   const totalBalance = contextData?.totalBalance || 'Rp 0';
   const monthlyIncome = contextData?.monthlyIncome || 'Rp 0';
   const monthlyExpense = contextData?.monthlyExpense || 'Rp 0';
+  const budgetLimit = contextData?.budgetLimit || monthlyIncome;
+  const dailySafe = contextData?.dailyBudgetRemaining || 'Rp 0';
   const runway = contextData?.runway || '0 Bulan';
 
-  if (lower.includes('roasting')) {
-    return `🔥 **Mode Roasting Keuangan Aktif!**\n\nMari kita lihat datamu bulan ini:\n• **Total Saldo:** ${totalBalance}\n• **Pemasukan Bulan Ini:** ${monthlyIncome}\n• **Pengeluaran Bulan Ini:** ${monthlyExpense}\n• **Runway Dana Darurat:** ${runway}\n\nKalau pengeluaranmu masih sering bocor di *jajan impulsif*, *ngopi cantik*, atau *checkout tengah malam*, jangan heran kalau tabungan jalan di tempat! Yuk disiplin pakai aturan **50/30/20** dan kunci tabunganmu di menu **Goals** supaya nggak gampang kepakai.`;
+  if (lower.includes('roasting') || lower.includes('boros')) {
+    return `**Evaluasi Jujur Bulan Ini**\n• Pengeluaran: **${monthlyExpense}** dari budget **${budgetLimit}**\n• Sisa aman harian: **${dailySafe}/hari**\n• Dana darurat: **${runway}**\n\nKurangi jajan impulsif dan prioritaskan batas aman harian agar target tabungan tetap aman.`;
   }
 
-  if (lower.includes('hp') || lower.includes('beli')) {
-    return `📱 **Evaluasi Kemampuan Beli Barang Baru:**\n\nSaat ini posisi keuanganmu:\n• **Total Saldo Aktif:** ${totalBalance}\n• **Pemasukan Bulan Ini:** ${monthlyIncome}\n• **Pengeluaran Bulan Ini:** ${monthlyExpense}\n• **Runway Dana Darurat:** ${runway}\n\n**Saran AI Advisor:**\n1. Pastikan **Dana Darurat minimal 3–6 bulan** tetap aman dan tidak terganggu.\n2. Hindari mencicil gadget konsumtif jika cicilan bulanan melebihi **10% dari pemasukan bulanan**.\n3. Buat **Goal Tabungan** khusus di menu *Goals* agar pembelian dilakukan secara tunai tanpa mengganggu arus kas harian!`;
+  if (lower.includes('harian') || lower.includes('sisa')) {
+    return `**Batas Aman Harian**\n• Sisa budget harian: **${dailySafe}/hari**\n• Total pengeluaran bulan ini: **${monthlyExpense}**\n• Basis budget aktif: **${budgetLimit}**\n\nUsahakan pengeluaran harian tidak melewati angka di atas.`;
   }
 
-  if (lower.includes('analisis') || lower.includes('gaya hidup') || lower.includes('evaluasi')) {
-    return `📊 **Analisis Kesehatan & Gaya Hidup Finansial Bulan Ini:**\n\n• **Total Saldo Likuid:** ${totalBalance}\n• **Arus Kas Masuk:** ${monthlyIncome}\n• **Arus Kas Keluar:** ${monthlyExpense}\n• **Ketahanan Dana Darurat:** ${runway}\n\n**Rekomendasi Langkah Selanjutnya:**\n1. Cek menu **Skor Sehat** di Dashboard untuk melihat nilai kesehatan finansialmu (0–100).\n2. Daftarkan tagihan bulanan tetap di menu **Langganan** agar tidak ada denda keterlambatan.\n3. Kamu juga bisa langsung ketik di sini misalnya: *"Catat makan siang 35rb pakai Tunai"* untuk mencatat transaksi otomatis!`;
+  if (lower.includes('hp') || lower.includes('beli') || lower.includes('barang')) {
+    return `**Cek kesiapan sebelum membeli:**\n• Saldo likuid: **${totalBalance}** (Runway: **${runway}**)\n• Sisa aman harian: **${dailySafe}/hari**\n\nPastikan dana darurat minimal 3 bulan tidak terpakai dan gunakan fitur **Goals** untuk menabung barang impian tanpa mengganggu uang harian.`;
   }
 
-  return `Halo! Berikut ringkasan kondisi keuanganmu saat ini:\n• **Total Saldo:** ${totalBalance}\n• **Pemasukan Bulan Ini:** ${monthlyIncome}\n• **Pengeluaran Bulan Ini:** ${monthlyExpense}\n• **Runway Dana Darurat:** ${runway}\n\nKamu bisa tanya strategi menabung, evaluasi pengeluaran, atau langsung ketik transaksi seperti:\n👉 *"Catat beli kopi 25rb pakai GoPay"*`;
+  if (lower.includes('analisis') || lower.includes('evaluasi') || lower.includes('cek budget') || lower.includes('hemat')) {
+    return `**Ringkasan Keuanganmu**\n• Saldo Likuid: **${totalBalance}**\n• Basis Budget: **${budgetLimit}**\n• Terpakai Bulan Ini: **${monthlyExpense}**\n• Sisa Aman Harian: **${dailySafe}/hari**\n\nTips: Jaga pengeluaran keinginan maksimal 30% dari budget dan catat setiap transaksi tepat waktu.`;
+  }
+
+  return `**Posisi Keuangan Saat Ini**\n• Saldo Aktif: **${totalBalance}**\n• Terpakai: **${monthlyExpense}** (Budget: **${budgetLimit}**)\n• Aman Harian: **${dailySafe}/hari**\n\nKetik langsung untuk mencatat, contoh: *"Catat kopi 25rb pakai Tunai"*.`;
 }
 
 export async function POST(req: NextRequest) {
@@ -200,7 +250,27 @@ export async function POST(req: NextRequest) {
     const { message, history, contextData } = bodyData;
 
     if (!message || typeof message !== 'string') {
-      return createNoCacheResponse({ text: 'Silakan ketik pesan atau pertanyaan keuanganmu.' }, 400);
+      return createNoCacheResponse({ text: 'Ketik pertanyaan atau transaksi yang ingin dicatat.' }, 400);
+    }
+
+    const walletsArr: string[] = contextData?.wallets || ['Tunai', 'Rekening Bank', 'E-Wallet'];
+    const categoriesArr: string[] = contextData?.categories || [
+      'Makan',
+      'Jajan',
+      'Transportasi',
+      'Belanja',
+      'Tagihan',
+      'Gaji',
+    ];
+
+    // Fast-path deterministic transaction extraction when user explicitly starts with "catat"
+    if (/^catat\b/i.test(message.trim())) {
+      const quickTx = parseNaturalLanguageTransaction(message, walletsArr, categoriesArr);
+      if (quickTx) {
+        return createNoCacheResponse({
+          text: `Draf transaksi sudah siap. Periksa detail di bawah lalu klik **Simpan**:\n\n\`\`\`transaction_json\n${JSON.stringify(quickTx, null, 2)}\n\`\`\``,
+        });
+      }
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -219,26 +289,28 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const walletsList = (contextData?.wallets || ['Tunai', 'Rekening Bank', 'E-Wallet']).join(', ');
-    const categoriesList = (contextData?.categories || ['Makan', 'Jajan', 'Transportasi', 'Belanja Online', 'Listrik', 'Gaji']).join(', ');
+    const walletsList = walletsArr.join(', ');
+    const categoriesList = categoriesArr.join(', ');
     const todayIso = new Date().toISOString().split('T')[0];
 
     const systemInstruction = `
-Kamu adalah "AI Advisor" dari aplikasi Dompt. - asisten penasihat keuangan pribadi yang cerdas, ramah, to-the-point, dan sangat paham gaya hidup finansial modern Indonesia.
+Kamu adalah "AI Advisor" di aplikasi keuangan Dompt.
+Gaya bahasa: Bahasa Indonesia yang singkat, lugas, ramah, dan langsung ke inti (maksimal 3-4 poin pendek, jangan bertele-tele).
 Tanggal hari ini: ${todayIso}.
 
-Konteks Keuangan Pengguna Saat Ini:
-- Total Saldo: ${contextData?.totalBalance || 'Rp 0'}
+Data Keuangan Pengguna:
+- Saldo Aktif: ${contextData?.totalBalance || 'Rp 0'}
+- Basis Budget Bulan Ini: ${contextData?.budgetLimit || contextData?.monthlyIncome || 'Rp 0'}
 - Pemasukan Bulan Ini: ${contextData?.monthlyIncome || 'Rp 0'}
 - Pengeluaran Bulan Ini: ${contextData?.monthlyExpense || 'Rp 0'}
-- Alokasi 50/30/20: Kebutuhan (50%), Keinginan (30%), Tabungan (20%)
-- Runway Dana Darurat: ${contextData?.runway || '0 Bulan'}
-- Daftar Dompet Pengguna: ${walletsList}
-- Daftar Kategori Tersedia: ${categoriesList}
+- Batas Aman Harian: ${contextData?.dailyBudgetRemaining || 'Rp 0'}/hari
+- Dana Darurat: ${contextData?.runway || '0 Bulan'}
+- Dompet: ${walletsList}
+- Kategori: ${categoriesList}
 
-Tugas & Kemampuan Khusus:
-1. Menjawab pertanyaan keuangan, memberikan tips hemat, saran investasi, atau roasting pengeluaran jika diminta dengan gaya santai tapi berbobot berdasarkan data di atas.
-2. JIKA pengguna ingin mencatat transaksi (misal: "catat kopi 25rb pakai gopay", "belanja 375rb bca tgl 1 maret 2026"), kembalikan JSON blok terstruktur di akhir jawaban dalam format persis berikut:
+Aturan Penting:
+1. Jawab singkat dan mudah dibaca (maksimal 3-4 kalimat/poin).
+2. JIKA pengguna ingin mencatat transaksi (contoh: "catat kopi 25rb pakai gopay", "makan siang 35rb tunai"), sertakan blok JSON di akhir jawaban dengan format persis:
 \`\`\`transaction_json
 {
   "type": "expense",
@@ -249,17 +321,14 @@ Tugas & Kemampuan Khusus:
   "date": "${todayIso}"
 }
 \`\`\`
-Pastikan "type" bernilai "expense" atau "income", dan "amount" berupa angka bulat Rupiah.
-Gunakan bahasa Indonesia yang ramah, santai, dan cerdas.
+Pastikan "type" bernilai "expense" atau "income", dan "amount" angka bulat Rupiah. Jangan buat blok transaction_json jika pengguna hanya bertanya.
     `.trim();
 
-    // Ensure conversation contents strictly start with 'user' and alternate 'user' / 'model'
     const sanitizedHistory: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
     for (const item of history || []) {
       if (!item?.text || typeof item.text !== 'string') continue;
       const role: 'user' | 'model' = item.role === 'user' ? 'user' : 'model';
       if (sanitizedHistory.length === 0 && role === 'model') {
-        // Gemini requires the first turn in contents to be 'user'
         continue;
       }
       const prev = sanitizedHistory[sanitizedHistory.length - 1];
@@ -273,8 +342,10 @@ Gunakan bahasa Indonesia yang ramah, santai, dan cerdas.
       }
     }
 
-    // If the last message in sanitizedHistory is already 'user', merge or replace so we end with 'user'
-    if (sanitizedHistory.length > 0 && sanitizedHistory[sanitizedHistory.length - 1].role === 'user') {
+    if (
+      sanitizedHistory.length > 0 &&
+      sanitizedHistory[sanitizedHistory.length - 1].role === 'user'
+    ) {
       sanitizedHistory[sanitizedHistory.length - 1].parts[0].text += `\n${message}`;
     } else {
       sanitizedHistory.push({
@@ -283,7 +354,7 @@ Gunakan bahasa Indonesia yang ramah, santai, dan cerdas.
       });
     }
 
-    const modelsToTry = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+    const modelsToTry = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-flash-latest'];
     let responseText = '';
 
     for (const modelName of modelsToTry) {
@@ -293,7 +364,7 @@ Gunakan bahasa Indonesia yang ramah, santai, dan cerdas.
           contents: sanitizedHistory,
           config: {
             systemInstruction,
-            temperature: 0.7,
+            temperature: 0.5,
           },
         });
         if (response?.text) {

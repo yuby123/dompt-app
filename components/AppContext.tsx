@@ -87,6 +87,7 @@ import { exportTransactionsToCSV, formatRupiah } from '@/lib/formatters';
 import {
   BudgetPeriodInfo,
   calculateBudgetBreakdown,
+  FIXED_EXPENSE_KEYWORDS_REGEX,
   getAdjacentPeriodDateStr,
   getBudgetPeriodInfo,
   getMonthlyDebtInstallmentAmount,
@@ -416,7 +417,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Core Data States (Start completely empty; populated exclusively by direct Firestore GET on load)
   const [wallets, setWallets] = useState<Wallet[]>([]);
-  const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
+  const [baseCategories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [budgetConfig, setBudgetConfig] = useState<BudgetConfig>(EMPTY_BUDGET_CONFIG);
@@ -428,6 +429,101 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [investments, setInvestments] = useState<InvestmentItem[]>([]);
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+
+  // Merge default/stored categories with user's budget subcategories so custom budget items
+  // (e.g. "Service Motor", "Parkir", etc.) appear directly in the Category picker of AddTransactionModal
+  const categories = useMemo<Category[]>(() => {
+    const list: Category[] = [...baseCategories];
+    const subs = budgetConfig?.subcategories || [];
+    if (subs.length === 0) return list;
+
+    const existingIds = new Set(list.map((c) => c.id));
+    const existingNames = new Set(list.map((c) => c.name.toLowerCase().trim()));
+
+    const inferIconAndColor = (name: string, group: BudgetGroup): { iconKey: string; colorValue: string } => {
+      const lower = name.toLowerCase();
+      if (/motor|mobil|service|servis|bensin|parkir|ojol|transport|tol|bengkel/i.test(lower)) {
+        return { iconKey: 'Car', colorValue: '#3B82F6' };
+      }
+      if (/makan|minum|jajan|kopi|kuliner|masak|sembako/i.test(lower)) {
+        return { iconKey: 'Utensils', colorValue: '#F97316' };
+      }
+      if (/listrik|pln|token/i.test(lower)) {
+        return { iconKey: 'Zap', colorValue: '#EAB308' };
+      }
+      if (/wifi|wi-fi|internet|kuota|pulsa/i.test(lower)) {
+        return { iconKey: 'Smartphone', colorValue: '#06B6D4' };
+      }
+      if (/cicilan|utang|hutang|angsuran|tagihan|kpr|paylater/i.test(lower)) {
+        return { iconKey: 'Receipt', colorValue: '#EF4444' };
+      }
+      if (group === 'tabungan') {
+        return { iconKey: 'PiggyBank', colorValue: '#10B981' };
+      }
+      if (group === 'keinginan') {
+        return { iconKey: 'ShoppingBag', colorValue: '#EC4899' };
+      }
+      return { iconKey: 'Home', colorValue: '#0D9488' };
+    };
+
+    for (const sub of subs) {
+      const subName = (sub.name || '').trim();
+      if (!subName) continue;
+      const subNameLower = subName.toLowerCase();
+
+      // If this subcategory already has a matching category by name, enrich its emoji/group if needed
+      if (existingNames.has(subNameLower)) {
+        continue;
+      }
+
+      const groupName =
+        sub.group === 'tabungan'
+          ? 'Tabungan'
+          : sub.group === 'keinginan'
+          ? 'Keinginan'
+          : 'Kebutuhan';
+
+      const isDebtSub =
+        sub.id.startsWith('sub-debt-') ||
+        /^(cicilan|utang|hutang|angsuran|kpr|paylater)\b/i.test(subNameLower);
+      const isFixedSub =
+        isDebtSub ||
+        Boolean(sub.dueDateDay) ||
+        Boolean(sub.subscriptionId) ||
+        FIXED_EXPENSE_KEYWORDS_REGEX.test(subNameLower);
+
+      const expenseNature =
+        sub.group === 'tabungan'
+          ? 'savings'
+          : isFixedSub
+          ? 'fixed'
+          : sub.isNonDaily
+          ? 'non_daily'
+          : sub.isGroceryStock
+          ? 'non_daily'
+          : 'variable';
+
+      const { iconKey, colorValue } = inferIconAndColor(subName, sub.group);
+      const catId = existingIds.has(sub.id) ? `cat-${sub.id}` : sub.id;
+
+      list.push({
+        id: catId,
+        name: subName,
+        type: 'expense',
+        groupName,
+        budgetGroup: sub.group,
+        expenseNature,
+        iconKey,
+        emoji: sub.emoji,
+        colorValue,
+        isDefault: false,
+      });
+      existingIds.add(catId);
+      existingNames.add(subNameLower);
+    }
+
+    return list;
+  }, [baseCategories, budgetConfig?.subcategories]);
 
   // Active Date & Reference Period (Defaults to current real date & month)
   const getTodayDateStr = () => {
@@ -926,13 +1022,25 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const deletedSet = new Set<string>(cloudDeleted);
     setDeletedIds(cloudDeleted);
 
-    // 1. Transactions directly from Firestore
+    // 1. Transactions directly from Firestore (preserving any newer local edits in-flight)
     const cloudTxMap = new Map<string, Transaction>();
     for (const t of [...(mirrorTx || []), ...(loadedTx || [])]) {
       if (!t?.id || deletedSet.has(t.id)) continue;
       const existing = cloudTxMap.get(t.id);
       if (!existing || (t.updatedAt || '') >= (existing.updatedAt || '')) {
         cloudTxMap.set(t.id, t);
+      }
+    }
+    const localStoredTx = loadStoredTransactions(primaryUid);
+    for (const localTx of localStoredTx) {
+      if (!localTx?.id || deletedSet.has(localTx.id)) continue;
+      const cloudExisting = cloudTxMap.get(localTx.id);
+      if (cloudExisting && (localTx.updatedAt || '') > (cloudExisting.updatedAt || '')) {
+        cloudTxMap.set(localTx.id, localTx);
+        saveUserTransaction(primaryUid, localTx).catch(() => {});
+        if (mirrorUid && mirrorUid !== primaryUid) {
+          saveUserTransaction(mirrorUid, localTx).catch(() => {});
+        }
       }
     }
     const finalTx = Array.from(cloudTxMap.values()).sort(
@@ -2362,6 +2470,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
 
     const hasMatchingExpenseInPeriod = (targetNameLower: string, minAmount?: number): boolean => {
+      const isCicilanTarget = /^(cicilan|angsuran|utang|hutang)\b/i.test(targetNameLower);
       const cleanTarget = targetNameLower.replace(/^cicilan\s+/i, '').trim();
       if (!cleanTarget) return false;
       let matchedSum = 0;
@@ -2370,6 +2479,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         const cleanNote = rawNote
           .replace(/\(otomatis rutin\)|\(rutin\)|\(langganan\)|\(bulanan\)|bayar cicilan utang:|cicilan utang:/gi, '')
           .trim();
+        const txHasDebtIntent =
+          /\b(cicilan|angsuran|utang|hutang|kpr|paylater)\b/i.test(rawNote) ||
+          tx.categoryId === 'cat-tagihan';
+
+        if (isCicilanTarget && !txHasDebtIntent && cleanNote !== targetNameLower) {
+          continue;
+        }
+
         const isMatch =
           cleanNote === targetNameLower ||
           cleanNote === cleanTarget ||
@@ -2769,28 +2886,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const now = new Date().toISOString();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
     let targetTx: Transaction | undefined;
-    setTransactions((prev) => {
-      const updated = prev.map((t) => {
-        if (t.id === id) {
-          targetTx = { ...t, ...data, updatedAt: now };
-          return targetTx;
-        }
-        return t;
-      });
-      saveStoredTransactions(updated, localScopeUid);
-      if (mirrorUid) saveStoredTransactions(updated, mirrorUid);
-      return updated;
+    const updatedTxList = transactions.map((t) => {
+      if (t.id === id) {
+        targetTx = { ...t, ...data, updatedAt: now };
+        return targetTx;
+      }
+      return t;
     });
+
+    if (!targetTx && existingTx) {
+      targetTx = { ...existingTx, ...data, updatedAt: now };
+    }
+
+    setTransactions(updatedTxList);
+    saveStoredTransactions(updatedTxList, localScopeUid);
+    if (mirrorUid) saveStoredTransactions(updatedTxList, mirrorUid);
 
     const oldIncAmt = existingTx?.type === 'income' ? Number(existingTx.amount) || 0 : 0;
     const newIncAmt = nextType === 'income' ? Number(nextAmount) || 0 : 0;
     const incDelta = newIncAmt - oldIncAmt;
-    let nextBudgetConfig = budgetConfig;
-    let budgetChanged = false;
+    let nextBudgetConfig: BudgetConfig = {
+      ...budgetConfig,
+      updatedAt: now,
+    };
     if (incDelta !== 0 && Boolean(budgetConfig?.settings?.autoSyncIncome)) {
-      const updatedTxList = transactions.map((t) =>
-        t.id === id ? ({ ...t, ...data, updatedAt: now } as Transaction) : t
-      );
       const { periodRecordedIncome } = resolveEffectivePeriodIncome(
         budgetConfig,
         updatedTxList,
@@ -2801,11 +2920,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         estimatedIncome: periodRecordedIncome,
         updatedAt: now,
       };
-      budgetChanged = true;
-      setBudgetConfig(nextBudgetConfig);
-      saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
-      if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
     }
+    setBudgetConfig(nextBudgetConfig);
+    saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
+    if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
 
     if (isCloudUser && user?.uid && targetTx) {
       saveUserTransaction(user.uid, targetTx).catch((err) =>
@@ -2814,13 +2932,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (mirrorUid) {
         saveUserTransaction(mirrorUid, targetTx).catch(() => {});
       }
-      if (budgetChanged) {
-        persistExtendedBudgetToCloud(user.uid, mirrorUid, {
-          budgetConfig: nextBudgetConfig,
-        });
-      }
+      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+        budgetConfig: nextBudgetConfig,
+      });
     }
 
+    setEditingTransaction(null);
     addToast('Transaksi Diperbarui', 'Perubahan transaksi berhasil disimpan.');
     return true;
   };

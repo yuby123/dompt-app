@@ -228,6 +228,8 @@ export interface AppSettings {
   customPeriodStart?: string;
   customNextPayday?: string;
   manualIncomePeriodKey?: string;
+  autoSyncIncome?: boolean;
+  periodBudgets?: Record<string, number>;
 }
 
 export interface WalletWithBalance extends Wallet {

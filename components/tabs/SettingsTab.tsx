@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Lock,
   Check,
@@ -10,8 +10,8 @@ import {
   Sun,
   Moon,
   LogIn,
+  LogOut,
   Users,
-  Cloud,
   AlertTriangle,
   Loader2,
   BookOpen,
@@ -22,6 +22,7 @@ import {
   KeyRound,
   Eye,
   EyeOff,
+  ChevronRight,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
@@ -30,10 +31,12 @@ export function SettingsTab() {
   const {
     settings,
     updateSettings,
+    toggleHideBalance,
     setThemeMode,
     setAccentColor,
     setAppPin,
     disableAppPin,
+    lockApp,
     exportToCSV,
     resetAllAppData,
     addToast,
@@ -43,40 +46,30 @@ export function SettingsTab() {
     setActiveTab,
     dataResetVersion,
     isAdmin,
-    userRole,
     userAccountStatus,
     managedUsers,
     bugReports,
     changeAccountPassword,
   } = useApp();
 
-  const syncKey = `${user?.uid || 'guest'}_${settings.userName}_${settings.userEmail}_${dataResetVersion}`;
-  const [prevSyncKey, setPrevSyncKey] = useState(syncKey);
+  const savedDisplayName = settings.userName || user?.displayName || 'Pengguna';
+  const savedEmail = user?.email || settings.userEmail || '';
 
-  const [userNameInput, setUserNameInput] = useState(
-    user?.displayName || settings.userName || 'Trisna'
-  );
-  const [emailInput, setEmailInput] = useState(
-    user?.email || settings.userEmail || 'creator1@dompt.com'
-  );
-  const [currencyInput, setCurrencyInput] = useState(settings.currency || 'IDR (Rp)');
-  const [languageInput, setLanguageInput] = useState(settings.language || 'Bahasa Indonesia');
-  const [showDecimals, setShowDecimals] = useState(settings.showDecimals || false);
+  const [userNameInput, setUserNameInput] = useState(savedDisplayName);
+  const [emailInput, setEmailInput] = useState(savedEmail);
 
-  if (prevSyncKey !== syncKey) {
-    setPrevSyncKey(syncKey);
-    setUserNameInput(user?.displayName || settings.userName || 'Trisna');
-    setEmailInput(user?.email || settings.userEmail || 'creator1@dompt.com');
-    setCurrencyInput(settings.currency || 'IDR (Rp)');
-    setLanguageInput(settings.language || 'Bahasa Indonesia');
-    setShowDecimals(Boolean(settings.showDecimals));
-  }
+  // Sync local form inputs whenever user session or settings change
+  useEffect(() => {
+    setUserNameInput(settings.userName || user?.displayName || 'Pengguna');
+    setEmailInput(user?.email || settings.userEmail || '');
+  }, [settings.userName, settings.userEmail, user?.displayName, user?.email, dataResetVersion]);
 
   const themeChoice = settings.themeMode || 'light';
   const accentChoice = settings.accentColor || 'lime';
   const isPink = accentChoice === 'pink';
   const isOrange = accentChoice === 'orange';
   const isPlum = accentChoice === 'plum';
+
   const accentBg = isPlum
     ? 'bg-[#71325A] text-white'
     : isOrange
@@ -84,6 +77,7 @@ export function SettingsTab() {
     : isPink
     ? 'bg-[#FFA4A4] text-black'
     : 'bg-[#D4F826] text-black';
+
   const accentBtn = isPlum
     ? 'bg-[#71325A] hover:bg-[#5E274A] text-white'
     : isOrange
@@ -91,6 +85,7 @@ export function SettingsTab() {
     : isPink
     ? 'bg-[#FFA4A4] hover:bg-[#ff8e8e] text-black'
     : 'bg-[#D4F826] hover:bg-[#c6ec15] text-black';
+
   const accentBorder = isPlum
     ? 'border-[#71325A]'
     : isOrange
@@ -98,6 +93,7 @@ export function SettingsTab() {
     : isPink
     ? 'border-[#FFA4A4]'
     : 'border-[#D4F826]';
+
   const accentFocusRing = isPlum
     ? 'focus:ring-[#71325A]'
     : isOrange
@@ -121,19 +117,39 @@ export function SettingsTab() {
   const [pwdError, setPwdError] = useState('');
   const [pwdSaving, setPwdSaving] = useState(false);
 
+  // Reset Confirmation Modal state
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+
+  // Avatar Modal & Upload state
+  const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
+  const currentAvatar = settings.avatarUrl || user?.photoURL || '👩‍💼';
+  const [avatarPreview, setAvatarPreview] = useState<string>(currentAvatar);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const PRESET_AVATARS = [
+    '👩‍💼', '👨‍💼', '🧑‍💻', '👩‍💻', '🦊', '🦁', '🐱', '🐼',
+    '🐻', '🦄', '🚀', '💎', '👑', '💼', '🕶️', '☕',
+    '🌟', '💰', '🎯', '🏖️', '⚡', '🏆', '🔥', '🛡️',
+  ];
+
+  const pendingAdminTasks =
+    managedUsers.filter((u) => u.status === 'pending').length +
+    bugReports.filter((b) => b.status === 'open').length;
+
   const handleSaveNewPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setPwdError('');
     if (!oldPasswordInput) {
-      setPwdError('Masukkan password lama Anda.');
+      setPwdError('Masukkan password lama.');
       return;
     }
     if (newPasswordInput.length < 6) {
-      setPwdError('Password baru minimal harus 6 karakter.');
+      setPwdError('Password baru minimal 6 karakter.');
       return;
     }
     if (newPasswordInput !== confirmNewPasswordInput) {
-      setPwdError('Konfirmasi password baru tidak cocok.');
+      setPwdError('Konfirmasi password tidak cocok.');
       return;
     }
     setPwdSaving(true);
@@ -152,28 +168,12 @@ export function SettingsTab() {
     }
   };
 
-  // Reset Confirmation Modal state
-  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
-
-  // Avatar Modal & Upload state
-  const [isAvatarModalOpen, setIsAvatarModalOpen] = useState(false);
-  const currentAvatar = settings.avatarUrl || user?.photoURL || '👩‍💼';
-  const [avatarPreview, setAvatarPreview] = useState<string>(currentAvatar);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const PRESET_AVATARS = [
-    '👩‍💼', '👨‍💼', '🧑‍💻', '👩‍💻', '🦊', '🦁', '🐱', '🐼',
-    '🐻', '🦄', '🚀', '💎', '👑', '💼', '🕶️', '☕',
-    '🌟', '💰', '🎯', '🏖️', '⚡', '🏆', '🔥', '🛡️',
-  ];
-
   const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      addToast('Format Tidak Didukung', 'Harap pilih file gambar (JPG, PNG, WebP).', 'error');
+      addToast('Format Tidak Didukung', 'Pilih file gambar (JPG, PNG, WebP).', 'error');
       return;
     }
 
@@ -198,41 +198,44 @@ export function SettingsTab() {
       img.src = reader.result as string;
     };
     reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handleSaveAvatar = () => {
-    updateSettings({ avatarUrl: avatarPreview });
+    updateSettings({ avatarUrl: avatarPreview }, true);
     setIsAvatarModalOpen(false);
-    addToast('Avatar Diperbarui', 'Foto profil Anda berhasil diubah.');
+    addToast('Foto Diperbarui', 'Avatar profil berhasil disimpan.');
   };
 
   const handleResetAvatar = () => {
     setAvatarPreview('👩‍💼');
-    updateSettings({ avatarUrl: '👩‍💼' });
+    updateSettings({ avatarUrl: '👩‍💼' }, true);
     setIsAvatarModalOpen(false);
-    addToast('Avatar Direset', 'Avatar kembali ke karakter default.');
+    addToast('Avatar Direset', 'Avatar dikembalikan ke default.');
   };
 
-  const handleSavePreferences = (e: React.FormEvent) => {
+  const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    updateSettings({
-      userName: userNameInput.trim() || 'Trisna',
-      userEmail: emailInput.trim() || 'creator1@dompt.com',
-      currency: currencyInput,
-      language: languageInput,
-      showDecimals,
-    }, true);
-    addToast('Pengaturan Disimpan', 'Preferensi akun berhasil diperbarui.');
+    const cleanName = userNameInput.trim() || user?.displayName || 'Pengguna';
+    const cleanEmail = user?.email || emailInput.trim() || '';
+    updateSettings(
+      {
+        userName: cleanName,
+        userEmail: cleanEmail,
+      },
+      true
+    );
+    addToast('Profil Disimpan', 'Nama tampilan berhasil diperbarui.');
   };
 
   const handleCreatePin = (e: React.FormEvent) => {
     e.preventDefault();
     if (newPin.length !== 4) {
-      setPinError('PIN harus tepat 4 angka');
+      setPinError('PIN wajib 4 angka.');
       return;
     }
     if (newPin !== confirmPin) {
-      setPinError('Konfirmasi PIN tidak cocok');
+      setPinError('Konfirmasi PIN tidak cocok.');
       return;
     }
     setAppPin(newPin);
@@ -242,304 +245,291 @@ export function SettingsTab() {
     setPinError('');
   };
 
+  const isAvatarImage =
+    currentAvatar.startsWith('http') || currentAvatar.startsWith('data:');
+  const isPreviewImage =
+    avatarPreview.startsWith('http') || avatarPreview.startsWith('data:');
+
   return (
     <div className="space-y-4 lg:space-y-6 pb-28 lg:pb-10">
       {/* Header */}
       <div className="pt-2 lg:pt-0 px-1">
-        <h1 className="text-2xl lg:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
-          Pengaturan
+        <h1 className="font-display text-2xl lg:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
+          Profil & Pengaturan
         </h1>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+          Kelola akun, keamanan, dan tampilan aplikasi.
+        </p>
       </div>
 
-      {/* Responsive Container: Single-Column on Mobile (<lg), 2-Column on Desktop (lg+) */}
+      {/* Main Layout: 2 Columns on Desktop */}
       <div className="space-y-4 lg:space-y-0 lg:grid lg:grid-cols-12 lg:gap-6 lg:items-start">
-        {/* Left Column on Desktop: Profile, Account, Security, AI Credits */}
+        {/* Left Column: Unified Profile & Account + Security */}
         <div className="lg:col-span-5 space-y-4 lg:space-y-5">
-          {/* 1. Profile Avatar & Badge Card */}
-          <div className="bg-white dark:bg-[#16181D] rounded-3xl p-6 shadow-xs border border-gray-100 dark:border-gray-800 text-center space-y-3">
-            <div className="relative w-24 h-24 mx-auto">
-              <div className={`w-full h-full rounded-full border-4 ${accentBorder} overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center shadow-md transition-colors`}>
-                {currentAvatar.startsWith('http') || currentAvatar.startsWith('data:') ? (
-                  <img
-                    src={currentAvatar}
-                    alt={userNameInput}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <span className="text-4xl">{currentAvatar}</span>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setAvatarPreview(currentAvatar);
-                  setIsAvatarModalOpen(true);
-                }}
-                className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-black text-white dark:bg-white dark:text-black flex items-center justify-center shadow-xs cursor-pointer hover:scale-105 active:scale-95 transition-transform"
-                title="Ganti Foto Profil / Avatar"
-              >
-                <Camera size={14} />
-              </button>
-            </div>
-
-            <div>
-              <h2 className="text-xl font-black text-gray-900 dark:text-white">
-                {userNameInput}
-              </h2>
-              <div className="flex items-center justify-center gap-2 mt-1">
-                <span className={`text-[10px] font-black ${accentBg} text-black px-2.5 py-0.5 rounded-full uppercase tracking-wider transition-colors`}>
-                  PRO
-                </span>
-                <span className="text-[11px] text-gray-400 font-semibold">
-                  Diperbarui 26 Mar 2026
-                </span>
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setAvatarPreview(currentAvatar);
-                  setIsAvatarModalOpen(true);
-                }}
-                className="flex-1 py-2.5 rounded-2xl bg-gray-100 dark:bg-gray-800 text-xs font-extrabold text-gray-800 dark:text-gray-200 hover:bg-gray-200 cursor-pointer active:scale-95 transition-transform"
-              >
-                Ganti Avatar
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  addToast(
-                    'Status Langganan',
-                    'Akun Anda aktif sebagai Dompt PRO Seumur Hidup.'
-                  )
-                }
-                className={`flex-1 py-2.5 rounded-2xl ${accentBtn} text-black text-xs font-black shadow-xs transition-colors cursor-pointer`}
-              >
-                Kelola Langganan
-              </button>
-            </div>
-          </div>
-
-          {/* 2. Akun & Multi-User Card */}
-          <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className={`w-8 h-8 rounded-xl ${accentBg} text-black flex items-center justify-center font-black transition-colors`}>
-                  <Users size={16} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
-                    Akun & Multi-User
-                  </h3>
-                  <p className="text-[11px] text-gray-400">
-                    Tiap pengguna memiliki catatan pribadi terpisah
-                  </p>
-                </div>
-              </div>
-              {user ? (
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full border border-emerald-500/20">
-                  <Cloud size={12} />
-                  {(user as any).isLocalAccount ? 'Akun Aktif' : 'Cloud Aktif'}
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full border border-amber-500/20">
-                  Mode Tamu
-                </span>
-              )}
-            </div>
-
-            {user ? (
-              <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 space-y-3">
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full ${accentBg} text-black font-black flex items-center justify-center overflow-hidden shrink-0 transition-colors`}>
-                    {currentAvatar.startsWith('http') || currentAvatar.startsWith('data:') ? (
-                      <img
-                        src={currentAvatar}
-                        alt={user.displayName || 'User'}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : currentAvatar ? (
-                      <span className="text-lg">{currentAvatar}</span>
-                    ) : (
-                      (user.displayName || user.email || 'U')[0].toUpperCase()
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <p className="text-xs font-black text-gray-900 dark:text-white truncate">
-                        {user.displayName || 'Pengguna Dompt'}
-                      </p>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                          isAdmin
-                            ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-500/20'
-                            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-500/20'
-                        }`}
-                      >
-                        {isAdmin ? 'Admin Super App' : `User (${userAccountStatus === 'active' ? 'ACC Aktif' : userAccountStatus})`}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-gray-400 truncate">{user.email}</p>
-                  </div>
-                </div>
-
-                <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
-                  Catatan dompet, transaksi, dan target untuk <strong>{user.email}</strong> tersimpan
-                  aman dan terisolasi dari pengguna lain.
-                </p>
-
-                {/* Super App Quick Navigation */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('feedback')}
-                    className="py-2.5 px-3 rounded-xl bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-500/20 text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
-                  >
-                    <Bug size={14} />
-                    <span>Masukan / Lapor Bug</span>
-                  </button>
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('admin')}
-                      className="py-2.5 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black flex items-center justify-center gap-2 transition-colors shadow-xs cursor-pointer"
-                    >
-                      <ShieldCheck size={14} />
-                      <span>
-                        Dashboard Admin
-                        {managedUsers.filter((u) => u.status === 'pending').length +
-                          bugReports.filter((b) => b.status === 'open').length >
-                          0 &&
-                          ` (${
-                            managedUsers.filter((u) => u.status === 'pending').length +
-                            bugReports.filter((b) => b.status === 'open').length
-                          })`}
-                      </span>
-                    </button>
+          {/* 1. Unified Profile & Account Card */}
+          <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 sm:p-6 border border-slate-100 dark:border-white/[0.08] space-y-5">
+            <div className="flex items-center gap-4">
+              <div className="relative w-18 h-18 shrink-0">
+                <div
+                  className={`w-full h-full rounded-full border-2 ${accentBorder} overflow-hidden bg-slate-100 dark:bg-slate-800 flex items-center justify-center transition-colors`}
+                >
+                  {isAvatarImage ? (
+                    <img
+                      src={currentAvatar}
+                      alt={savedDisplayName}
+                      referrerPolicy="no-referrer"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-3xl">{currentAvatar}</span>
                   )}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAvatarPreview(currentAvatar);
+                    setIsAvatarModalOpen(true);
+                  }}
+                  className="absolute -bottom-0.5 -right-0.5 w-7 h-7 rounded-full bg-slate-900 text-white dark:bg-white dark:text-slate-900 flex items-center justify-center shadow-xs cursor-pointer hover:scale-105 active:scale-95 transition-transform"
+                  title="Ubah Foto Profil"
+                  aria-label="Ubah Foto Profil"
+                >
+                  <Camera size={13} />
+                </button>
+              </div>
 
-                <div className="flex gap-2 pt-1">
+              <div className="min-w-0 flex-1">
+                <h2 className="font-display text-lg font-extrabold text-slate-900 dark:text-white truncate">
+                  {savedDisplayName}
+                </h2>
+                {savedEmail && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                    {savedEmail}
+                  </p>
+                )}
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">
+                    {isAdmin ? 'Admin' : user ? 'Akun Terhubung' : 'Mode Tamu'}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span
+                    className={
+                      user
+                        ? userAccountStatus === 'active'
+                          ? 'text-emerald-600 dark:text-emerald-400 font-medium'
+                          : 'text-amber-600 dark:text-amber-400 font-medium'
+                        : 'text-slate-400'
+                    }
+                  >
+                    {user
+                      ? userAccountStatus === 'active'
+                        ? 'Aktif'
+                        : userAccountStatus === 'pending'
+                        ? 'Menunggu ACC'
+                        : 'Nonaktif'
+                      : 'Penyimpanan Lokal'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Account Actions */}
+            {user ? (
+              <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-white/[0.06]">
+                <div className="grid grid-cols-2 gap-2 pt-2">
                   <button
                     type="button"
                     onClick={openLoginModal}
-                    className="flex-1 py-2 px-3 rounded-xl border border-gray-200 dark:border-gray-700 text-xs font-bold hover:bg-gray-100 dark:hover:bg-gray-700/60 transition-colors cursor-pointer"
+                    className="py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200/80 dark:bg-white/[0.06] dark:hover:bg-white/[0.1] text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
-                    Ganti Akun
+                    <Users size={14} />
+                    <span>Ganti Akun</span>
                   </button>
                   <button
                     type="button"
                     onClick={signOutUser}
-                    className="py-2 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 text-xs font-bold transition-colors cursor-pointer"
+                    className="py-2.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/30 dark:hover:bg-rose-950/50 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
-                    Keluar
+                    <LogOut size={14} />
+                    <span>Keluar</span>
                   </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('feedback')}
+                    className="py-2.5 px-3 rounded-xl border border-slate-200/80 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-white/[0.04] text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Bug size={14} className="text-amber-500" />
+                    <span>Lapor Bug</span>
+                  </button>
+
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('admin')}
+                      className={`py-2.5 px-3 rounded-xl ${accentBtn} text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer`}
+                    >
+                      <ShieldCheck size={14} />
+                      <span>
+                        Panel Admin
+                        {pendingAdminTasks > 0 ? ` (${pendingAdminTasks})` : ''}
+                      </span>
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
-              <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800 space-y-3">
-                <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
-                  Saat ini Anda menggunakan <strong>Mode Tamu</strong>. Masuk dengan{' '}
-                  <strong>Email & Password</strong> agar catatan terpisah untuk setiap pengguna.
+              <div className="pt-2 border-t border-slate-100 dark:border-white/[0.06] space-y-2.5">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Masuk akun untuk sinkronisasi otomatis antar perangkat.
                 </p>
                 <button
                   type="button"
                   onClick={openLoginModal}
-                  className={`w-full py-2.5 px-3 rounded-xl ${accentBtn} text-black text-xs font-black transition-all flex items-center justify-center gap-2 shadow-xs cursor-pointer`}
+                  className={`w-full py-2.5 px-4 rounded-xl ${accentBtn} text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer`}
                 >
                   <LogIn size={15} />
-                  <span>Masuk / Pilih Akun Pribadi</span>
+                  <span>Masuk / Daftar Akun</span>
                 </button>
               </div>
             )}
           </div>
 
-
-          {/* 4. Keamanan & PIN */}
-          <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
+          {/* 2. Keamanan Aplikasi */}
+          <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 sm:p-6 border border-slate-100 dark:border-white/[0.08] space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Lock size={16} className={isOrange ? 'text-[#EA580C]' : isPink ? 'text-[#F43F5E]' : 'text-[#84CC16]'} />
-                <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
-                  Keamanan Aplikasi
+                <Lock
+                  size={16}
+                  className={
+                    isPlum
+                      ? 'text-[#A855F7]'
+                      : isOrange
+                      ? 'text-[#EA580C]'
+                      : isPink
+                      ? 'text-[#F43F5E]'
+                      : 'text-[#84CC16]'
+                  }
+                />
+                <h3 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                  Keamanan
                 </h3>
               </div>
-              <span
-                className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                  settings.pinEnabled
-                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                    : 'bg-gray-100 text-gray-500 dark:bg-gray-800'
-                }`}
-              >
-                {settings.pinEnabled ? 'AKTIF' : 'NONAKTIF'}
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                PIN ·{' '}
+                <strong
+                  className={
+                    settings.pinEnabled
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : 'text-slate-400'
+                  }
+                >
+                  {settings.pinEnabled ? 'Aktif' : 'Nonaktif'}
+                </strong>
               </span>
             </div>
 
             {settings.pinEnabled ? (
-              <div className="flex gap-2 pt-1">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsSettingPin(true)}
-                  className="flex-1 py-2 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-700 dark:text-gray-300 cursor-pointer"
+                  onClick={lockApp}
+                  className={`py-2 px-2.5 rounded-xl ${accentBtn} text-xs font-bold cursor-pointer transition-colors`}
+                >
+                  Kunci
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPinError('');
+                    setNewPin('');
+                    setConfirmPin('');
+                    setIsSettingPin((v) => !v);
+                  }}
+                  className="py-2 px-2.5 rounded-xl bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200/80 dark:hover:bg-white/[0.1] text-xs font-bold text-slate-700 dark:text-slate-200 cursor-pointer transition-colors"
                 >
                   Ubah PIN
                 </button>
                 <button
                   type="button"
-                  onClick={disableAppPin}
-                  className="flex-1 py-2 rounded-xl bg-red-50 dark:bg-red-950/40 text-xs font-bold text-red-600 dark:text-red-400 cursor-pointer"
+                  onClick={() => {
+                    setIsSettingPin(false);
+                    disableAppPin();
+                  }}
+                  className="py-2 px-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/30 hover:bg-rose-100 text-xs font-bold text-rose-600 dark:text-rose-400 cursor-pointer transition-colors"
                 >
-                  Matikan PIN
+                  Matikan
                 </button>
               </div>
             ) : (
               <button
                 type="button"
-                onClick={() => setIsSettingPin(true)}
-                className="w-full py-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 text-xs font-bold text-gray-800 dark:text-gray-200 cursor-pointer hover:bg-gray-200"
+                onClick={() => {
+                  setPinError('');
+                  setNewPin('');
+                  setConfirmPin('');
+                  setIsSettingPin((v) => !v);
+                }}
+                className="w-full py-2.5 rounded-xl bg-slate-100 dark:bg-white/[0.06] hover:bg-slate-200/80 dark:hover:bg-white/[0.1] text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer transition-colors"
               >
-                Aktifkan Kunci Aplikasi (PIN)
+                Pasang PIN 4 Digit
               </button>
             )}
 
             {isSettingPin && (
-              <form onSubmit={handleCreatePin} className="space-y-3 pt-2">
+              <form
+                onSubmit={handleCreatePin}
+                className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200/70 dark:border-white/[0.08] space-y-3"
+              >
                 <div className="grid grid-cols-2 gap-2">
                   <input
                     type="password"
+                    inputMode="numeric"
                     maxLength={4}
                     value={newPin}
-                    onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
-                    placeholder="4 Digit PIN"
+                    onChange={(e) => {
+                      setPinError('');
+                      setNewPin(e.target.value.replace(/\D/g, ''));
+                    }}
+                    placeholder="PIN 4 Angka"
                     required
-                    className="p-3 bg-gray-50 dark:bg-gray-800 border rounded-xl text-center text-sm font-bold"
+                    className="p-2.5 bg-white dark:bg-[#11131A] border border-slate-200 dark:border-white/10 rounded-xl text-center font-mono text-xs font-bold tabular-nums text-slate-900 dark:text-white focus:outline-none"
                   />
                   <input
                     type="password"
+                    inputMode="numeric"
                     maxLength={4}
                     value={confirmPin}
-                    onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                    onChange={(e) => {
+                      setPinError('');
+                      setConfirmPin(e.target.value.replace(/\D/g, ''));
+                    }}
                     placeholder="Ulangi PIN"
                     required
-                    className="p-3 bg-gray-50 dark:bg-gray-800 border rounded-xl text-center text-sm font-bold"
+                    className="p-2.5 bg-white dark:bg-[#11131A] border border-slate-200 dark:border-white/10 rounded-xl text-center font-mono text-xs font-bold tabular-nums text-slate-900 dark:text-white focus:outline-none"
                   />
                 </div>
-                {pinError && <p className="text-[10px] text-red-500 font-bold">{pinError}</p>}
+                {pinError && (
+                  <p className="text-xs text-rose-600 dark:text-rose-400 font-semibold">
+                    {pinError}
+                  </p>
+                )}
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsSettingPin(false)}
-                    className="flex-1 py-2 bg-gray-100 dark:bg-gray-800 rounded-xl text-xs font-bold"
+                    onClick={() => {
+                      setIsSettingPin(false);
+                      setPinError('');
+                    }}
+                    className="flex-1 py-2 bg-slate-200/70 dark:bg-white/10 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
                   >
                     Batal
                   </button>
                   <button
                     type="submit"
-                    className={`flex-1 py-2 ${accentBg} text-black rounded-xl text-xs font-bold`}
+                    className={`flex-1 py-2 ${accentBtn} rounded-xl text-xs font-bold cursor-pointer`}
                   >
                     Simpan PIN
                   </button>
@@ -549,12 +539,12 @@ export function SettingsTab() {
 
             {/* Ubah Password Login Section */}
             {user && (
-              <div className="pt-3 border-t border-gray-100 dark:border-gray-800 space-y-2.5">
+              <div className="pt-3 border-t border-slate-100 dark:border-white/[0.06] space-y-2.5">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <KeyRound size={15} className="text-indigo-500" />
-                    <span className="text-xs font-extrabold text-gray-900 dark:text-white">
-                      Password Login Akun
+                    <KeyRound size={15} className="text-slate-400" />
+                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      Password Akun
                     </span>
                   </div>
                   <button
@@ -563,25 +553,25 @@ export function SettingsTab() {
                       setPwdError('');
                       setIsChangingPassword((prev) => !prev);
                     }}
-                    className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    className="text-xs font-bold text-slate-600 dark:text-slate-300 hover:underline cursor-pointer"
                   >
-                    {isChangingPassword ? 'Tutup' : 'Ubah Password'}
+                    {isChangingPassword ? 'Tutup' : 'Ubah'}
                   </button>
                 </div>
 
                 {isChangingPassword && (
                   <form
                     onSubmit={handleSaveNewPassword}
-                    className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200/70 dark:border-gray-700/70 space-y-2.5"
+                    className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200/70 dark:border-white/[0.08] space-y-2.5"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
-                        Akun: {user.email}
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        {user.email}
                       </span>
                       <button
                         type="button"
                         onClick={() => setShowPwdFields((p) => !p)}
-                        className="text-[11px] font-bold text-gray-500 hover:text-gray-800 dark:hover:text-white flex items-center gap-1 cursor-pointer"
+                        className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-white flex items-center gap-1 cursor-pointer shrink-0"
                       >
                         {showPwdFields ? <EyeOff size={13} /> : <Eye size={13} />}
                         <span>{showPwdFields ? 'Sembunyikan' : 'Lihat'}</span>
@@ -592,29 +582,29 @@ export function SettingsTab() {
                       type={showPwdFields ? 'text' : 'password'}
                       value={oldPasswordInput}
                       onChange={(e) => setOldPasswordInput(e.target.value)}
-                      placeholder="Masukkan Password Lama"
+                      placeholder="Password lama"
                       required
-                      className="w-full p-2.5 bg-white dark:bg-[#11131A] border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-semibold text-gray-900 dark:text-white"
+                      className="w-full p-2.5 bg-white dark:bg-[#11131A] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:outline-none"
                     />
                     <input
                       type={showPwdFields ? 'text' : 'password'}
                       value={newPasswordInput}
                       onChange={(e) => setNewPasswordInput(e.target.value)}
-                      placeholder="Password Baru (minimal 6 karakter)"
+                      placeholder="Password baru (min. 6 karakter)"
                       required
-                      className="w-full p-2.5 bg-white dark:bg-[#11131A] border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-semibold text-gray-900 dark:text-white"
+                      className="w-full p-2.5 bg-white dark:bg-[#11131A] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:outline-none"
                     />
                     <input
                       type={showPwdFields ? 'text' : 'password'}
                       value={confirmNewPasswordInput}
                       onChange={(e) => setConfirmNewPasswordInput(e.target.value)}
-                      placeholder="Ulangi Password Baru"
+                      placeholder="Ulangi password baru"
                       required
-                      className="w-full p-2.5 bg-white dark:bg-[#11131A] border border-gray-200 dark:border-gray-700 rounded-xl text-xs font-semibold text-gray-900 dark:text-white"
+                      className="w-full p-2.5 bg-white dark:bg-[#11131A] border border-slate-200 dark:border-white/10 rounded-xl text-xs font-semibold text-slate-900 dark:text-white focus:outline-none"
                     />
 
                     {pwdError && (
-                      <p className="text-[11px] text-rose-600 dark:text-rose-400 font-bold">
+                      <p className="text-xs text-rose-600 dark:text-rose-400 font-semibold">
                         {pwdError}
                       </p>
                     )}
@@ -626,16 +616,16 @@ export function SettingsTab() {
                           setIsChangingPassword(false);
                           setPwdError('');
                         }}
-                        className="flex-1 py-2 bg-gray-200/70 dark:bg-gray-700 rounded-xl text-xs font-bold cursor-pointer"
+                        className="flex-1 py-2 bg-slate-200/70 dark:bg-white/10 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
                       >
                         Batal
                       </button>
                       <button
                         type="submit"
                         disabled={pwdSaving}
-                        className={`flex-1 py-2 ${accentBg} text-black rounded-xl text-xs font-black cursor-pointer disabled:opacity-50`}
+                        className={`flex-1 py-2 ${accentBtn} rounded-xl text-xs font-bold cursor-pointer disabled:opacity-50`}
                       >
-                        {pwdSaving ? 'Menyimpan...' : 'Simpan Password'}
+                        {pwdSaving ? 'Menyimpan...' : 'Simpan'}
                       </button>
                     </div>
                   </form>
@@ -645,252 +635,195 @@ export function SettingsTab() {
           </div>
         </div>
 
-        {/* Right Column on Desktop: Preferensi + Manajemen Data */}
+        {/* Right Column: Preferensi Tampilan & Manajemen Data */}
         <div className="lg:col-span-7 space-y-4 lg:space-y-5">
-          {/* Form Preferensi */}
-          <form
-            onSubmit={handleSavePreferences}
-            className="bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 space-y-4"
-          >
-            <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
-              Preferensi
+          {/* 3. Preferensi & Tampilan */}
+          <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 sm:p-6 border border-slate-100 dark:border-white/[0.08] space-y-5">
+            <h3 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+              Tampilan & Preferensi
             </h3>
 
-            {/* Nama Tampilan */}
-            <div>
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block mb-1.5">
-                NAMA TAMPILAN
-              </label>
-              <input
-                type="text"
-                value={userNameInput}
-                onChange={(e) => setUserNameInput(e.target.value)}
-                className={`w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 ${accentFocusRing}`}
-              />
-            </div>
-
-            {/* Alamat Email */}
-            <div>
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block mb-1.5">
-                EMAIL
-              </label>
-              <input
-                type="email"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                className={`w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 ${accentFocusRing}`}
-              />
-            </div>
-
-            {/* Mata Uang & Bahasa */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block mb-1.5">
-                  MATA UANG UTAMA
-                </label>
-                <select
-                  value={currencyInput}
-                  onChange={(e) => setCurrencyInput(e.target.value)}
-                  className={`w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 ${accentFocusRing}`}
-                >
-                  <option value="IDR (Rp)">IDR (Rp) - Rupiah</option>
-                  <option value="USD ($)">USD ($) - Dollar</option>
-                  <option value="EUR (€)">EUR (€) - Euro</option>
-                  <option value="SGD (S$)">SGD (S$) - Dollar</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block mb-1.5">
-                  BAHASA
-                </label>
-                <select
-                  value={languageInput}
-                  onChange={(e) => setLanguageInput(e.target.value)}
-                  className={`w-full p-3.5 bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700/80 rounded-2xl text-xs font-bold text-gray-900 dark:text-white focus:outline-none focus:ring-2 ${accentFocusRing}`}
-                >
-                  <option value="Bahasa Indonesia">Bahasa Indonesia</option>
-                  <option value="English">English</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Mode Tampilan (Terang / Gelap) */}
-            <div>
-              <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block mb-1.5">
-                MODE TEMA
-              </label>
-              <div className="grid grid-cols-2 gap-2 mt-1">
-                <button
-                  type="button"
-                  onClick={() => setThemeMode('light')}
-                  className={`py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer border ${
-                    themeChoice === 'light'
-                      ? isOrange
-                        ? 'bg-[#FFEDD5] text-orange-950 border-[#FF6B00] shadow-xs'
-                        : isPink
-                        ? 'bg-[#FFE4E8] text-black border-[#F43F5E] shadow-xs'
-                        : 'bg-[#EEF9B4] text-black border-[#84CC16] shadow-xs'
-                      : 'bg-gray-50 dark:bg-gray-800/60 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700/80 hover:bg-gray-100 dark:hover:bg-gray-800'
-                  }`}
-                >
-                  <Sun
-                    size={15}
-                    className={
-                      themeChoice === 'light'
-                        ? isOrange
-                          ? 'text-[#EA580C]'
-                          : isPink
-                          ? 'text-[#E11D48]'
-                          : 'text-[#65A30D]'
-                        : 'text-gray-400'
-                    }
+            {/* Form Profil Tampilan */}
+            <form onSubmit={handleSaveProfile} className="space-y-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 block mb-1.5">
+                    Nama Tampilan
+                  </label>
+                  <input
+                    type="text"
+                    value={userNameInput}
+                    onChange={(e) => setUserNameInput(e.target.value)}
+                    placeholder="Nama Anda"
+                    className={`w-full p-3 bg-slate-50 dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 rounded-2xl text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:ring-2 ${accentFocusRing}`}
                   />
-                  <span>Terang</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setThemeMode('dark')}
-                  className={`py-2.5 px-3 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer border ${
-                    themeChoice === 'dark'
-                      ? isOrange
-                        ? 'bg-gray-900 text-white border-gray-900 dark:bg-[#FF6B00]/25 dark:text-[#FF8A3D] dark:border-[#FF6B00] shadow-xs'
-                        : isPink
-                        ? 'bg-gray-900 text-white border-gray-900 dark:bg-[#FFA4A4]/20 dark:text-[#FFA4A4] dark:border-[#FFA4A4] shadow-xs'
-                        : 'bg-gray-900 text-white border-gray-900 dark:bg-[#EEF9B4]/20 dark:text-[#D4F826] dark:border-[#D4F826] shadow-xs'
-                      : 'bg-gray-50 dark:bg-gray-800/60 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700/80 hover:bg-gray-100 dark:hover:bg-gray-800'
-                  }`}
-                >
-                  <Moon
-                    size={15}
-                    className={themeChoice === 'dark' ? 'text-blue-400' : 'text-gray-400'}
-                  />
-                  <span>Gelap</span>
-                </button>
-              </div>
-            </div>
+                </div>
 
-            {/* Warna Aksen & Desimal */}
-            <div className="grid grid-cols-2 gap-3 pt-1">
-              <div>
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block mb-1.5">
-                  WARNA AKSEN
-                </label>
-                <div className="flex items-center gap-3 mt-2">
-                  <button
-                    type="button"
-                    data-swatch="lime"
-                    onClick={() => setAccentColor('lime')}
-                    className={`w-8 h-8 rounded-full bg-[#D4F826] border-2 cursor-pointer transition-transform ${
-                      accentChoice === 'lime'
-                        ? 'scale-110 border-black dark:border-white shadow-xs'
-                        : 'border-transparent'
+                <div>
+                  <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 block mb-1.5">
+                    Email {user?.email ? '(Akun Login)' : '(Opsional)'}
+                  </label>
+                  <input
+                    type="email"
+                    value={emailInput}
+                    readOnly={Boolean(user?.email)}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    placeholder="nama@email.com"
+                    className={`w-full p-3 border rounded-2xl text-xs font-bold focus:outline-none ${
+                      user?.email
+                        ? 'bg-slate-100 dark:bg-white/[0.02] border-slate-200/70 dark:border-white/[0.06] text-slate-500 dark:text-slate-400 cursor-not-allowed'
+                        : `bg-slate-50 dark:bg-white/[0.04] border-slate-200 dark:border-white/10 text-slate-900 dark:text-white focus:ring-2 ${accentFocusRing}`
                     }`}
-                    title="Lime Green"
-                  />
-                  <button
-                    type="button"
-                    data-swatch="pink"
-                    onClick={() => setAccentColor('pink')}
-                    className={`w-8 h-8 rounded-full bg-[#FFA4A4] border-2 cursor-pointer transition-transform ${
-                      accentChoice === 'pink'
-                        ? 'scale-110 border-black dark:border-white shadow-xs'
-                        : 'border-transparent'
-                    }`}
-                    title="Soft Coral Pink"
-                  />
-                  <button
-                    type="button"
-                    data-swatch="orange"
-                    onClick={() => setAccentColor('orange')}
-                    className={`w-8 h-8 rounded-full bg-[#FF6B00] border-2 cursor-pointer transition-transform ${
-                      accentChoice === 'orange'
-                        ? 'scale-110 border-black dark:border-white shadow-xs'
-                        : 'border-transparent'
-                    }`}
-                    title="Sunset Orange"
-                  />
-                  <button
-                    type="button"
-                    data-swatch="plum"
-                    onClick={() => setAccentColor('plum')}
-                    className={`w-8 h-8 rounded-full bg-[#71325A] border-2 cursor-pointer transition-transform ${
-                      accentChoice === 'plum'
-                        ? 'scale-110 border-black dark:border-white shadow-xs ring-2 ring-[#71325A]/40'
-                        : 'border-transparent'
-                    }`}
-                    title="Deep Plum (#71325A)"
                   />
                 </div>
               </div>
 
+              <button
+                type="submit"
+                className={`w-full py-3 ${accentBtn} text-xs font-bold rounded-2xl transition-colors cursor-pointer flex items-center justify-center gap-1.5`}
+              >
+                <Check size={15} strokeWidth={2.5} />
+                <span>Simpan Profil</span>
+              </button>
+            </form>
+
+            <div className="border-t border-slate-100 dark:border-white/[0.06] pt-4 space-y-4">
+              {/* Privasi Saldo Toggle */}
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-slate-900 dark:text-white">
+                    Sembunyikan Nominal Saldo
+                  </p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Samarkan angka rupiah di layar utama (Rp •••••••).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleHideBalance}
+                  role="switch"
+                  aria-checked={settings.hideBalance}
+                  className={`w-11 h-6 rounded-full p-0.5 transition-colors relative cursor-pointer shrink-0 ${
+                    settings.hideBalance ? accentBg : 'bg-slate-200 dark:bg-slate-700'
+                  }`}
+                >
+                  <div
+                    className={`w-5 h-5 rounded-full bg-white shadow-2xs transition-transform ${
+                      settings.hideBalance ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Mode Tema */}
               <div>
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-wider block mb-1.5">
-                  TAMPILKAN DESIMAL
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 block mb-2">
+                  Tema Aplikasi
                 </label>
-                <div className="flex items-center gap-2 mt-2">
+                <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-slate-100 dark:bg-white/[0.04]">
                   <button
                     type="button"
-                    onClick={() => setShowDecimals(!showDecimals)}
-                    className={`w-12 h-6.5 rounded-full p-1 transition-colors relative cursor-pointer ${
-                      showDecimals ? accentBg : 'bg-gray-200 dark:bg-gray-700'
+                    onClick={() => setThemeMode('light')}
+                    className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                      themeChoice === 'light'
+                        ? 'bg-white dark:bg-[#1E222B] text-slate-900 dark:text-white shadow-2xs'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
-                    <div
-                      className={`w-4.5 h-4.5 rounded-full bg-white transition-transform ${
-                        showDecimals ? 'translate-x-5' : 'translate-x-0'
-                      }`}
+                    <Sun
+                      size={15}
+                      className={themeChoice === 'light' ? 'text-amber-500' : 'text-slate-400'}
                     />
+                    <span>Terang</span>
                   </button>
-                  <span className="text-[11px] font-bold text-gray-500">10.50</span>
+                  <button
+                    type="button"
+                    onClick={() => setThemeMode('dark')}
+                    className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                      themeChoice === 'dark'
+                        ? 'bg-white dark:bg-[#1E222B] text-slate-900 dark:text-white shadow-2xs'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <Moon
+                      size={15}
+                      className={themeChoice === 'dark' ? 'text-indigo-400' : 'text-slate-400'}
+                    />
+                    <span>Gelap</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Warna Aksen */}
+              <div>
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-400 block mb-2">
+                  Warna Aksen
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { id: 'lime' as const, label: 'Lime', bg: 'bg-[#D4F826]' },
+                    { id: 'pink' as const, label: 'Pink', bg: 'bg-[#FFA4A4]' },
+                    { id: 'orange' as const, label: 'Oranye', bg: 'bg-[#FF6B00]' },
+                    { id: 'plum' as const, label: 'Plum', bg: 'bg-[#71325A]' },
+                  ].map((swatch) => {
+                    const active = accentChoice === swatch.id;
+                    return (
+                      <button
+                        key={swatch.id}
+                        type="button"
+                        data-swatch={swatch.id}
+                        onClick={() => setAccentColor(swatch.id)}
+                        className={`py-2 px-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                          active
+                            ? 'border-slate-900 dark:border-white bg-slate-50 dark:bg-white/[0.06] text-slate-900 dark:text-white font-bold'
+                            : 'border-slate-200/80 dark:border-white/10 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/[0.03]'
+                        }`}
+                      >
+                        <span className={`w-3.5 h-3.5 rounded-full ${swatch.bg} shrink-0`} />
+                        <span className="truncate">{swatch.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Simpan Perubahan Button */}
-            <button
-              type="submit"
-              className={`w-full py-3.5 ${accentBtn} text-black text-xs font-black rounded-2xl shadow-xs transition-colors cursor-pointer mt-2 flex items-center justify-center gap-1.5`}
-            >
-              <Check size={16} strokeWidth={2.8} />
-              <span>Simpan Perubahan</span>
-            </button>
-          </form>
-
-          {/* 5. Manajemen Data & Panduan */}
-          <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 lg:p-6 shadow-xs border border-gray-100 dark:border-gray-800 space-y-3">
-            <h3 className="text-sm font-extrabold text-gray-900 dark:text-white">
-              Manajemen Data
+          {/* 4. Data & Bantuan */}
+          <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 sm:p-6 border border-slate-100 dark:border-white/[0.08] space-y-3">
+            <h3 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+              Data & Panduan
             </h3>
 
             <button
               type="button"
               onClick={() => setActiveTab('tutorial')}
-              className="w-full p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 hover:bg-gray-100 dark:hover:bg-gray-800 flex items-center justify-between text-xs font-bold text-gray-800 dark:text-gray-200 cursor-pointer transition-colors"
+              className="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-white/[0.04] hover:bg-slate-100 dark:hover:bg-white/[0.08] flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer transition-colors"
             >
               <div className="flex items-center gap-2.5">
                 <BookOpen size={16} className="text-amber-500" />
-                <span>Buka Panduan Fitur & Cara Penggunaan</span>
+                <span>Panduan Aplikasi</span>
               </div>
+              <ChevronRight size={15} className="text-slate-400" />
             </button>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-0.5">
               <button
                 type="button"
                 onClick={exportToCSV}
-                className="w-full p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 hover:bg-gray-100 flex items-center justify-center gap-2 text-xs font-bold text-gray-800 dark:text-gray-200 cursor-pointer border border-gray-200/60 dark:border-gray-700/60"
+                className="w-full p-3.5 rounded-2xl bg-slate-50 dark:bg-white/[0.04] hover:bg-slate-100 dark:hover:bg-white/[0.08] flex items-center justify-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer border border-slate-200/60 dark:border-white/[0.06] transition-colors"
               >
-                <FileSpreadsheet size={16} className="text-emerald-600" />
-                <span>Export ke CSV</span>
+                <FileSpreadsheet size={16} className="text-emerald-600 dark:text-emerald-400" />
+                <span>Ekspor CSV</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setIsResetConfirmOpen(true)}
-                className="w-full p-3.5 rounded-2xl bg-red-50 dark:bg-red-950/20 hover:bg-red-100 flex items-center justify-center gap-2 text-xs font-bold text-red-600 dark:text-red-400 cursor-pointer border border-red-200/60 dark:border-red-900/40 transition-colors"
+                className="w-full p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/20 hover:bg-rose-100 dark:hover:bg-rose-950/40 flex items-center justify-center gap-2 text-xs font-bold text-rose-600 dark:text-rose-400 cursor-pointer border border-rose-200/60 dark:border-rose-900/40 transition-colors"
               >
                 <RotateCcw size={16} />
-                <span>Reset Semua Data</span>
+                <span>Reset Data</span>
               </button>
             </div>
           </div>
@@ -902,25 +835,31 @@ export function SettingsTab() {
         {isResetConfirmOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              initial={{ opacity: 0, scale: 0.95, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="relative w-full max-w-sm bg-white dark:bg-[#16181D] rounded-3xl p-6 shadow-2xl border border-gray-100 dark:border-gray-800 text-gray-900 dark:text-white space-y-4"
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              className="relative w-full max-w-sm bg-white dark:bg-[#16181D] rounded-3xl p-6 shadow-2xl border border-slate-100 dark:border-white/[0.08] text-slate-900 dark:text-white space-y-4"
             >
-              <div className="w-12 h-12 rounded-2xl bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
-                <AlertTriangle size={24} />
+              <div className="w-11 h-11 rounded-2xl bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
+                <AlertTriangle size={22} />
               </div>
 
-              <div className="text-center space-y-1.5">
-                <h3 className="text-base font-black">Reset Seluruh Data?</h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-                  {user
-                    ? `Semua catatan transaksi, saldo dompet, dan target pada akun cloud Anda (${user.email}) akan dihapus dan dikosongkan. Tindakan ini tidak dapat dibatalkan.`
-                    : 'Semua transaksi dan dompet pada perangkat ini akan dikosongkan kembali ke pengaturan awal. Tindakan ini tidak dapat dibatalkan.'}
+              <div className="text-center space-y-1">
+                <h3 className="font-display text-base font-extrabold">Reset Semua Data?</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Transaksi, dompet, dan anggaran akan dikosongkan ke nol. Tindakan ini permanen.
                 </p>
               </div>
 
-              <div className="flex flex-col gap-2 pt-2">
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isResetting}
+                  onClick={() => setIsResetConfirmOpen(false)}
+                  className="flex-1 py-2.5 px-4 rounded-2xl bg-slate-100 dark:bg-white/[0.06] font-bold text-xs text-slate-700 dark:text-slate-300 cursor-pointer disabled:opacity-50"
+                >
+                  Batal
+                </button>
                 <button
                   type="button"
                   disabled={isResetting}
@@ -933,23 +872,14 @@ export function SettingsTab() {
                       setIsResetting(false);
                     }
                   }}
-                  className="w-full py-3 px-4 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-black text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                  className="flex-1 py-2.5 px-4 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
                   {isResetting ? (
-                    <Loader2 size={16} className="animate-spin" />
+                    <Loader2 size={15} className="animate-spin" />
                   ) : (
-                    <RotateCcw size={16} />
+                    <RotateCcw size={15} />
                   )}
-                  <span>{isResetting ? 'Mereset Data...' : 'Ya, Reset Semua Data'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isResetting}
-                  onClick={() => setIsResetConfirmOpen(false)}
-                  className="w-full py-2.5 px-4 rounded-2xl border border-gray-200 dark:border-gray-700 font-bold text-xs hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-gray-700 dark:text-gray-300 cursor-pointer disabled:opacity-50"
-                >
-                  Batal
+                  <span>{isResetting ? 'Mereset...' : 'Ya, Reset'}</span>
                 </button>
               </div>
             </motion.div>
@@ -966,77 +896,82 @@ export function SettingsTab() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsAvatarModalOpen(false)}
-              className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+              className="fixed inset-0 bg-black/60 backdrop-blur-xs"
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 12 }}
-              className="relative w-full max-w-md bg-white dark:bg-[#16181D] rounded-[28px] p-6 shadow-2xl border border-gray-100 dark:border-gray-800 z-10 overflow-hidden space-y-5"
+              className="relative w-full max-w-sm bg-white dark:bg-[#16181D] rounded-3xl p-5 sm:p-6 shadow-2xl border border-slate-100 dark:border-white/[0.08] z-10 overflow-hidden space-y-4"
             >
               {/* Header */}
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-base font-extrabold text-gray-900 dark:text-white">
-                    Pilih Foto Profil / Avatar
+                  <h3 className="font-display text-base font-extrabold text-slate-900 dark:text-white">
+                    Foto Profil
                   </h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    Unggah foto dari galeri atau pilih karakter emoji favorit.
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Unggah foto atau pilih avatar.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsAvatarModalOpen(false)}
-                  className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors cursor-pointer"
+                  className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-white/[0.06] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
                 >
                   <X size={18} />
                 </button>
               </div>
 
-              {/* Big Live Preview */}
-              <div className="flex flex-col items-center justify-center py-2 space-y-2">
-                <div className={`relative w-24 h-24 rounded-full border-4 ${accentBorder} overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center shadow-lg transition-colors`}>
-                  {avatarPreview.startsWith('http') || avatarPreview.startsWith('data:') ? (
+              {/* Live Preview + Upload */}
+              <div className="flex items-center gap-4 p-3 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-100 dark:border-white/[0.06]">
+                <div
+                  className={`w-16 h-16 rounded-full border-2 ${accentBorder} overflow-hidden bg-white dark:bg-slate-800 flex items-center justify-center shrink-0`}
+                >
+                  {isPreviewImage ? (
                     <img
                       src={avatarPreview}
-                      alt="Preview"
+                      alt="Pratinjau"
                       referrerPolicy="no-referrer"
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <span className="text-4xl">{avatarPreview}</span>
+                    <span className="text-3xl">{avatarPreview}</span>
                   )}
                 </div>
-                <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400">
-                  Pratinjau Avatar
-                </span>
-              </div>
 
-              {/* Upload Photo Button */}
-              <div>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleImageFileChange}
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full py-3 px-4 rounded-2xl bg-gray-50 dark:bg-gray-800/80 hover:bg-gray-100 dark:hover:bg-gray-700/80 border border-dashed border-gray-300 dark:border-gray-700 text-xs font-bold text-gray-800 dark:text-gray-200 flex items-center justify-center gap-2 cursor-pointer transition-colors"
-                >
-                  <Upload size={16} />
-                  <span>Unggah Foto dari Galeri / Kamera</span>
-                </button>
+                <div className="flex-1 space-y-1.5">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleImageFileChange}
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="w-full py-2 px-3 rounded-xl bg-white dark:bg-white/[0.06] hover:bg-slate-100 dark:hover:bg-white/[0.1] border border-slate-200 dark:border-white/10 text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <Upload size={14} />
+                    <span>Unggah Foto</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResetAvatar}
+                    className="w-full py-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                  >
+                    Kembalikan Default
+                  </button>
+                </div>
               </div>
 
               {/* Preset Emojis Grid */}
-              <div className="space-y-2">
-                <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider block">
-                  ATAU PILIH DARI KARAKTER FAVORIT
+              <div className="space-y-1.5">
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 block">
+                  Karakter Avatar
                 </span>
-                <div className="grid grid-cols-6 gap-2 max-h-44 overflow-y-auto p-1.5 rounded-2xl bg-gray-50/60 dark:bg-gray-800/40 border border-gray-100 dark:border-gray-800">
+                <div className="grid grid-cols-6 gap-1.5 max-h-40 overflow-y-auto p-1.5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-100 dark:border-white/[0.06]">
                   {PRESET_AVATARS.map((emoji) => {
                     const isSelected = avatarPreview === emoji;
                     return (
@@ -1044,10 +979,10 @@ export function SettingsTab() {
                         key={emoji}
                         type="button"
                         onClick={() => setAvatarPreview(emoji)}
-                        className={`h-11 rounded-xl text-2xl flex items-center justify-center transition-all cursor-pointer ${
+                        className={`h-10 rounded-xl text-xl flex items-center justify-center transition-all cursor-pointer ${
                           isSelected
-                            ? `${accentBg} scale-105 shadow-xs ring-2 ring-black/10 dark:ring-white/20`
-                            : 'hover:bg-white dark:hover:bg-gray-700/60 hover:scale-105'
+                            ? `${accentBg} scale-105 shadow-2xs`
+                            : 'hover:bg-white dark:hover:bg-white/[0.08]'
                         }`}
                       >
                         {emoji}
@@ -1058,30 +993,21 @@ export function SettingsTab() {
               </div>
 
               {/* Modal Actions */}
-              <div className="flex gap-2.5 pt-2 border-t border-gray-100 dark:border-gray-800">
-                <button
-                  type="button"
-                  onClick={handleResetAvatar}
-                  className="px-3.5 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-xs font-bold text-gray-600 dark:text-gray-300 flex items-center gap-1.5 cursor-pointer"
-                  title="Kembalikan ke default"
-                >
-                  <RotateCcw size={13} />
-                  <span className="hidden sm:inline">Reset</span>
-                </button>
+              <div className="flex gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => setIsAvatarModalOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-xs font-bold text-gray-800 dark:text-gray-200 cursor-pointer"
+                  className="flex-1 py-2.5 rounded-2xl bg-slate-100 dark:bg-white/[0.06] text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveAvatar}
-                  className={`flex-1 py-2.5 rounded-xl ${accentBtn} text-black text-xs font-black shadow-xs cursor-pointer flex items-center justify-center gap-1.5`}
+                  className={`flex-1 py-2.5 rounded-2xl ${accentBtn} text-xs font-bold shadow-2xs cursor-pointer flex items-center justify-center gap-1.5`}
                 >
-                  <Check size={14} strokeWidth={3} />
-                  <span>Terapkan</span>
+                  <Check size={14} strokeWidth={2.5} />
+                  <span>Simpan</span>
                 </button>
               </div>
             </motion.div>

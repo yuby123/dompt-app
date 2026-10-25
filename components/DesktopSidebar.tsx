@@ -99,7 +99,8 @@ export function DesktopSidebar() {
     { id: 'settings', label: 'Profil', icon: Settings },
   ];
 
-  const displayName = user?.displayName || settings.userName || 'Trisna';
+  const displayName = settings.userName || user?.displayName || 'Pengguna';
+  const avatarSource = settings.avatarUrl || user?.photoURL || '';
 
   return (
     <aside className="hidden lg:flex flex-col w-[264px] shrink-0 h-screen sticky top-0 bg-white dark:bg-[#0B0D14] border-r border-slate-100 dark:border-white/[0.08] px-5 py-6 select-none justify-between z-30">
@@ -204,39 +205,34 @@ export function DesktopSidebar() {
         >
           <div
             className={`relative w-9 h-9 rounded-full border ${
-              isOrange ? 'border-[#FF6B00]' : isPink ? 'border-[#FFA4A4]' : 'border-[#D4F826]'
+              isPlum
+                ? 'border-[#71325A]'
+                : isOrange
+                ? 'border-[#FF6B00]'
+                : isPink
+                ? 'border-[#FFA4A4]'
+                : 'border-[#D4F826]'
             } overflow-hidden bg-slate-900 text-white font-display font-bold flex items-center justify-center shrink-0 text-xs`}
           >
-            {user?.photoURL?.startsWith('http') || user?.photoURL?.startsWith('data:') || settings.avatarUrl?.startsWith('http') || settings.avatarUrl?.startsWith('data:') ? (
+            {avatarSource.startsWith('http') || avatarSource.startsWith('data:') ? (
               <img
-                src={user?.photoURL || settings.avatarUrl}
+                src={avatarSource}
                 alt={displayName}
                 referrerPolicy="no-referrer"
                 className="w-full h-full object-cover"
               />
-            ) : user?.photoURL || settings.avatarUrl ? (
-              <span className="text-base">{user?.photoURL || settings.avatarUrl}</span>
+            ) : avatarSource ? (
+              <span className="text-base">{avatarSource}</span>
             ) : (
               <span>{displayName.slice(0, 2).toUpperCase()}</span>
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                {displayName}
-              </p>
-              <span
-                className={`text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded shrink-0 ${
-                  isAdmin
-                    ? 'bg-[#D4F826] text-black'
-                    : 'bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                {isAdmin ? 'ADMIN' : 'USER'}
-              </span>
-            </div>
+            <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+              {displayName}
+            </p>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-              {isAdmin ? 'Administrator Super App' : 'Akun User Aktif'}
+              {isAdmin ? 'Admin · Aktif' : user ? 'Akun Terhubung' : 'Mode Tamu'}
             </p>
           </div>
         </button>

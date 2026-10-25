@@ -806,11 +806,12 @@ export interface BudgetBreakdownResult {
 }
 
 /**
- * Resolves the effective monthly income for the given budget period.
- * - If the user has recorded actual income transactions in this period (`periodRecordedIncome > 0`),
- *   uses `periodRecordedIncome` unless the user explicitly saved a manual override for this specific `periodKey`.
- * - This prevents cross-period income accumulation or double-counted `estimatedIncome` from inflating
- *   the current period's budget limit or emergency fund baseline.
+ * Resolves the effective monthly budget basis for the given budget period.
+ * - By default, respects the user's manual budget (`periodBudgets[periodKey]` or `estimatedIncome`)
+ *   so monthly budgets can follow remaining funds from the previous month or custom targets
+ *   without being automatically overwritten whenever a new income transaction is recorded.
+ * - Only uses `periodRecordedIncome` automatically if `autoSyncIncome` is explicitly enabled
+ *   or if no manual budget (> 0) has been configured yet.
  */
 export function resolveEffectivePeriodIncome(
   budgetConfig: BudgetConfig | undefined | null,
@@ -834,22 +835,31 @@ export function resolveEffectivePeriodIncome(
     }
   });
 
-  const rawEstimatedIncome =
+  const periodMap = budgetConfig?.settings?.periodBudgets;
+  const periodSpecificBudget =
+    periodMap && typeof periodMap[periodInfo.periodKey] === 'number'
+      ? Math.max(0, periodMap[periodInfo.periodKey])
+      : undefined;
+
+  const fallbackEstimatedIncome =
     typeof budgetConfig?.estimatedIncome === 'number'
       ? Math.max(0, budgetConfig.estimatedIncome)
       : 0;
 
-  const manualPeriodKey = budgetConfig?.settings?.manualIncomePeriodKey;
-  const hasExplicitManualForThisPeriod =
-    Boolean(manualPeriodKey && manualPeriodKey === periodInfo.periodKey) &&
-    rawEstimatedIncome > 0 &&
-    rawEstimatedIncome !== periodRecordedIncome * 2;
+  const rawEstimatedIncome =
+    periodSpecificBudget !== undefined && periodSpecificBudget > 0
+      ? periodSpecificBudget
+      : fallbackEstimatedIncome;
 
-  const effectiveIncome = hasExplicitManualForThisPeriod
+  const isAutoSync = Boolean(budgetConfig?.settings?.autoSyncIncome);
+
+  const effectiveIncome = isAutoSync
+    ? periodRecordedIncome > 0
+      ? periodRecordedIncome
+      : rawEstimatedIncome
+    : rawEstimatedIncome > 0
     ? rawEstimatedIncome
-    : periodRecordedIncome > 0
-    ? periodRecordedIncome
-    : rawEstimatedIncome;
+    : periodRecordedIncome;
 
   return {
     effectiveIncome,

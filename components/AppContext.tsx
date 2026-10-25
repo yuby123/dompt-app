@@ -1076,6 +1076,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       wantsPercent: authoritativeBudgetSource.wantsPercent ?? 30,
       savingsPercent: authoritativeBudgetSource.savingsPercent ?? 20,
       paydayDay: resolvedPaydayDay,
+      periodMode: authoritativeBudgetSource.periodMode || cloudSettings?.periodMode || 'standard',
+      customPeriodStart: authoritativeBudgetSource.customPeriodStart || cloudSettings?.customPeriodStart,
+      customNextPayday: authoritativeBudgetSource.customNextPayday || cloudSettings?.customNextPayday,
+      foodLifestyleMode: authoritativeBudgetSource.foodLifestyleMode,
+      mealsOutPerDay: authoritativeBudgetSource.mealsOutPerDay,
       subcategories: Array.from(subcatMap.values()),
     };
 
@@ -2686,8 +2691,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
 
     let nextBudgetConfig = budgetConfig;
+    let budgetChanged = false;
     const isLoanDisbursement = Boolean(data.note && /^pencairan utang:/i.test(data.note.trim()));
-    if (data.type === 'income' && data.amount > 0 && !isLoanDisbursement) {
+    const isAutoSyncIncome = Boolean(budgetConfig?.settings?.autoSyncIncome);
+    if (data.type === 'income' && data.amount > 0 && !isLoanDisbursement && isAutoSyncIncome) {
       const { periodRecordedIncome } = resolveEffectivePeriodIncome(
         budgetConfig,
         [newTx, ...transactions],
@@ -2702,6 +2709,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         estimatedIncome: nextEst,
         updatedAt: now,
       };
+      budgetChanged = true;
       setBudgetConfig(nextBudgetConfig);
       saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
       if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
@@ -2714,15 +2722,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (mirrorUid) {
         saveUserTransaction(mirrorUid, newTx).catch(() => {});
       }
-      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
-        budgetConfig: nextBudgetConfig,
-      });
+      if (budgetChanged) {
+        persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+          budgetConfig: nextBudgetConfig,
+        });
+      }
     }
 
     if (data.type === 'income' && data.amount > 0 && !isLoanDisbursement) {
       addToast(
-        'Pemasukan Ditambahkan',
-        `${data.note || 'Pemasukan baru'} (+${formatRupiah(data.amount)}) otomatis masuk ke Perkiraan Pemasukan Budget.`
+        'Pemasukan Dicatat',
+        `${data.note || 'Pemasukan baru'} (+${formatRupiah(data.amount)}) berhasil masuk ke dompet.`
       );
     } else {
       addToast('Transaksi Ditambahkan', `${data.note || 'Transaksi baru'} berhasil dicatat.`);
@@ -2776,7 +2786,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const newIncAmt = nextType === 'income' ? Number(nextAmount) || 0 : 0;
     const incDelta = newIncAmt - oldIncAmt;
     let nextBudgetConfig = budgetConfig;
-    if (incDelta !== 0) {
+    let budgetChanged = false;
+    if (incDelta !== 0 && Boolean(budgetConfig?.settings?.autoSyncIncome)) {
       const updatedTxList = transactions.map((t) =>
         t.id === id ? ({ ...t, ...data, updatedAt: now } as Transaction) : t
       );
@@ -2790,6 +2801,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         estimatedIncome: periodRecordedIncome,
         updatedAt: now,
       };
+      budgetChanged = true;
       setBudgetConfig(nextBudgetConfig);
       saveStoredBudgetConfig(nextBudgetConfig, localScopeUid);
       if (mirrorUid) saveStoredBudgetConfig(nextBudgetConfig, mirrorUid);
@@ -2802,9 +2814,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (mirrorUid) {
         saveUserTransaction(mirrorUid, targetTx).catch(() => {});
       }
-      persistExtendedBudgetToCloud(user.uid, mirrorUid, {
-        budgetConfig: nextBudgetConfig,
-      });
+      if (budgetChanged) {
+        persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+          budgetConfig: nextBudgetConfig,
+        });
+      }
     }
 
     addToast('Transaksi Diperbarui', 'Perubahan transaksi berhasil disimpan.');
@@ -2847,7 +2861,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     let nextBudgetConfig = budgetConfig;
     let budgetChanged = false;
 
-    if (deletedTx && deletedTx.type === 'income' && deletedTx.amount > 0) {
+    if (
+      deletedTx &&
+      deletedTx.type === 'income' &&
+      deletedTx.amount > 0 &&
+      Boolean(budgetConfig?.settings?.autoSyncIncome)
+    ) {
       const remainingTxList = transactions.filter((t) => t.id !== id);
       const { periodRecordedIncome } = resolveEffectivePeriodIncome(
         nextBudgetConfig,
@@ -4639,7 +4658,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     );
 
     let nextEstimatedIncome = budgetConfig.estimatedIncome;
-    if (item.type === 'income') {
+    if (item.type === 'income' && Boolean(budgetConfig?.settings?.autoSyncIncome)) {
       const syntheticTx: Transaction = {
         id: createdId,
         type: 'income',
@@ -4748,7 +4767,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
 
     let nextEstimatedIncome = budgetConfig.estimatedIncome;
-    if (item.type === 'income' && txIdSet.size > 0) {
+    if (item.type === 'income' && txIdSet.size > 0 && Boolean(budgetConfig?.settings?.autoSyncIncome)) {
       const { periodRecordedIncome } = resolveEffectivePeriodIncome(
         budgetConfig,
         remainingTxs,
@@ -5044,44 +5063,72 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSettings(updated);
     saveStoredSettings(updated, localScopeUid);
     if (mirrorUid) saveStoredSettings(updated, mirrorUid);
+
+    setBudgetConfig((prev) => {
+      const nextCfg = {
+        ...prev,
+        settings: { ...(prev.settings || {}), ...updated },
+      };
+      saveStoredBudgetConfig(nextCfg, localScopeUid);
+      if (mirrorUid) saveStoredBudgetConfig(nextCfg, mirrorUid);
+      return nextCfg;
+    });
+
+    if (data.userName && data.userName.trim()) {
+      const cleanName = data.userName.trim();
+      setUser((prev) => (prev ? { ...prev, displayName: cleanName } : prev));
+      const activeLocal = loadActiveLocalUser();
+      if (activeLocal) {
+        saveActiveLocalUser({ ...activeLocal, displayName: cleanName });
+      }
+      const regList = loadRegisteredAccounts();
+      const targetEmail = (user?.email || updated.userEmail || '').trim().toLowerCase();
+      if (targetEmail && regList.some((r) => r.email.toLowerCase() === targetEmail)) {
+        saveRegisteredAccounts(
+          regList.map((r) =>
+            r.email.toLowerCase() === targetEmail ? { ...r, displayName: cleanName } : r
+          )
+        );
+        syncLocalManagedUsersList();
+      }
+    }
+
+    if (data.avatarUrl !== undefined) {
+      const newPhotoURL = data.avatarUrl || null;
+      setUser((prev) => (prev ? { ...prev, photoURL: newPhotoURL } : prev));
+      const activeLocal = loadActiveLocalUser();
+      if (activeLocal) {
+        saveActiveLocalUser({ ...activeLocal, photoURL: newPhotoURL });
+      }
+      const regList = loadRegisteredAccounts();
+      const targetEmail = (user?.email || updated.userEmail || '').trim().toLowerCase();
+      if (targetEmail && regList.some((r) => r.email.toLowerCase() === targetEmail)) {
+        saveRegisteredAccounts(
+          regList.map((r) =>
+            r.email.toLowerCase() === targetEmail ? { ...r, photoURL: newPhotoURL } : r
+          )
+        );
+        syncLocalManagedUsersList();
+      }
+    }
+
     if (isCloudUser && user?.uid) {
       persistExtendedBudgetToCloud(user.uid, mirrorUid, { settings: updated });
-      if (data.userName && data.userName.trim()) {
-        const cleanName = data.userName.trim();
-        setUser((prev) => (prev ? { ...prev, displayName: cleanName } : prev));
+      if (data.userName !== undefined || data.avatarUrl !== undefined) {
+        const cleanName =
+          (data.userName && data.userName.trim()) ||
+          user.displayName ||
+          updated.userName ||
+          'Pengguna';
         updateCloudUserProfile(user.uid, user.email || '', cleanName, updated).catch(() => {});
         if (mirrorUid) {
           updateCloudUserProfile(mirrorUid, user.email || '', cleanName, updated).catch(() => {});
         }
-        const activeLocal = loadActiveLocalUser();
-        if (activeLocal) {
-          saveActiveLocalUser({ ...activeLocal, displayName: cleanName });
-        }
-      }
-      if (data.avatarUrl !== undefined) {
-        const newPhotoURL = data.avatarUrl || null;
-        setUser((prev) => (prev ? { ...prev, photoURL: newPhotoURL } : prev));
-        updateCloudUserProfile(user.uid, user.email || '', user.displayName || settings.userName || 'User', updated).catch(() => {});
-        if (mirrorUid) {
-          updateCloudUserProfile(mirrorUid, user.email || '', user.displayName || settings.userName || 'User', updated).catch(() => {});
-        }
-        const activeLocal = loadActiveLocalUser();
-        if (activeLocal) {
-          saveActiveLocalUser({ ...activeLocal, photoURL: newPhotoURL });
-        }
-      }
-    } else {
-      if (data.avatarUrl !== undefined) {
-        const newPhotoURL = data.avatarUrl || null;
-        setUser((prev) => (prev ? { ...prev, photoURL: newPhotoURL } : prev));
-        const activeLocal = loadActiveLocalUser();
-        if (activeLocal) {
-          saveActiveLocalUser({ ...activeLocal, photoURL: newPhotoURL });
-        }
       }
     }
+
     if (!silent) {
-      addToast('Pengaturan Disimpan', 'Preferensi akun berhasil diperbarui.');
+      addToast('Pengaturan Disimpan', 'Preferensi berhasil diperbarui.');
     }
   };
 
@@ -5107,8 +5154,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       persistExtendedBudgetToCloud(user.uid, mirrorUid, { settings: updated });
     }
     addToast(
-      mode === 'light' ? 'Mode Terang Aktif' : 'Mode Gelap Aktif',
-      mode === 'light' ? 'Tampilan aplikasi beralih ke mode terang.' : 'Tampilan aplikasi beralih ke mode gelap.',
+      mode === 'light' ? 'Mode Terang' : 'Mode Gelap',
+      mode === 'light' ? 'Tampilan beralih ke mode terang.' : 'Tampilan beralih ke mode gelap.',
       'info'
     );
   };
@@ -5138,21 +5185,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setAppPin = (pin: string) => {
     const simpleHash = btoa(`pin-${pin}`);
-    updateSettings({
-      pinEnabled: true,
-      pinHash: simpleHash,
-      pinLength: pin.length,
-    });
-    addToast('Kunci PIN Aktif', 'Aplikasi sekarang terlindungi dengan PIN.');
+    updateSettings(
+      {
+        pinEnabled: true,
+        pinHash: simpleHash,
+        pinLength: pin.length,
+      },
+      true
+    );
+    addToast('PIN Diaktifkan', 'Aplikasi kini dilindungi PIN 4 digit.');
   };
 
   const disableAppPin = () => {
-    updateSettings({
-      pinEnabled: false,
-      pinHash: undefined,
-    });
+    updateSettings(
+      {
+        pinEnabled: false,
+        pinHash: undefined,
+      },
+      true
+    );
     setIsLocked(false);
-    addToast('Kunci PIN Dinonaktifkan', 'Proteksi PIN telah dimatikan.', 'info');
+    addToast('PIN Dinonaktifkan', 'Kunci PIN aplikasi dimatikan.', 'info');
   };
 
   const verifyPinCode = (pin: string): boolean => {

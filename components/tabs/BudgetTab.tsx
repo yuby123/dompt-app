@@ -71,6 +71,9 @@ export function BudgetTab() {
   // Modals state
   const [isEditIncomeOpen, setIsEditIncomeOpen] = useState(false);
   const [tempIncomeInput, setTempIncomeInput] = useState(String(budgetConfig.estimatedIncome));
+  const [tempAutoSyncIncome, setTempAutoSyncIncome] = useState(
+    Boolean(budgetConfig?.settings?.autoSyncIncome)
+  );
 
   const [isEditPeriodOpen, setIsEditPeriodOpen] = useState(false);
   const [tempPaydayDay, setTempPaydayDay] = useState<number>(budgetPeriod.paydayDay || 1);
@@ -143,11 +146,8 @@ export function BudgetTab() {
     () => resolveEffectivePeriodIncome(budgetConfig, transactions, budgetPeriod),
     [budgetConfig, transactions, budgetPeriod]
   );
-  const isManualIncomeOverride =
-    Boolean(
-      budgetConfig?.settings?.manualIncomePeriodKey &&
-        budgetConfig.settings.manualIncomePeriodKey === budgetPeriod.periodKey
-    ) && totalIncome !== periodRecordedIncome;
+  const isAutoSyncIncome = Boolean(budgetConfig?.settings?.autoSyncIncome);
+  const liquidWalletBalance = Math.max(0, dashboardSummary?.totalBalance || 0);
 
   const needsLimit = Math.round((totalIncome * budgetConfig.needsPercent) / 100);
   const wantsLimit = Math.round((totalIncome * budgetConfig.wantsPercent) / 100);
@@ -692,12 +692,17 @@ export function BudgetTab() {
   const handleSaveIncome = (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseNominalInput(tempIncomeInput);
+    const nextPeriodBudgets = {
+      ...(budgetConfig.settings?.periodBudgets || {}),
+      [budgetPeriod.periodKey]: val,
+    };
     updateBudgetConfig({
       estimatedIncome: val,
       settings: {
         ...(budgetConfig.settings || {}),
-        manualIncomePeriodKey:
-          periodRecordedIncome > 0 && val === periodRecordedIncome ? '' : budgetPeriod.periodKey,
+        manualIncomePeriodKey: budgetPeriod.periodKey,
+        autoSyncIncome: tempAutoSyncIncome,
+        periodBudgets: nextPeriodBudgets,
       },
     });
     setIsEditIncomeOpen(false);
@@ -1497,19 +1502,15 @@ export function BudgetTab() {
 
         {/* Row 1: Income & Period Controls */}
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-          {/* Left: Basis Pemasukan */}
+          {/* Left: Basis Budget */}
           <div className="space-y-2">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-[11px] font-extrabold text-[#D4F826] uppercase tracking-wider">
-                Basis Pemasukan
+                Basis Budget
               </span>
               <span className="text-[11px] text-gray-500">·</span>
               <span className="text-[11px] font-medium text-gray-300">
-                {isManualIncomeOverride
-                  ? 'Target Manual'
-                  : periodRecordedIncome > 0
-                  ? 'Dari Transaksi'
-                  : 'Estimasi'}
+                {isAutoSyncIncome ? 'Ikuti Pemasukan' : 'Atur Manual'}
               </span>
             </div>
 
@@ -1521,40 +1522,35 @@ export function BudgetTab() {
                 type="button"
                 onClick={() => {
                   setTempIncomeInput(formatNominalInput(totalIncome));
+                  setTempAutoSyncIncome(Boolean(budgetConfig?.settings?.autoSyncIncome));
                   setIsEditIncomeOpen(true);
                 }}
                 className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-bold text-gray-200 hover:text-white flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0"
-                title="Ubah Basis Pemasukan"
+                title="Ubah Basis Budget"
               >
                 <Pencil size={12} />
                 <span>Ubah</span>
               </button>
             </div>
 
-            {periodRecordedIncome > 0 && totalIncome !== periodRecordedIncome && (
-              <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                <span className="text-[11px] text-gray-300 font-mono-num tabular-nums">
-                  Transaksi tercatat:{' '}
-                  <strong className="text-emerald-300">
-                    {formatRupiah(periodRecordedIncome, hide)}
-                  </strong>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    updateBudgetConfig({
-                      estimatedIncome: periodRecordedIncome,
-                      settings: {
-                        ...(budgetConfig.settings || {}),
-                        manualIncomePeriodKey: '',
-                      },
-                    });
-                  }}
-                  className="bg-[#D4F826]/15 hover:bg-[#D4F826]/25 border border-[#D4F826]/30 px-2 py-0.5 rounded-lg text-[#D4F826] text-[10px] font-extrabold flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
-                >
-                  <RotateCcw size={10} />
-                  <span>Gunakan</span>
-                </button>
+            {(periodRecordedIncome > 0 || liquidWalletBalance > 0) && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-0.5 text-[11px] text-gray-400 font-mono-num tabular-nums">
+                {liquidWalletBalance > 0 && (
+                  <span>
+                    Saldo dompet:{' '}
+                    <strong className="text-gray-200">
+                      {formatRupiah(liquidWalletBalance, hide)}
+                    </strong>
+                  </span>
+                )}
+                {periodRecordedIncome > 0 && (
+                  <span>
+                    Pemasukan tercatat:{' '}
+                    <strong className="text-emerald-300">
+                      {formatRupiah(periodRecordedIncome, hide)}
+                    </strong>
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -2211,7 +2207,7 @@ export function BudgetTab() {
         })}
       </div>
 
-      {/* Modal: Ubah Pemasukan */}
+      {/* Modal: Atur Basis Budget */}
       <AnimatePresence>
         {isEditIncomeOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
@@ -2222,9 +2218,14 @@ export function BudgetTab() {
               className="bg-white dark:bg-[#16181D] rounded-3xl p-5 sm:p-6 max-w-sm w-full space-y-4 shadow-2xl border border-gray-100 dark:border-gray-800"
             >
               <div className="flex items-center justify-between">
-                <h3 className="font-display text-base font-extrabold text-gray-900 dark:text-white">
-                  Basis Pemasukan
-                </h3>
+                <div>
+                  <h3 className="font-display text-base font-extrabold text-gray-900 dark:text-white">
+                    Basis Budget ({budgetPeriod.periodShortLabel})
+                  </h3>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                    Atur manual sesuai dana tersedia atau sisa bulan lalu.
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={() => setIsEditIncomeOpen(false)}
@@ -2235,45 +2236,104 @@ export function BudgetTab() {
               </div>
 
               <form onSubmit={handleSaveIncome} className="space-y-4">
+                {/* Mode Toggle: Manual vs Auto Sync */}
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-gray-100 dark:bg-gray-800/80">
+                  <button
+                    type="button"
+                    onClick={() => setTempAutoSyncIncome(false)}
+                    className={`py-2 px-2.5 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer ${
+                      !tempAutoSyncIncome
+                        ? 'bg-white dark:bg-[#1E222B] text-gray-900 dark:text-white shadow-xs'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    Manual (Tetap)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTempAutoSyncIncome(true);
+                      if (periodRecordedIncome > 0) {
+                        setTempIncomeInput(formatNominalInput(periodRecordedIncome));
+                      }
+                    }}
+                    className={`py-2 px-2.5 rounded-xl text-[11px] font-extrabold transition-all cursor-pointer ${
+                      tempAutoSyncIncome
+                        ? 'bg-white dark:bg-[#1E222B] text-gray-900 dark:text-white shadow-xs'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    Ikuti Pemasukan
+                  </button>
+                </div>
+
                 <div>
                   <label className="text-xs font-bold text-gray-500 block mb-1.5">
-                    Target Pemasukan ({budgetPeriod.periodShortLabel})
+                    Target Budget ({budgetPeriod.periodShortLabel})
                   </label>
                   <input
                     type="text"
                     inputMode="numeric"
                     value={tempIncomeInput}
-                    onChange={(e) => setTempIncomeInput(formatNominalInput(e.target.value))}
-                    placeholder="Contoh: 6.764.000"
+                    onChange={(e) => {
+                      setTempIncomeInput(formatNominalInput(e.target.value));
+                      setTempAutoSyncIncome(false);
+                    }}
+                    placeholder="Contoh: 5.500.000"
                     className="w-full p-3.5 bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-2xl text-base font-extrabold text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#D4F826] font-mono-num tabular-nums"
                   />
-                  <p className="text-[11px] text-gray-400 mt-1.5">
-                    Otomatis mengikuti transaksi pemasukan periode ini kecuali diatur manual.
+                  <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
+                    {!tempAutoSyncIncome
+                      ? 'Dikunci manual. Tidak ikut berubah saat ada pemasukan baru.'
+                      : 'Otomatis menyesuaikan total transaksi pemasukan periode ini.'}
                   </p>
                 </div>
 
-                {periodRecordedIncome > 0 && (
-                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
-                    <div className="flex items-center justify-between text-xs font-mono-num tabular-nums">
-                      <span className="font-bold text-emerald-700 dark:text-emerald-300">
-                        Transaksi Tercatat:
-                      </span>
-                      <span className="font-extrabold text-emerald-700 dark:text-emerald-300">
-                        {formatRupiah(periodRecordedIncome)}
-                      </span>
+                {(liquidWalletBalance > 0 || periodRecordedIncome > 0) && (
+                  <div className="space-y-1.5">
+                    <span className="text-[11px] font-bold text-gray-400 block">
+                      Isi Cepat:
+                    </span>
+                    <div className="space-y-1.5">
+                      {liquidWalletBalance > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTempIncomeInput(formatNominalInput(liquidWalletBalance));
+                            setTempAutoSyncIncome(false);
+                          }}
+                          className="w-full py-2 px-3 rounded-xl bg-gray-50 dark:bg-gray-800/60 hover:bg-gray-100 dark:hover:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs font-bold text-gray-700 dark:text-gray-200 transition-colors cursor-pointer flex items-center justify-between font-mono-num tabular-nums"
+                        >
+                          <span className="font-sans font-bold text-gray-500 dark:text-gray-400">
+                            Saldo Dompet Saat Ini
+                          </span>
+                          <span className="font-extrabold text-gray-900 dark:text-white">
+                            {formatRupiah(liquidWalletBalance)}
+                          </span>
+                        </button>
+                      )}
+                      {periodRecordedIncome > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTempIncomeInput(formatNominalInput(periodRecordedIncome));
+                            setTempAutoSyncIncome(false);
+                          }}
+                          className="w-full py-2 px-3 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/15 border border-emerald-500/25 text-xs font-bold text-emerald-700 dark:text-emerald-300 transition-colors cursor-pointer flex items-center justify-between font-mono-num tabular-nums"
+                        >
+                          <span className="font-sans font-bold">
+                            Pemasukan Tercatat
+                          </span>
+                          <span className="font-extrabold">
+                            {formatRupiah(periodRecordedIncome)}
+                          </span>
+                        </button>
+                      )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setTempIncomeInput(formatNominalInput(periodRecordedIncome))}
-                      className="w-full py-2 px-3 rounded-xl bg-white dark:bg-gray-800 border border-emerald-500/30 text-xs font-extrabold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-gray-700 transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-                    >
-                      <Check size={13} strokeWidth={2.5} />
-                      <span>Ikuti Transaksi ({formatRupiah(periodRecordedIncome)})</span>
-                    </button>
                   </div>
                 )}
 
-                <div className="flex gap-2">
+                <div className="flex gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => setIsEditIncomeOpen(false)}

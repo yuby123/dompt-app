@@ -423,7 +423,11 @@ export function WalletsTab() {
                         style={{
                           backgroundColor: `${accentBarColor}15`,
                           borderColor: `${accentBarColor}35`,
-                          color: detectedBrand?.id === 'neobank' ? '#D97706' : accentBarColor,
+                          color:
+                            detectedBrand &&
+                            ['neobank', 'maybank', 'allo', 'jago'].includes(detectedBrand.id)
+                              ? '#D97706'
+                              : accentBarColor,
                         }}
                       >
                         {detectedBrand

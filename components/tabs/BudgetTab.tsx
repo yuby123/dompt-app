@@ -26,7 +26,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
 import { EmojiPickerModal } from '../EmojiPickerModal';
 import { formatRupiah, formatNominalInput, parseNominalInput } from '@/lib/formatters';
-import { BudgetGroup, BudgetSubcategory, Category } from '@/lib/types';
+import { BudgetGroup, BudgetSubcategory, Category, DailyDeficitMode, DailySurplusMode } from '@/lib/types';
 import {
   FIXED_CATEGORY_IDS,
   FIXED_EXPENSE_KEYWORDS_REGEX,
@@ -55,6 +55,8 @@ export function BudgetTab() {
     deleteBudgetSubcategory,
     updateBudgetSubcategory,
     settings,
+    updateSettings,
+    addToast,
     transactions,
     categories,
     activeYear,
@@ -1769,13 +1771,53 @@ export function BudgetTab() {
                         </span>
                       </div>
 
+                      <div className="flex items-center justify-between text-gray-300 pt-1 border-t border-white/10">
+                        <span>Logika Surplus / Defisit:</span>
+                        <button
+                          type="button"
+                          onClick={openFoodLifestyleModal}
+                          className="text-[10px] font-extrabold text-[#D4F826] hover:underline cursor-pointer"
+                        >
+                          {dashboardSummary.dailySurplusMode === 'save_weekend'
+                            ? 'Save Weekend'
+                            : dashboardSummary.dailySurplusMode === 'averaging'
+                            ? 'Averaging'
+                            : 'Rollover'}{' '}
+                          / {dashboardSummary.dailyDeficitMode === 'strict_penalty' ? 'Strict' : 'Spread'}
+                        </button>
+                      </div>
+
+                      {dashboardSummary.dailySurplusMode === 'save_weekend' &&
+                        dashboardSummary.weekendBudgetPool > 0 && (
+                          <div className="flex items-center justify-between text-emerald-300">
+                            <span>Tabungan Kuota Weekend:</span>
+                            <span className="font-extrabold">
+                              +{formatRupiah(dashboardSummary.weekendBudgetPool, hide)}
+                            </span>
+                          </div>
+                        )}
+
                       {dashboardSummary.dailyOverbudget &&
                       budgetPeriod.daysRemainingUntilPayday > 1 ? (
                         <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-between text-[10px]">
                           <span className="font-extrabold text-rose-300">
-                            Hari ini lewat +{formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}
+                            Hari ini lewat +{formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)} (
+                            {dashboardSummary.dailyDeficitMode === 'strict_penalty'
+                              ? 'Strict Penalty'
+                              : 'Spread Deficit'}
+                            )
                           </span>
                           <span className="font-bold text-amber-300">
+                            Besok ~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hr
+                          </span>
+                        </div>
+                      ) : budgetPeriod.daysRemainingUntilPayday > 1 &&
+                        dashboardSummary.dailyBudgetQuota > 0 ? (
+                        <div className="p-2 rounded-xl bg-white/[0.04] border border-white/10 flex items-center justify-between text-[10px]">
+                          <span className="text-gray-300 font-semibold">
+                            Sisa hari ini: {formatRupiah(dashboardSummary.dailyBudgetRemaining, hide)}
+                          </span>
+                          <span className="font-bold text-[#D4F826]">
                             Besok ~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hr
                           </span>
                         </div>
@@ -3284,6 +3326,123 @@ export function BudgetTab() {
                           {formatRupiah(dashboardSummary.remainingVariableBudget, hide)} (~
                           {formatRupiah(currentDailyQuota, hide)}/hr)
                         </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs pt-1">
+                        <span className="text-gray-500 dark:text-gray-400 font-semibold">
+                          Proyeksi Kuota Besok:
+                        </span>
+                        <span className="font-extrabold text-sky-600 dark:text-sky-400">
+                          ~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hr
+                          {dashboardSummary.dailySurplusMode === 'save_weekend' &&
+                            dashboardSummary.weekendBudgetPool > 0 &&
+                            ` (Weekend +${formatRupiah(dashboardSummary.weekendBudgetPool, hide)})`}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Pengaturan Cepat Mode Surplus & Defisit */}
+                    <div className="p-3.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-200/80 dark:border-gray-700/70 space-y-3">
+                      <div className="space-y-1.5">
+                        <span className="text-[11px] font-extrabold text-emerald-600 dark:text-emerald-400 block">
+                          1. Skenario Surplus (Jika Ada Sisa Budget Hari Ini)
+                        </span>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {(
+                            [
+                              {
+                                id: 'rollover' as DailySurplusMode,
+                                label: 'Rollover',
+                                sub: '100% ke Besok',
+                              },
+                              {
+                                id: 'averaging' as DailySurplusMode,
+                                label: 'Averaging',
+                                sub: 'Bagi Rata Sisa Hari',
+                              },
+                              {
+                                id: 'save_weekend' as DailySurplusMode,
+                                label: 'Save Weekend',
+                                sub: 'Kuota Weekend',
+                              },
+                            ] as const
+                          ).map((m) => {
+                            const active = dashboardSummary.dailySurplusMode === m.id;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => {
+                                  updateSettings({ dailySurplusMode: m.id }, true);
+                                  addToast(
+                                    'Mode Surplus Diperbarui',
+                                    `Diatur ke ${m.label} (${m.sub}).`
+                                  );
+                                }}
+                                className={`p-2 rounded-xl border text-left transition-all cursor-pointer ${
+                                  active
+                                    ? 'border-emerald-500 bg-emerald-500/10 text-gray-900 dark:text-white'
+                                    : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 text-gray-600 dark:text-gray-400'
+                                }`}
+                              >
+                                <span className="text-[11px] font-extrabold block leading-tight">
+                                  {m.label}
+                                </span>
+                                <span className="text-[9px] text-gray-500 dark:text-gray-400 block mt-0.5 leading-tight">
+                                  {m.sub}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5 pt-2 border-t border-gray-200/70 dark:border-gray-700/60">
+                        <span className="text-[11px] font-extrabold text-rose-600 dark:text-rose-400 block">
+                          2. Skenario Defisit (Jika Pengeluaran Melebihi Budget)
+                        </span>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {(
+                            [
+                              {
+                                id: 'spread_deficit' as DailyDeficitMode,
+                                label: 'Spread Deficit',
+                                sub: 'Bagi Rata Sisa Hari',
+                              },
+                              {
+                                id: 'strict_penalty' as DailyDeficitMode,
+                                label: 'Strict Penalty',
+                                sub: 'Potong Penuh Besok',
+                              },
+                            ] as const
+                          ).map((m) => {
+                            const active = dashboardSummary.dailyDeficitMode === m.id;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => {
+                                  updateSettings({ dailyDeficitMode: m.id }, true);
+                                  addToast(
+                                    'Mode Defisit Diperbarui',
+                                    `Diatur ke ${m.label} (${m.sub}).`
+                                  );
+                                }}
+                                className={`p-2 rounded-xl border text-left transition-all cursor-pointer ${
+                                  active
+                                    ? 'border-rose-500 bg-rose-500/10 text-gray-900 dark:text-white'
+                                    : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/60 text-gray-600 dark:text-gray-400'
+                                }`}
+                              >
+                                <span className="text-[11px] font-extrabold block leading-tight">
+                                  {m.label}
+                                </span>
+                                <span className="text-[9px] text-gray-500 dark:text-gray-400 block mt-0.5 leading-tight">
+                                  {m.sub}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
 

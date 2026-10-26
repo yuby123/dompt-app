@@ -1,4 +1,4 @@
-import { BudgetConfig, BudgetGroup, BudgetSubcategory, Category, Debt, ExpenseNature, FoodLifestyleMode, RecurringItem, Transaction } from './types';
+import { AppSettings, BudgetConfig, BudgetGroup, BudgetSubcategory, Category, DailyDeficitMode, DailySurplusMode, Debt, ExpenseNature, FoodLifestyleMode, RecurringItem, Transaction } from './types';
 
 // Category IDs that represent fixed monthly obligations
 export const FIXED_CATEGORY_IDS = new Set([
@@ -1068,6 +1068,11 @@ export interface BudgetBreakdownResult {
   monthlyGroceryBudget: number;
   monthlyVariableBudget: number;
   dailyBudgetQuota: number;
+  baseDailyQuota: number;
+  dailySurplusMode: DailySurplusMode;
+  dailyDeficitMode: DailyDeficitMode;
+  todaySurplusAmount: number;
+  weekendBudgetPool: number;
   todayVariableExpense: number;
   todayNonDailyExpense: number;
   todayGroceryExpense: number;
@@ -1174,6 +1179,7 @@ export function calculateBudgetBreakdown({
   activeDay,
   subscriptions = [],
   debts = [],
+  settings,
 }: {
   budgetConfig: BudgetConfig;
   transactions: Transaction[];
@@ -1183,15 +1189,36 @@ export function calculateBudgetBreakdown({
   activeDay: number;
   subscriptions?: RecurringItem[];
   debts?: Debt[];
+  settings?: Partial<AppSettings>;
 }): BudgetBreakdownResult {
-  const rawPayday = budgetConfig?.paydayDay || budgetConfig?.settings?.paydayDay || 1;
+  const rawPayday =
+    budgetConfig?.paydayDay || settings?.paydayDay || budgetConfig?.settings?.paydayDay || 1;
   const customPeriod: CustomBudgetPeriodInput = {
-    periodMode: budgetConfig?.periodMode || budgetConfig?.settings?.periodMode,
-    customPeriodStart: budgetConfig?.customPeriodStart || budgetConfig?.settings?.customPeriodStart,
-    customNextPayday: budgetConfig?.customNextPayday || budgetConfig?.settings?.customNextPayday,
+    periodMode:
+      budgetConfig?.periodMode || settings?.periodMode || budgetConfig?.settings?.periodMode,
+    customPeriodStart:
+      budgetConfig?.customPeriodStart ||
+      settings?.customPeriodStart ||
+      budgetConfig?.settings?.customPeriodStart,
+    customNextPayday:
+      budgetConfig?.customNextPayday ||
+      settings?.customNextPayday ||
+      budgetConfig?.settings?.customNextPayday,
   };
   const periodInfo = getBudgetPeriodInfo(activeYear, activeMonth, activeDay, rawPayday, customPeriod);
   const daysInMonth = periodInfo.totalDays;
+
+  const dailySurplusMode: DailySurplusMode =
+    settings?.dailySurplusMode ||
+    budgetConfig?.dailySurplusMode ||
+    budgetConfig?.settings?.dailySurplusMode ||
+    'rollover';
+
+  const dailyDeficitMode: DailyDeficitMode =
+    settings?.dailyDeficitMode ||
+    budgetConfig?.dailyDeficitMode ||
+    budgetConfig?.settings?.dailyDeficitMode ||
+    'spread_deficit';
 
   const { effectiveIncome: estIncome } = resolveEffectivePeriodIncome(
     budgetConfig,
@@ -1365,7 +1392,18 @@ export function calculateBudgetBreakdown({
   let todayNonDailyExp = 0;
   let todayGrocExp = 0;
   let todayFixExp = 0;
+  const dailyVarExpByDay: Record<number, number> = {};
   const recordedTxIds = new Set<string>();
+
+  const periodStartMidday = new Date(
+    periodInfo.startDate.getFullYear(),
+    periodInfo.startDate.getMonth(),
+    periodInfo.startDate.getDate(),
+    12,
+    0,
+    0
+  );
+  const msPerDay = 1000 * 60 * 60 * 24;
 
   const effectiveTodayDate = new Date(
     periodInfo.startDate.getFullYear(),
@@ -1411,6 +1449,15 @@ export function calculateBudgetBreakdown({
         monthlyNonDailyExp += tx.amount;
       } else {
         monthlyVarExp += tx.amount;
+        const txDayMid = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0);
+        const dayIdx = Math.max(
+          1,
+          Math.min(
+            daysInMonth,
+            Math.floor((txDayMid.getTime() - periodStartMidday.getTime()) / msPerDay) + 1
+          )
+        );
+        dailyVarExpByDay[dayIdx] = (dailyVarExpByDay[dayIdx] || 0) + tx.amount;
       }
 
       if (
@@ -1469,11 +1516,6 @@ export function calculateBudgetBreakdown({
   const monthlyFixedBudget = effectiveSubsFixedTotal + unallocatedFixedExp;
 
   // 5. Dynamic Operational, Grocery & Non-Daily Social Pool:
-  // - Both Belanja Bulanan (monthlyGrocExp) and Kondangan/Amplop/Ngado/Sosial (monthlyNonDailyExp)
-  //   reduce Saldo Pos Harian (monthlyVariableBudget), so Kuota Harian automatically recalculates/updates
-  //   following the remaining balance in Pos Harian.
-  // - Neither is counted in todayVarExp, so giving an amplop/ngado today does NOT wipe out today's
-  //   single-day eating/transport allowance all at once.
   const initialOperationalPool = Math.max(0, monthlySpendingLimit - monthlyFixedBudget);
   const monthlyGroceryBudget = initialOperationalPool;
   const monthlyVariableBudget = Math.max(
@@ -1481,31 +1523,97 @@ export function calculateBudgetBreakdown({
     initialOperationalPool - monthlyGrocExp - monthlyNonDailyExp
   );
 
-  // 6. Sisa Uang Operasional & Kuota Harian Dinamis
-  const priorDaysVarExp = Math.max(0, monthlyVarExp - todayVarExp);
-  const remainingMonthlyVarBeforeToday = Math.max(
-    0,
-    monthlyVariableBudget - priorDaysVarExp
-  );
+  // 6. Sisa Uang Operasional & Simulasi Kuota Harian (Surplus & Defisit)
   const remainingVariableBudget = Math.max(
     0,
     monthlyVariableBudget - monthlyVarExp
   );
   const remainingGroceryBudget = remainingVariableBudget;
 
-  const baseDailyAfterGrocery =
+  const baseDailyQuota =
     estIncome > 0 && daysInMonth > 0 ? Math.round(monthlyVariableBudget / daysInMonth) : 0;
 
-  const rollingDailyBeforeToday =
-    estIncome > 0 && periodInfo.daysRemainingUntilPayday > 0
-      ? Math.round(remainingMonthlyVarBeforeToday / periodInfo.daysRemainingUntilPayday)
-      : 0;
+  const getPeriodDayDate = (dayIdx: number) =>
+    new Date(
+      periodInfo.startDate.getFullYear(),
+      periodInfo.startDate.getMonth(),
+      periodInfo.startDate.getDate() + (dayIdx - 1),
+      12,
+      0,
+      0
+    );
 
-  // Kuota Harian otomatis mengikuti sisa Saldo Pos Harian setelah dipotong Belanja Bulanan & Kondangan/Amplop/Ngado
-  const dailyBudgetQuota =
-    priorDaysVarExp > 0
-      ? Math.min(baseDailyAfterGrocery, rollingDailyBeforeToday)
-      : baseDailyAfterGrocery;
+  let runningBaseDaily =
+    estIncome > 0 && daysInMonth > 0 ? monthlyVariableBudget / daysInMonth : 0;
+  let carryOverNextDay = 0;
+  let weekendPool = 0;
+  let spentBeforeDay = 0;
+  let todayQuotaComputed = baseDailyQuota;
+  let todayRawQuota = runningBaseDaily;
+  let todayWeekendBonusAllocated = 0;
+
+  for (let dIdx = 1; dIdx <= periodInfo.currentDayOfPeriod; dIdx++) {
+    const dDate = getPeriodDayDate(dIdx);
+    const dow = dDate.getDay(); // 0 = Minggu, 6 = Sabtu
+    const isWeekend = dow === 0 || dow === 6;
+
+    let weekendBonusD = 0;
+    if (dailySurplusMode === 'save_weekend' && isWeekend && weekendPool > 0) {
+      weekendBonusD = dow === 6 && dIdx + 1 <= daysInMonth ? weekendPool / 2 : weekendPool;
+    }
+
+    const rawQuotaD = runningBaseDaily + carryOverNextDay + weekendBonusD;
+    const remPoolBeforeD = Math.max(0, monthlyVariableBudget - spentBeforeDay);
+    const quotaD =
+      estIncome > 0 && monthlyVariableBudget > 0
+        ? Math.min(remPoolBeforeD, Math.max(0, Math.round(rawQuotaD)))
+        : 0;
+
+    if (dIdx === periodInfo.currentDayOfPeriod) {
+      todayQuotaComputed = quotaD;
+      todayRawQuota = rawQuotaD;
+      todayWeekendBonusAllocated = weekendBonusD;
+      break;
+    }
+
+    const spentD = dailyVarExpByDay[dIdx] || 0;
+    spentBeforeDay += spentD;
+    if (weekendBonusD > 0) {
+      weekendPool = Math.max(0, weekendPool - weekendBonusD);
+    }
+    carryOverNextDay = 0;
+
+    const netBalanceD = (rawQuotaD < 0 ? rawQuotaD : quotaD) - spentD;
+    const remDaysAfterD = Math.max(1, daysInMonth - dIdx);
+
+    if (netBalanceD > 0) {
+      // Skenario Surplus (Sisa budget pada hari tersebut)
+      const surplusD = netBalanceD;
+      if (dailySurplusMode === 'rollover') {
+        carryOverNextDay = surplusD;
+      } else if (dailySurplusMode === 'averaging') {
+        runningBaseDaily += surplusD / remDaysAfterD;
+      } else if (dailySurplusMode === 'save_weekend') {
+        weekendPool += surplusD;
+      }
+    } else if (netBalanceD < 0) {
+      // Skenario Defisit (Pengeluaran melebihi budget pada hari tersebut)
+      const deficitD = Math.abs(netBalanceD);
+      if (dailyDeficitMode === 'spread_deficit') {
+        runningBaseDaily = Math.max(0, runningBaseDaily - deficitD / remDaysAfterD);
+      } else if (dailyDeficitMode === 'strict_penalty') {
+        carryOverNextDay = -deficitD;
+      }
+    }
+  }
+
+  const dailyBudgetQuota = todayQuotaComputed;
+  const effectiveDailyQuota = dailyBudgetQuota;
+  const dailyBudgetRemaining = Math.max(0, effectiveDailyQuota - todayVarExp);
+  const todaySurplusAmount = dailyBudgetRemaining;
+  const dailyOverbudget =
+    todayVarExp > effectiveDailyQuota && (dailyBudgetQuota > 0 || monthlyVariableBudget > 0);
+  const dailyOverbudgetAmount = Math.max(0, todayVarExp - effectiveDailyQuota);
 
   // Safe daily budget so that actual remaining money lasts until the next payday:
   const remainingDaysForSafeQuota =
@@ -1518,27 +1626,52 @@ export function calculateBudgetBreakdown({
       ? Math.round(remainingVariableBudget / remainingDaysForSafeQuota)
       : 0;
 
-  const effectiveDailyQuota =
-    monthlyVariableBudget > 0
-      ? Math.min(dailyBudgetQuota, remainingMonthlyVarBeforeToday)
-      : dailyBudgetQuota;
+  // Proyeksi Kuota Esok Hari & Tabungan Weekend berdasarkan transaksi hari ini:
+  let projBaseDaily = runningBaseDaily;
+  let projCarryOver = 0;
+  let projWeekendPool = Math.max(0, weekendPool - todayWeekendBonusAllocated);
+  const remDaysAfterToday = Math.max(1, daysInMonth - periodInfo.currentDayOfPeriod);
+  const netBalanceToday = (todayRawQuota < 0 ? todayRawQuota : effectiveDailyQuota) - todayVarExp;
 
-  const dailyBudgetRemaining = Math.max(0, effectiveDailyQuota - todayVarExp);
-  const dailyOverbudget = todayVarExp > effectiveDailyQuota && dailyBudgetQuota > 0;
-  const dailyOverbudgetAmount = Math.max(0, todayVarExp - effectiveDailyQuota);
+  if (netBalanceToday > 0) {
+    const surplusToday = netBalanceToday;
+    if (dailySurplusMode === 'rollover') {
+      projCarryOver = surplusToday;
+    } else if (dailySurplusMode === 'averaging') {
+      projBaseDaily += surplusToday / remDaysAfterToday;
+    } else if (dailySurplusMode === 'save_weekend') {
+      projWeekendPool += surplusToday;
+    }
+  } else if (netBalanceToday < 0) {
+    const deficitToday = Math.abs(netBalanceToday);
+    if (dailyDeficitMode === 'spread_deficit') {
+      projBaseDaily = Math.max(0, projBaseDaily - deficitToday / remDaysAfterToday);
+    } else if (dailyDeficitMode === 'strict_penalty') {
+      projCarryOver = -deficitToday;
+    }
+  }
 
-  // Tomorrow's daily quota after today's variable spending (rolls over excess today across remaining days until payday)
-  const tomorrowRemainingDays =
-    periodInfo.daysRemainingUntilPayday > 1 ? periodInfo.daysRemainingUntilPayday - 1 : 1;
-  const rollingTomorrowQuota =
-    estIncome > 0 && tomorrowRemainingDays > 0
-      ? Math.round(remainingVariableBudget / tomorrowRemainingDays)
-      : 0;
+  const tomorrowDayIdx = Math.min(daysInMonth, periodInfo.currentDayOfPeriod + 1);
+  const tomorrowDate = getPeriodDayDate(tomorrowDayIdx);
+  const tomorrowDow = tomorrowDate.getDay();
+  const isTomorrowWeekend = tomorrowDow === 0 || tomorrowDow === 6;
+  let tomorrowWeekendBonus = 0;
+  if (dailySurplusMode === 'save_weekend' && isTomorrowWeekend && projWeekendPool > 0) {
+    tomorrowWeekendBonus =
+      tomorrowDow === 6 && tomorrowDayIdx + 1 <= daysInMonth
+        ? projWeekendPool / 2
+        : projWeekendPool;
+  }
+
+  const rawTomorrowQuota = projBaseDaily + projCarryOver + tomorrowWeekendBonus;
   const tomorrowDailyQuota =
-    periodInfo.daysRemainingUntilPayday > 1
-      ? Math.min(baseDailyAfterGrocery, rollingTomorrowQuota)
-      : baseDailyAfterGrocery;
-  const tomorrowQuotaDiff = Math.max(0, effectiveDailyQuota - tomorrowDailyQuota);
+    estIncome > 0 && monthlyVariableBudget > 0
+      ? periodInfo.daysRemainingUntilPayday > 1
+        ? Math.min(remainingVariableBudget, Math.max(0, Math.round(rawTomorrowQuota)))
+        : Math.min(remainingVariableBudget, Math.max(0, Math.round(projBaseDaily)))
+      : 0;
+  const tomorrowQuotaDiff = Math.abs(effectiveDailyQuota - tomorrowDailyQuota);
+  const weekendBudgetPool = Math.max(0, Math.round(projWeekendPool));
 
   return {
     daysInMonth,
@@ -1549,6 +1682,11 @@ export function calculateBudgetBreakdown({
     monthlyGroceryBudget,
     monthlyVariableBudget,
     dailyBudgetQuota,
+    baseDailyQuota,
+    dailySurplusMode,
+    dailyDeficitMode,
+    todaySurplusAmount,
+    weekendBudgetPool,
     todayVariableExpense: todayVarExp,
     todayNonDailyExpense: todayNonDailyExp,
     todayGroceryExpense: todayGrocExp,

@@ -11,6 +11,10 @@ export type BudgetGroup = 'kebutuhan' | 'keinginan' | 'tabungan';
 
 export type FoodLifestyleMode = 'eat_out' | 'hybrid' | 'cook_home';
 
+export type DailySurplusMode = 'rollover' | 'averaging' | 'save_weekend';
+
+export type DailyDeficitMode = 'spread_deficit' | 'strict_penalty';
+
 export type ExpenseNature = 'variable' | 'non_daily' | 'grocery' | 'fixed' | 'savings';
 
 export interface Wallet {
@@ -103,6 +107,8 @@ export interface BudgetConfig {
   customNextPayday?: string; // YYYY-MM-DD (Tanggal gajian berikutnya, misal '2026-11-25' -> bisa >31 hari)
   foodLifestyleMode?: FoodLifestyleMode; // 'eat_out' (Makan Luar) | 'hybrid' (Masak + Beli Luar) | 'cook_home' (Full Masak/Belanja Bulanan)
   mealsOutPerDay?: number; // Jumlah makan beli di luar per hari (misal 3, 1, atau 0)
+  dailySurplusMode?: DailySurplusMode; // 'rollover' | 'averaging' | 'save_weekend'
+  dailyDeficitMode?: DailyDeficitMode; // 'spread_deficit' | 'strict_penalty'
   subcategories: BudgetSubcategory[];
   subscriptions?: RecurringItem[];
   liquidAssets?: AssetItem[];
@@ -230,6 +236,8 @@ export interface AppSettings {
   manualIncomePeriodKey?: string;
   autoSyncIncome?: boolean;
   periodBudgets?: Record<string, number>;
+  dailySurplusMode?: DailySurplusMode;
+  dailyDeficitMode?: DailyDeficitMode;
 }
 
 export interface WalletWithBalance extends Wallet {
@@ -261,6 +269,11 @@ export interface DashboardSummary {
   budgetCount: number;
   dailyBudgetRemaining: number;
   dailyBudgetQuota: number;
+  baseDailyQuota: number;
+  dailySurplusMode: DailySurplusMode;
+  dailyDeficitMode: DailyDeficitMode;
+  todaySurplusAmount: number;
+  weekendBudgetPool: number;
   todayIncome: number;
   todayExpense: number;
   emergencyFundRunwayMonths: number;

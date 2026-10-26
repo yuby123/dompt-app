@@ -2675,6 +2675,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       activeDay,
       subscriptions,
       debts,
+      settings,
     });
 
     // Liquid assets: All positive non-credit/non-paylater wallets + extra liquidAssets from AssetsTab
@@ -2710,6 +2711,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       hasMonthlyBudget: estIncome > 0,
       budgetCount: budgetConfig.subcategories.length,
       dailyBudgetQuota: breakdown.dailyBudgetQuota,
+      baseDailyQuota: breakdown.baseDailyQuota,
+      dailySurplusMode: breakdown.dailySurplusMode,
+      dailyDeficitMode: breakdown.dailyDeficitMode,
+      todaySurplusAmount: breakdown.todaySurplusAmount,
+      weekendBudgetPool: breakdown.weekendBudgetPool,
       dailyBudgetRemaining: breakdown.dailyBudgetRemaining,
       todayIncome,
       todayExpense,
@@ -2754,6 +2760,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     activeDay,
     subscriptions,
     debts,
+    settings,
     walletsWithBalance,
     liquidAssets,
     totalBalance,
@@ -2763,6 +2770,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     todayExpense,
     wallets.length,
     transactionDetails,
+    budgetPeriod,
   ]);
 
   // CRUD: Transaction
@@ -5184,6 +5192,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setBudgetConfig((prev) => {
       const nextCfg = {
         ...prev,
+        ...(data.dailySurplusMode !== undefined ? { dailySurplusMode: data.dailySurplusMode } : {}),
+        ...(data.dailyDeficitMode !== undefined ? { dailyDeficitMode: data.dailyDeficitMode } : {}),
         settings: { ...(prev.settings || {}), ...updated },
       };
       saveStoredBudgetConfig(nextCfg, localScopeUid);

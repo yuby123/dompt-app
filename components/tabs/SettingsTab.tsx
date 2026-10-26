@@ -26,11 +26,15 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useApp } from '../AppContext';
+import { DailyDeficitMode, DailySurplusMode } from '@/lib/types';
+import { formatRupiah } from '@/lib/formatters';
 
 export function SettingsTab() {
   const {
     settings,
     updateSettings,
+    dashboardSummary,
+    budgetConfig,
     toggleHideBalance,
     setThemeMode,
     setAccentColor,
@@ -788,6 +792,224 @@ export function SettingsTab() {
                     );
                   })}
                 </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 3B. Logika Kuota Harian (Surplus & Defisit) */}
+          <div className="bg-white dark:bg-[#16181D] rounded-3xl p-5 sm:p-6 border border-slate-100 dark:border-white/[0.08] space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                  Logika Kuota Harian
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Atur perhitungan otomatis ketika jatah harian Anda surplus (sisa) atau defisit (lewat limit).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('budget')}
+                className="text-[11px] font-bold text-slate-600 dark:text-slate-300 hover:underline self-start sm:self-auto shrink-0 cursor-pointer"
+              >
+                Lihat Pos Harian →
+              </button>
+            </div>
+
+            {/* Live Preview Ringkasan Efek Kuota */}
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200/70 dark:border-white/[0.08] grid grid-cols-2 sm:grid-cols-3 gap-3 font-mono tabular-nums">
+              <div>
+                <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-slate-400 block">
+                  Kuota Hari Ini
+                </span>
+                <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white mt-0.5 block">
+                  {formatRupiah(dashboardSummary.dailyBudgetQuota, settings.hideBalance)}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-slate-400 block">
+                  Proyeksi Besok
+                </span>
+                <span className="text-xs sm:text-sm font-bold text-emerald-600 dark:text-[#D4F826] mt-0.5 block">
+                  ~{formatRupiah(dashboardSummary.tomorrowDailyQuota, settings.hideBalance)}
+                </span>
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <span className="text-[10px] font-sans font-bold uppercase tracking-wider text-slate-400 block">
+                  {(settings.dailySurplusMode || budgetConfig?.dailySurplusMode || 'rollover') ===
+                  'save_weekend'
+                    ? 'Kuota Weekend'
+                    : 'Limit Normal'}
+                </span>
+                <span className="text-xs sm:text-sm font-bold text-amber-600 dark:text-amber-400 mt-0.5 block">
+                  {(settings.dailySurplusMode || budgetConfig?.dailySurplusMode || 'rollover') ===
+                  'save_weekend'
+                    ? formatRupiah(dashboardSummary.weekendBudgetPool, settings.hideBalance)
+                    : `${formatRupiah(dashboardSummary.baseDailyQuota, settings.hideBalance)}/hr`}
+                </span>
+              </div>
+            </div>
+
+            {/* 1. Skenario Surplus */}
+            <div className="space-y-2.5">
+              <div>
+                <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 block">
+                  1. Skenario Surplus (Jika hari ini ada sisa budget)
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+                  Pilih bagaimana sisa kuota harian hari ini dialokasikan:
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {(
+                  [
+                    {
+                      id: 'rollover' as DailySurplusMode,
+                      title: 'Rollover (100% ke Besok)',
+                      desc: 'Sisa budget hari ini ditambahkan 100% ke limit budget esok hari.',
+                    },
+                    {
+                      id: 'averaging' as DailySurplusMode,
+                      title: 'Averaging (Bagi Rata Sisa Hari)',
+                      desc: 'Sisa budget hari ini dibagi rata untuk menambah limit harian di seluruh sisa hari dalam periode/bulan tersebut.',
+                    },
+                    {
+                      id: 'save_weekend' as DailySurplusMode,
+                      title: 'Save Weekend (Tabung ke Akhir Pekan)',
+                      desc: 'Sisa budget hari ini dipotong dan dimasukkan ke kuota budget weekend (limit harian sisa hari tetap normal).',
+                    },
+                  ] as const
+                ).map((opt) => {
+                  const currentSurplusMode: DailySurplusMode =
+                    settings.dailySurplusMode ||
+                    budgetConfig?.dailySurplusMode ||
+                    budgetConfig?.settings?.dailySurplusMode ||
+                    'rollover';
+                  const isSelected = currentSurplusMode === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        updateSettings({ dailySurplusMode: opt.id }, true);
+                        addToast(
+                          'Mode Surplus Diperbarui',
+                          `Skenario surplus diatur ke ${opt.title}.`
+                        );
+                      }}
+                      className={`w-full p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex items-start justify-between gap-3 ${
+                        isSelected
+                          ? `${accentBorder} bg-slate-50 dark:bg-white/[0.06] shadow-2xs`
+                          : 'border-slate-200/80 dark:border-white/10 hover:bg-slate-50/60 dark:hover:bg-white/[0.03]'
+                      }`}
+                    >
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-extrabold text-slate-900 dark:text-white">
+                            {opt.title}
+                          </span>
+                          {isSelected && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                              Aktif
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                          {opt.desc}
+                        </p>
+                      </div>
+                      <div
+                        className={`w-5 h-5 rounded-full flex items-center justify-center border shrink-0 mt-0.5 ${
+                          isSelected
+                            ? `${accentBg} border-transparent`
+                            : 'border-slate-300 dark:border-slate-600'
+                        }`}
+                      >
+                        {isSelected && <Check size={12} strokeWidth={3} />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 2. Skenario Defisit */}
+            <div className="space-y-2.5 pt-3 border-t border-slate-100 dark:border-white/[0.06]">
+              <div>
+                <span className="text-xs font-extrabold text-rose-600 dark:text-rose-400 block">
+                  2. Skenario Defisit (Jika hari ini pengeluaran melebihi budget)
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+                  Pilih bagaimana kelebihan pengeluaran (minus) hari ini diperhitungkan:
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {(
+                  [
+                    {
+                      id: 'spread_deficit' as DailyDeficitMode,
+                      title: 'Spread Deficit (Bagi Rata Sisa Hari)',
+                      desc: 'Total kelebihan pengeluaran (minus) hari ini dibagi rata untuk mengurangi limit budget harian di seluruh sisa hari dalam periode tersebut.',
+                    },
+                    {
+                      id: 'strict_penalty' as DailyDeficitMode,
+                      title: 'Strict Penalty (Potong Penuh Besok)',
+                      desc: 'Limit budget esok hari langsung dipotong sepenuhnya sejumlah kelebihan pengeluaran hari ini.',
+                    },
+                  ] as const
+                ).map((opt) => {
+                  const currentDeficitMode: DailyDeficitMode =
+                    settings.dailyDeficitMode ||
+                    budgetConfig?.dailyDeficitMode ||
+                    budgetConfig?.settings?.dailyDeficitMode ||
+                    'spread_deficit';
+                  const isSelected = currentDeficitMode === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => {
+                        updateSettings({ dailyDeficitMode: opt.id }, true);
+                        addToast(
+                          'Mode Defisit Diperbarui',
+                          `Skenario defisit diatur ke ${opt.title}.`
+                        );
+                      }}
+                      className={`w-full p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex items-start justify-between gap-3 ${
+                        isSelected
+                          ? `${accentBorder} bg-slate-50 dark:bg-white/[0.06] shadow-2xs`
+                          : 'border-slate-200/80 dark:border-white/10 hover:bg-slate-50/60 dark:hover:bg-white/[0.03]'
+                      }`}
+                    >
+                      <div className="space-y-0.5 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-extrabold text-slate-900 dark:text-white">
+                            {opt.title}
+                          </span>
+                          {isSelected && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-600 dark:text-rose-400">
+                              Aktif
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                          {opt.desc}
+                        </p>
+                      </div>
+                      <div
+                        className={`w-5 h-5 rounded-full flex items-center justify-center border shrink-0 mt-0.5 ${
+                          isSelected
+                            ? `${accentBg} border-transparent`
+                            : 'border-slate-300 dark:border-slate-600'
+                        }`}
+                      >
+                        {isSelected && <Check size={12} strokeWidth={3} />}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>

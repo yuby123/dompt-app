@@ -309,7 +309,7 @@ function WalletModalForm() {
           </div>
 
           {/* Brand Grid */}
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-0.5">
             {WALLET_BRANDS.filter((b) => b.category === activeBrandTab).map((brand) => {
               const isSelected = currentBrand?.id === brand.id;
               return (
@@ -326,7 +326,7 @@ function WalletModalForm() {
                   <WalletBrandLogo brandId={brand.id} size="sm" />
                   <div className="min-w-0 flex-1">
                     <span className="text-xs font-extrabold text-slate-900 dark:text-white block truncate leading-tight">
-                      {brand.name}
+                      {brand.shortName}
                     </span>
                     <span className="text-[9px] font-medium text-slate-400 block truncate">
                       {brand.walletType === 'ewallet' ? 'E-Wallet' : 'Bank'}

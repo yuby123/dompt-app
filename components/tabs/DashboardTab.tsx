@@ -685,12 +685,28 @@ export function DashboardTab() {
 
           {/* Top Row */}
           <div className="relative z-10 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs sm:text-sm min-w-0">
+            <div className="flex items-center gap-2 text-xs sm:text-sm min-w-0 flex-wrap">
               <span className="font-extrabold text-[#D4F826] whitespace-nowrap shrink-0">
                 Kuota Harian
               </span>
               <span className="text-slate-500 shrink-0">·</span>
               <span className="font-medium text-slate-300 truncate">Jatah Hari Ini</span>
+              <button
+                type="button"
+                onClick={() => setActiveTab('settings')}
+                title="Ubah logika Surplus & Defisit Kuota Harian di Pengaturan"
+                className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-white/10 hover:bg-white/15 text-slate-200 border border-white/10 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                {dashboardSummary.dailyOverbudget
+                  ? dashboardSummary.dailyDeficitMode === 'strict_penalty'
+                    ? 'Defisit: Strict Penalty'
+                    : 'Defisit: Spread Deficit'
+                  : dashboardSummary.dailySurplusMode === 'save_weekend'
+                  ? 'Surplus: Save Weekend'
+                  : dashboardSummary.dailySurplusMode === 'averaging'
+                  ? 'Surplus: Averaging'
+                  : 'Surplus: Rollover'}
+              </button>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <span className="text-xs font-mono font-semibold text-slate-300 tabular-nums whitespace-nowrap">
@@ -723,7 +739,11 @@ export function DashboardTab() {
 
               {dashboardSummary.dailyOverbudget ? (
                 <p className="text-xs text-rose-400 font-semibold pt-0.5 tabular-nums">
-                  Lewat +{formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)}
+                  Lewat +{formatRupiah(dashboardSummary.dailyOverbudgetAmount, hide)} (
+                  {dashboardSummary.dailyDeficitMode === 'strict_penalty'
+                    ? 'Strict Penalty'
+                    : 'Spread Deficit'}
+                  )
                   {budgetPeriod.daysRemainingUntilPayday > 1 && (
                     <span className="text-amber-300 font-medium">
                       {' '}
@@ -742,6 +762,26 @@ export function DashboardTab() {
                   <strong className="text-slate-200">
                     {formatRupiah(dashboardSummary.remainingVariableBudget, hide)}
                   </strong>
+                  {budgetPeriod.daysRemainingUntilPayday > 1 &&
+                    dashboardSummary.dailyBudgetQuota > 0 && (
+                      <span>
+                        {' '}
+                        · Besok:{' '}
+                        <strong className="text-[#D4F826]">
+                          ~{formatRupiah(dashboardSummary.tomorrowDailyQuota, hide)}/hr
+                        </strong>
+                      </span>
+                    )}
+                  {dashboardSummary.dailySurplusMode === 'save_weekend' &&
+                    dashboardSummary.weekendBudgetPool > 0 && (
+                      <span>
+                        {' '}
+                        · Kuota Weekend:{' '}
+                        <strong className="text-emerald-300">
+                          {formatRupiah(dashboardSummary.weekendBudgetPool, hide)}
+                        </strong>
+                      </span>
+                    )}
                   {todayNonDailyTotal > 0 && (
                     <span>
                       {' '}

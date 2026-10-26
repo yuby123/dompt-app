@@ -286,6 +286,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pinLength: 4,
   autoLockMinutes: 1,
   avatarUrl: '/icons/user-sketch.png',
+  dailySurplusMode: 'rollover',
+  dailyDeficitMode: 'spread_deficit',
 };
 
 export interface TutorialArticle {

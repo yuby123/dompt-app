@@ -232,7 +232,7 @@ export function ScanReceiptModal() {
     setLoadingStep('AI sedang mendeteksi nominal & detail transaksi...');
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 35000);
 
     const step1 = setTimeout(() => {
       setLoadingStep('Mengekstrak nominal Rupiah & aplikasi pembayaran...');
@@ -287,10 +287,23 @@ export function ScanReceiptModal() {
       clearTimeout(step2);
       clearTimeout(timeoutId);
       console.error(err);
+      const rawMessage = String(err?.message || '');
       if (err.name === 'AbortError') {
-        setErrorMsg('Waktu pemrosesan melebihi 20 detik (koneksi lambat). Silakan coba lagi.');
+        setErrorMsg('Waktu pemrosesan melebihi batas (koneksi lambat). Silakan klik "Coba lagi".');
+      } else if (
+        rawMessage.includes('503') ||
+        rawMessage.includes('UNAVAILABLE') ||
+        rawMessage.toLowerCase().includes('high demand')
+      ) {
+        setErrorMsg(
+          'Server AI sedang sibuk karena lonjakan trafik sementara (Error 503). Silakan klik "Coba lagi".'
+        );
+      } else if (rawMessage.includes('429') || rawMessage.includes('RESOURCE_EXHAUSTED')) {
+        setErrorMsg(
+          'Antrean permintaan AI penuh sementara (Error 429). Tunggu beberapa detik lalu klik "Coba lagi".'
+        );
       } else {
-        setErrorMsg(err?.message || 'Gagal menganalisis screenshot dengan AI');
+        setErrorMsg(rawMessage || 'Gagal menganalisis screenshot dengan AI');
       }
     } finally {
       setIsAnalyzing(false);
@@ -752,17 +765,28 @@ export function ScanReceiptModal() {
             {errorMsg && (
               <div className="p-3.5 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/40 rounded-2xl flex items-center gap-2.5 text-xs text-red-600 dark:text-red-400">
                 <AlertCircle size={20} className="shrink-0" />
-                <span className="flex-1 font-medium">{errorMsg}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setImagePreview(null);
-                    setErrorMsg(null);
-                  }}
-                  className="text-xs underline font-bold"
-                >
-                  Coba lagi
-                </button>
+                <span className="flex-1 font-medium leading-relaxed">{errorMsg}</span>
+                <div className="flex items-center gap-2 shrink-0">
+                  {imagePreview && (
+                    <button
+                      type="button"
+                      onClick={() => analyzeImage(imagePreview, mimeType, true)}
+                      className="px-2.5 py-1.5 rounded-xl bg-red-600 text-white font-bold text-xs hover:bg-red-700 cursor-pointer"
+                    >
+                      Coba lagi
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImagePreview(null);
+                      setErrorMsg(null);
+                    }}
+                    className="text-xs underline font-bold cursor-pointer"
+                  >
+                    {imagePreview ? 'Ganti' : 'Coba lagi'}
+                  </button>
+                </div>
               </div>
             )}
 

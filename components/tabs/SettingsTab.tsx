@@ -768,10 +768,10 @@ export function SettingsTab() {
                 </label>
                 <div className="grid grid-cols-4 gap-2">
                   {[
-                    { id: 'lime' as const, label: 'Lime', bg: 'bg-[#D4F826]' },
-                    { id: 'pink' as const, label: 'Pink', bg: 'bg-[#FFA4A4]' },
-                    { id: 'orange' as const, label: 'Oranye', bg: 'bg-[#FF6B00]' },
-                    { id: 'plum' as const, label: 'Plum', bg: 'bg-[#71325A]' },
+                    { id: 'lime' as const, label: 'Lime', hex: '#D4F826' },
+                    { id: 'pink' as const, label: 'Pink', hex: '#FFA4A4' },
+                    { id: 'orange' as const, label: 'Oranye', hex: '#FF6B00' },
+                    { id: 'plum' as const, label: 'Plum', hex: '#71325A' },
                   ].map((swatch) => {
                     const active = accentChoice === swatch.id;
                     return (
@@ -786,7 +786,13 @@ export function SettingsTab() {
                             : 'border-slate-200/80 dark:border-white/10 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/[0.03]'
                         }`}
                       >
-                        <span className={`w-3.5 h-3.5 rounded-full ${swatch.bg} shrink-0`} />
+                        <svg
+                          viewBox="0 0 16 16"
+                          className="w-3.5 h-3.5 shrink-0 overflow-visible"
+                          aria-hidden="true"
+                        >
+                          <circle cx="8" cy="8" r="7.5" fill={swatch.hex} />
+                        </svg>
                         <span className="truncate">{swatch.label}</span>
                       </button>
                     );

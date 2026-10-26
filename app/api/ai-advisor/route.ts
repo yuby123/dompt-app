@@ -221,26 +221,28 @@ function buildFallbackResponse(message: string, contextData: any): string {
   const monthlyIncome = contextData?.monthlyIncome || 'Rp 0';
   const monthlyExpense = contextData?.monthlyExpense || 'Rp 0';
   const budgetLimit = contextData?.budgetLimit || monthlyIncome;
-  const dailySafe = contextData?.dailyBudgetRemaining || 'Rp 0';
+  const dailyQuota = contextData?.dailyBudgetQuota || contextData?.dailyBudgetRemaining || 'Rp 0';
+  const dailyRemaining = contextData?.dailyBudgetRemaining || 'Rp 0';
+  const todaySpent = contextData?.todayVariableExpense || 'Rp 0';
   const runway = contextData?.runway || '0 Bulan';
 
   if (lower.includes('roasting') || lower.includes('boros')) {
-    return `**Evaluasi Jujur Bulan Ini**\n• Pengeluaran: **${monthlyExpense}** dari budget **${budgetLimit}**\n• Sisa aman harian: **${dailySafe}/hari**\n• Dana darurat: **${runway}**\n\nKurangi jajan impulsif dan prioritaskan batas aman harian agar target tabungan tetap aman.`;
+    return `**Evaluasi Jujur Bulan Ini**\n• Pengeluaran: **${monthlyExpense}** dari budget **${budgetLimit}**\n• Jatah harian: **${dailyQuota}/hari** (Sisa hari ini: **${dailyRemaining}**)\n• Dana darurat: **${runway}**\n\nKurangi jajan impulsif dan jaga pengeluaran harian tidak melebihi jatah harianmu agar target tabungan tetap aman.`;
   }
 
-  if (lower.includes('harian') || lower.includes('sisa')) {
-    return `**Batas Aman Harian**\n• Sisa budget harian: **${dailySafe}/hari**\n• Total pengeluaran bulan ini: **${monthlyExpense}**\n• Basis budget aktif: **${budgetLimit}**\n\nUsahakan pengeluaran harian tidak melewati angka di atas.`;
+  if (lower.includes('harian') || lower.includes('sisa') || lower.includes('kuota')) {
+    return `**Kondisi Kuota Harianmu**\n• Jatah kuota harian: **${dailyQuota}/hari**\n• Terpakai hari ini: **${todaySpent}**\n• Sisa kuota hari ini: **${dailyRemaining}**\n• Total pengeluaran bulan ini: **${monthlyExpense}**\n\nUsahakan pengeluaran hari ini tidak melewati sisa kuota **${dailyRemaining}**.`;
   }
 
   if (lower.includes('hp') || lower.includes('beli') || lower.includes('barang')) {
-    return `**Cek kesiapan sebelum membeli:**\n• Saldo likuid: **${totalBalance}** (Runway: **${runway}**)\n• Sisa aman harian: **${dailySafe}/hari**\n\nPastikan dana darurat minimal 3 bulan tidak terpakai dan gunakan fitur **Goals** untuk menabung barang impian tanpa mengganggu uang harian.`;
+    return `**Cek kesiapan sebelum membeli:**\n• Saldo likuid: **${totalBalance}** (Runway: **${runway}**)\n• Jatah harian: **${dailyQuota}/hari** (Sisa hari ini: **${dailyRemaining}**)\n\nPastikan dana darurat minimal 3 bulan tidak terpakai dan gunakan fitur **Goals** untuk menabung barang impian tanpa mengganggu uang harian.`;
   }
 
   if (lower.includes('analisis') || lower.includes('evaluasi') || lower.includes('cek budget') || lower.includes('hemat')) {
-    return `**Ringkasan Keuanganmu**\n• Saldo Likuid: **${totalBalance}**\n• Basis Budget: **${budgetLimit}**\n• Terpakai Bulan Ini: **${monthlyExpense}**\n• Sisa Aman Harian: **${dailySafe}/hari**\n\nTips: Jaga pengeluaran keinginan maksimal 30% dari budget dan catat setiap transaksi tepat waktu.`;
+    return `**Ringkasan Keuanganmu**\n• Saldo Likuid: **${totalBalance}**\n• Basis Budget: **${budgetLimit}**\n• Terpakai Bulan Ini: **${monthlyExpense}**\n• Jatah Kuota Harian: **${dailyQuota}/hari** (Sisa hari ini: **${dailyRemaining}**)\n\nTips: Jaga pengeluaran keinginan maksimal 30% dari budget dan disiplin pada jatah harianmu.`;
   }
 
-  return `**Posisi Keuangan Saat Ini**\n• Saldo Aktif: **${totalBalance}**\n• Terpakai: **${monthlyExpense}** (Budget: **${budgetLimit}**)\n• Aman Harian: **${dailySafe}/hari**\n\nKetik langsung untuk mencatat, contoh: *"Catat kopi 25rb pakai Tunai"*.`;
+  return `**Posisi Keuangan Saat Ini**\n• Saldo Aktif: **${totalBalance}**\n• Terpakai: **${monthlyExpense}** (Budget: **${budgetLimit}**)\n• Jatah Harian: **${dailyQuota}/hari** (Sisa hari ini: **${dailyRemaining}**)\n\nKetik langsung untuk mencatat, contoh: *"Catat kopi 25rb pakai Tunai"*.`;
 }
 
 export async function POST(req: NextRequest) {
@@ -299,18 +301,23 @@ Gaya bahasa: Bahasa Indonesia yang singkat, lugas, ramah, dan langsung ke inti (
 Tanggal hari ini: ${todayIso}.
 
 Data Keuangan Pengguna:
-- Saldo Aktif: ${contextData?.totalBalance || 'Rp 0'}
+- Saldo Aktif Likuid: ${contextData?.totalBalance || 'Rp 0'}
 - Basis Budget Bulan Ini: ${contextData?.budgetLimit || contextData?.monthlyIncome || 'Rp 0'}
 - Pemasukan Bulan Ini: ${contextData?.monthlyIncome || 'Rp 0'}
 - Pengeluaran Bulan Ini: ${contextData?.monthlyExpense || 'Rp 0'}
-- Batas Aman Harian: ${contextData?.dailyBudgetRemaining || 'Rp 0'}/hari
+- Jatah / Kuota Harian Aktif: ${contextData?.dailyBudgetQuota || contextData?.dailyBudgetRemaining || 'Rp 0'}/hari
+- Pengeluaran Harian Hari Ini: ${contextData?.todayVariableExpense || 'Rp 0'}
+- Sisa Kuota Hari Ini: ${contextData?.dailyBudgetRemaining || 'Rp 0'} (dari jatah harian ${contextData?.dailyBudgetQuota || 'Rp 0'}/hari)
+- Sisa Saldo Pos Harian Periode Ini: ${contextData?.remainingVariableBudget || 'Rp 0'}
 - Dana Darurat: ${contextData?.runway || '0 Bulan'}
 - Dompet: ${walletsList}
 - Kategori: ${categoriesList}
 
-Aturan Penting:
-1. Jawab singkat dan mudah dibaca (maksimal 3-4 kalimat/poin).
-2. JIKA pengguna ingin mencatat transaksi (contoh: "catat kopi 25rb pakai gopay", "makan siang 35rb tunai"), sertakan blok JSON di akhir jawaban dengan format persis:
+Pedoman Penting Soal Kuota & Sisa Harian:
+1. Jatah kuota budget harian pengguna adalah ${contextData?.dailyBudgetQuota || 'Rp 0'}/hari. Ini adalah limit jatah harian yang benar.
+2. Angka ${contextData?.dailyBudgetRemaining || 'Rp 0'} adalah SISA kuota yang tersisa untuk hari ini (setelah terpakai ${contextData?.todayVariableExpense || 'Rp 0'} hari ini). JANGAN PERNAH menyebut sisa kuota hari ini sebagai limit harian /hari. Jika membahas batas harian, selalu sebut jatah harian adalah ${contextData?.dailyBudgetQuota || 'Rp 0'}/hari dan sisa untuk hari ini tinggal ${contextData?.dailyBudgetRemaining || 'Rp 0'}.
+3. Jawab singkat dan mudah dibaca (maksimal 3-4 kalimat/poin).
+4. JIKA pengguna ingin mencatat transaksi (contoh: "catat kopi 25rb pakai gopay", "makan siang 35rb tunai"), sertakan blok JSON di akhir jawaban dengan format persis:
 \`\`\`transaction_json
 {
   "type": "expense",

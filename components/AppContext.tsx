@@ -5185,6 +5185,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     markLocalMutation();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
     const updated = { ...settings, ...data };
+    if (data.themeMode !== undefined || data.accentColor !== undefined) {
+      applyThemeToDOM(updated.themeMode, updated.accentColor);
+    }
     setSettings(updated);
     saveStoredSettings(updated, localScopeUid);
     if (mirrorUid) saveStoredSettings(updated, mirrorUid);
@@ -5288,6 +5291,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const setAccentColor = (accent: AccentColor) => {
+    applyThemeToDOM(settings.themeMode, accent);
     updateSettings({ accentColor: accent }, true);
   };
 

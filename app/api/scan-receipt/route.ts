@@ -109,29 +109,57 @@ Analisis bukti transaksi/transfer (SeaBank, BCA, Mandiri, BRI, BNI, Jago, DANA, 
       },
     };
 
-    let response;
-    try {
-      // Primary model: gemini-3.1-flash-lite (fastest, minimal thinking latency, highly reliable for OCR)
-      response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite',
-        contents: {
-          parts: [imagePart, { text: promptText }],
-        },
-        config,
-      });
-    } catch (primaryErr) {
-      console.warn('gemini-3.1-flash-lite failed, falling back to gemini-3.8-flash:', primaryErr);
-      response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: {
-          parts: [imagePart, { text: promptText }],
-        },
-        config,
-      });
+    const modelsToTry = [
+      'gemini-2.5-flash',
+      'gemini-3-flash-preview',
+      'gemini-flash-latest',
+      'gemini-3.1-flash-lite',
+      'gemini-3.8-flash',
+      'gemini-2.5-flash-lite',
+    ];
+
+    let response: any = null;
+    let lastError: any = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: {
+            parts: [imagePart, { text: promptText }],
+          },
+          config,
+        });
+        if (response?.text) {
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = String(err?.message || err || '');
+        console.warn(`Scan receipt model ${modelName} failed:`, errMsg);
+
+        // If 503 high demand / overloaded, wait briefly before trying next fallback model
+        if (
+          errMsg.includes('503') ||
+          errMsg.includes('UNAVAILABLE') ||
+          errMsg.toLowerCase().includes('high demand') ||
+          errMsg.includes('429')
+        ) {
+          await new Promise((r) => setTimeout(r, 600));
+        }
+      }
     }
 
-    const text = response.text || '{}';
-    const parsed = JSON.parse(text);
+    if (!response?.text) {
+      throw lastError || new Error('Tidak ada respons dari model AI');
+    }
+
+    const rawText = response.text.trim();
+    const cleanedJsonText = rawText
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    const parsed = JSON.parse(cleanedJsonText || '{}');
 
     return createNoCacheResponse({
       success: true,
@@ -139,9 +167,28 @@ Analisis bukti transaksi/transfer (SeaBank, BCA, Mandiri, BRI, BNI, Jago, DANA, 
     });
   } catch (err: any) {
     console.error('Scan receipt error:', err);
-    return createNoCacheResponse(
-      { error: err?.message || 'Gagal memproses gambar screenshot' },
-      500
-    );
+    const rawMsg = String(err?.message || err || '');
+    let friendlyError = 'Gagal memproses gambar screenshot. Silakan coba lagi.';
+
+    if (
+      rawMsg.includes('503') ||
+      rawMsg.includes('UNAVAILABLE') ||
+      rawMsg.toLowerCase().includes('high demand') ||
+      rawMsg.toLowerCase().includes('overloaded')
+    ) {
+      friendlyError =
+        'Server AI sedang sibuk karena lonjakan trafik sementara (Error 503). Silakan klik "Coba lagi".';
+    } else if (
+      rawMsg.includes('429') ||
+      rawMsg.includes('RESOURCE_EXHAUSTED') ||
+      rawMsg.toLowerCase().includes('quota')
+    ) {
+      friendlyError =
+        'Batas antrean permintaan AI tercapai sementara (Error 429). Tunggu beberapa detik lalu klik "Coba lagi".';
+    } else if (rawMsg && !rawMsg.trim().startsWith('{')) {
+      friendlyError = rawMsg;
+    }
+
+    return createNoCacheResponse({ error: friendlyError }, 503);
   }
 }

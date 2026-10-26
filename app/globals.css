@@ -34,13 +34,13 @@
 }
 
 /* Global Soft Coral Pink Accent Theme Overrides */
-[data-accent="pink"] .bg-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="orange"]) {
+[data-accent="pink"] .bg-\[\#D4F826\]:not([data-swatch]) {
   background-color: #FFA4A4 !important;
 }
-[data-accent="pink"] .hover\:bg-\[\#c6ec15\]:not([data-swatch="lime"]):not([data-swatch="orange"]):hover,
-[data-accent="pink"] .hover\:bg-\[\#cbf11e\]:not([data-swatch="lime"]):not([data-swatch="orange"]):hover,
-[data-accent="pink"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch="lime"]):not([data-swatch="orange"]):hover,
-[data-accent="pink"] .hover\:bg-\[\#b8dc12\]:not([data-swatch="lime"]):not([data-swatch="orange"]):hover {
+[data-accent="pink"] .hover\:bg-\[\#c6ec15\]:not([data-swatch]):hover,
+[data-accent="pink"] .hover\:bg-\[\#cbf11e\]:not([data-swatch]):hover,
+[data-accent="pink"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch]):hover,
+[data-accent="pink"] .hover\:bg-\[\#b8dc12\]:not([data-swatch]):hover {
   background-color: #ff8e8e !important;
 }
 [data-accent="pink"] .bg-\[\#EEF9B4\] {
@@ -120,14 +120,14 @@
 }
 
 /* Global Vibrant Sunset Orange Accent Theme Overrides */
-[data-accent="orange"] .bg-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="pink"]) {
+[data-accent="orange"] .bg-\[\#D4F826\]:not([data-swatch]) {
   background-color: #FF6B00 !important;
 }
-[data-accent="orange"] .hover\:bg-\[\#c6ec15\]:not([data-swatch="lime"]):not([data-swatch="pink"]):hover,
-[data-accent="orange"] .hover\:bg-\[\#cbf11e\]:not([data-swatch="lime"]):not([data-swatch="pink"]):hover,
-[data-accent="orange"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch="lime"]):not([data-swatch="pink"]):hover,
-[data-accent="orange"] .hover\:bg-\[\#c8ed1d\]:not([data-swatch="lime"]):not([data-swatch="pink"]):hover,
-[data-accent="orange"] .hover\:bg-\[\#b8dc12\]:not([data-swatch="lime"]):not([data-swatch="pink"]):hover {
+[data-accent="orange"] .hover\:bg-\[\#c6ec15\]:not([data-swatch]):hover,
+[data-accent="orange"] .hover\:bg-\[\#cbf11e\]:not([data-swatch]):hover,
+[data-accent="orange"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch]):hover,
+[data-accent="orange"] .hover\:bg-\[\#c8ed1d\]:not([data-swatch]):hover,
+[data-accent="orange"] .hover\:bg-\[\#b8dc12\]:not([data-swatch]):hover {
   background-color: #EA5E00 !important;
 }
 [data-accent="orange"] .bg-\[\#EEF9B4\] {
@@ -222,14 +222,14 @@
 }
 
 /* Global Deep Plum (#71325A) Accent Theme Overrides */
-[data-accent="plum"] .bg-\[\#D4F826\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]) {
+[data-accent="plum"] .bg-\[\#D4F826\]:not([data-swatch]) {
   background-color: #71325A !important;
 }
-[data-accent="plum"] .hover\:bg-\[\#c6ec15\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]):hover,
-[data-accent="plum"] .hover\:bg-\[\#cbf11e\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]):hover,
-[data-accent="plum"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]):hover,
-[data-accent="plum"] .hover\:bg-\[\#c8ed1d\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]):hover,
-[data-accent="plum"] .hover\:bg-\[\#b8dc12\]:not([data-swatch="lime"]):not([data-swatch="pink"]):not([data-swatch="orange"]):hover {
+[data-accent="plum"] .hover\:bg-\[\#c6ec15\]:not([data-swatch]):hover,
+[data-accent="plum"] .hover\:bg-\[\#cbf11e\]:not([data-swatch]):hover,
+[data-accent="plum"] .hover\:bg-\[\#c5ea1c\]:not([data-swatch]):hover,
+[data-accent="plum"] .hover\:bg-\[\#c8ed1d\]:not([data-swatch]):hover,
+[data-accent="plum"] .hover\:bg-\[\#b8dc12\]:not([data-swatch]):hover {
   background-color: #5E274A !important;
 }
 [data-accent="plum"] .bg-\[\#EEF9B4\] {

@@ -84,6 +84,8 @@ export interface AssetItem {
   id: string;
   name: string;
   amount: number;
+  category?: string;
+  note?: string;
   updatedAt?: string;
 }
 

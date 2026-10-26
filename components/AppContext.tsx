@@ -300,6 +300,12 @@ interface AppContextType {
   syncSubscriptionsToBudget: () => void;
 
   addAsset: (type: 'liquid' | 'fixed', item: Omit<AssetItem, 'id'>) => void;
+  updateAsset: (
+    currentType: 'liquid' | 'fixed',
+    id: string,
+    data: Partial<Omit<AssetItem, 'id'>>,
+    targetType?: 'liquid' | 'fixed'
+  ) => void;
   deleteAsset: (type: 'liquid' | 'fixed', id: string) => void;
 
   addInvestment: (item: Omit<InvestmentItem, 'id'>) => void;
@@ -5050,6 +5056,76 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     addToast('Aset Ditambahkan', `${item.name} berhasil dicatat dan disinkronkan.`);
   };
 
+  const updateAsset = (
+    currentType: 'liquid' | 'fixed',
+    id: string,
+    data: Partial<Omit<AssetItem, 'id'>>,
+    targetType?: 'liquid' | 'fixed'
+  ) => {
+    markLocalMutation();
+    const mirrorUid = getMirrorUid(user?.uid, user?.email);
+    const now = new Date().toISOString();
+    const effectiveTargetType = targetType || currentType;
+
+    const sourceList = currentType === 'liquid' ? liquidAssets : fixedAssets;
+    const existingItem = sourceList.find((a) => a.id === id);
+    if (!existingItem) return;
+
+    const updatedItem: AssetItem = {
+      ...existingItem,
+      ...data,
+      id,
+      updatedAt: now,
+    };
+
+    if (effectiveTargetType === currentType) {
+      if (currentType === 'liquid') {
+        const updated = liquidAssets.map((a) => (a.id === id ? updatedItem : a));
+        setLiquidAssets(updated);
+        saveStoredAssets('liquid', updated, localScopeUid);
+        if (mirrorUid) saveStoredAssets('liquid', updated, mirrorUid);
+        if (isCloudUser && user?.uid) {
+          persistExtendedBudgetToCloud(user.uid, mirrorUid, { liquidAssets: updated });
+        }
+      } else {
+        const updated = fixedAssets.map((a) => (a.id === id ? updatedItem : a));
+        setFixedAssets(updated);
+        saveStoredAssets('fixed', updated, localScopeUid);
+        if (mirrorUid) saveStoredAssets('fixed', updated, mirrorUid);
+        if (isCloudUser && user?.uid) {
+          persistExtendedBudgetToCloud(user.uid, mirrorUid, { fixedAssets: updated });
+        }
+      }
+    } else {
+      // Moved between liquid and fixed
+      const nextLiquid =
+        currentType === 'liquid'
+          ? liquidAssets.filter((a) => a.id !== id)
+          : [...liquidAssets, updatedItem];
+      const nextFixed =
+        currentType === 'fixed'
+          ? fixedAssets.filter((a) => a.id !== id)
+          : [...fixedAssets, updatedItem];
+
+      setLiquidAssets(nextLiquid);
+      setFixedAssets(nextFixed);
+      saveStoredAssets('liquid', nextLiquid, localScopeUid);
+      saveStoredAssets('fixed', nextFixed, localScopeUid);
+      if (mirrorUid) {
+        saveStoredAssets('liquid', nextLiquid, mirrorUid);
+        saveStoredAssets('fixed', nextFixed, mirrorUid);
+      }
+      if (isCloudUser && user?.uid) {
+        persistExtendedBudgetToCloud(user.uid, mirrorUid, {
+          liquidAssets: nextLiquid,
+          fixedAssets: nextFixed,
+        });
+      }
+    }
+
+    addToast('Aset Diperbarui', `Perubahan pada ${updatedItem.name} berhasil disimpan.`);
+  };
+
   const deleteAsset = (type: 'liquid' | 'fixed', id: string) => {
     markLocalMutation();
     const mirrorUid = getMirrorUid(user?.uid, user?.email);
@@ -5562,6 +5638,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         cancelSubscriptionPayment,
         syncSubscriptionsToBudget,
         addAsset,
+        updateAsset,
         deleteAsset,
         addInvestment,
         deleteInvestment,

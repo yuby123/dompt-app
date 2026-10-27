@@ -4,5 +4,7 @@ node_modules/
 coverage/
 .DS_Store
 *.log
+*.tsbuildinfo
+public/assets/aistudio/
 .env*
 !.env.example

@@ -1626,23 +1626,21 @@ export function calculateBudgetBreakdown({
       ? Math.round(remainingVariableBudget / remainingDaysForSafeQuota)
       : 0;
 
-  // Proyeksi Kuota Esok Hari & Tabungan Weekend berdasarkan transaksi hari ini:
+  // Proyeksi Kuota Esok Hari & Tabungan Weekend:
+  // Catatan penting: Selama hari ini masih berjalan dan belum overbudget (netBalanceToday >= 0),
+  // sisa kuota hari ini (dailyBudgetRemaining) masih dicadangkan untuk pemakaian hari ini,
+  // BUKAN langsung dianggap surplus akhir hari. Surplus hari ini baru terealisasi saat berganti hari
+  // (masuk ke loop dIdx < currentDayOfPeriod esok harinya). Dengan demikian, saat hari ini belum ada
+  // pengeluaran kuota (Rp0), Jatah Hari Ini dan Proyeksi Besok tetap sama (konsisten).
+  // Sebaliknya, jika hari ini sudah defisit/overbudget (netBalanceToday < 0), dampaknya ke kuota besok
+  // langsung ditampilkan agar pengguna waspada.
   let projBaseDaily = runningBaseDaily;
   let projCarryOver = 0;
   let projWeekendPool = Math.max(0, weekendPool - todayWeekendBonusAllocated);
   const remDaysAfterToday = Math.max(1, daysInMonth - periodInfo.currentDayOfPeriod);
   const netBalanceToday = (todayRawQuota < 0 ? todayRawQuota : effectiveDailyQuota) - todayVarExp;
 
-  if (netBalanceToday > 0) {
-    const surplusToday = netBalanceToday;
-    if (dailySurplusMode === 'rollover') {
-      projCarryOver = surplusToday;
-    } else if (dailySurplusMode === 'averaging') {
-      projBaseDaily += surplusToday / remDaysAfterToday;
-    } else if (dailySurplusMode === 'save_weekend') {
-      projWeekendPool += surplusToday;
-    }
-  } else if (netBalanceToday < 0) {
+  if (netBalanceToday < 0) {
     const deficitToday = Math.abs(netBalanceToday);
     if (dailyDeficitMode === 'spread_deficit') {
       projBaseDaily = Math.max(0, projBaseDaily - deficitToday / remDaysAfterToday);
@@ -1664,10 +1662,21 @@ export function calculateBudgetBreakdown({
   }
 
   const rawTomorrowQuota = projBaseDaily + projCarryOver + tomorrowWeekendBonus;
+  const maxRemainingAfterTodayQuota = Math.max(0, remainingVariableBudget - dailyBudgetRemaining);
   const tomorrowDailyQuota =
     estIncome > 0 && monthlyVariableBudget > 0
       ? periodInfo.daysRemainingUntilPayday > 1
-        ? Math.min(remainingVariableBudget, Math.max(0, Math.round(rawTomorrowQuota)))
+        ? Math.min(
+            remainingVariableBudget,
+            Math.max(
+              0,
+              Math.round(
+                netBalanceToday >= 0
+                  ? Math.min(rawTomorrowQuota, Math.max(rawTomorrowQuota, maxRemainingAfterTodayQuota))
+                  : rawTomorrowQuota
+              )
+            )
+          )
         : Math.min(remainingVariableBudget, Math.max(0, Math.round(projBaseDaily)))
       : 0;
   const tomorrowQuotaDiff = Math.abs(effectiveDailyQuota - tomorrowDailyQuota);

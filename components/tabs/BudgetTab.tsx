@@ -3444,7 +3444,7 @@ export function BudgetTab() {
                       </div>
                       <div className="flex items-center justify-between text-xs pt-0.5">
                         <span className="font-sans text-slate-500 dark:text-slate-400">
-                          Proyeksi Kuota Besok:
+                          Proyeksi Kuota Besok (Normal):
                         </span>
                         <span className="font-bold text-sky-600 dark:text-sky-400">
                           {fmtCurrency(dashboardSummary.tomorrowDailyQuota, {
@@ -3457,6 +3457,42 @@ export function BudgetTab() {
                             ` (Weekend +${formatRupiah(dashboardSummary.weekendBudgetPool, false)})`}
                         </span>
                       </div>
+                      {!dashboardSummary.dailyOverbudget &&
+                        dashboardSummary.dailyBudgetRemaining > 0 &&
+                        daysLeft > 1 && (
+                          <div className="flex items-center justify-between text-xs pt-0.5">
+                            <span className="font-sans text-slate-500 dark:text-slate-400">
+                              Jika Sisa Hari Ini Disimpan:
+                            </span>
+                            <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                              {dashboardSummary.dailySurplusMode === 'rollover'
+                                ? fmtCurrency(
+                                    Math.min(
+                                      dashboardSummary.remainingVariableBudget,
+                                      dashboardSummary.tomorrowDailyQuota +
+                                        dashboardSummary.dailyBudgetRemaining
+                                    ),
+                                    { prefix: '~', suffix: '/hr' }
+                                  )
+                                : dashboardSummary.dailySurplusMode === 'averaging'
+                                ? fmtCurrency(
+                                    Math.min(
+                                      dashboardSummary.remainingVariableBudget,
+                                      Math.round(
+                                        dashboardSummary.tomorrowDailyQuota +
+                                          dashboardSummary.dailyBudgetRemaining /
+                                            Math.max(1, daysLeft - 1)
+                                      )
+                                    ),
+                                    { prefix: '~', suffix: '/hr' }
+                                  )
+                                : `Tabungan Weekend +${formatRupiah(
+                                    dashboardSummary.dailyBudgetRemaining,
+                                    hide
+                                  )}`}
+                            </span>
+                          </div>
+                        )}
                     </div>
 
                     {/* Pengaturan Cepat Mode Surplus & Defisit */}

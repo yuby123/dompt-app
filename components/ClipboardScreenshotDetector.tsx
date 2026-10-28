@@ -358,6 +358,36 @@ export function ClipboardScreenshotDetector() {
   };
 
   useEffect(() => {
+    const checkServiceWorkerSharedCache = async (): Promise<boolean> => {
+      if (typeof window === 'undefined' || !('caches' in window)) return false;
+      try {
+        const cache = await caches.open('dompt-shared-ss-v1');
+        const res = await cache.match('/__dompt_shared_screenshot_latest__');
+        if (res) {
+          await cache.delete('/__dompt_shared_screenshot_latest__');
+          const blob = await res.blob();
+          if (blob && blob.size > 0) {
+            const base64 = await blobToBase64(blob);
+            if (base64) {
+              if (window.location.search) {
+                window.history.replaceState({}, document.title, window.location.pathname);
+              }
+              openTransactionMenuWithScreenshot(
+                base64,
+                blob.type || res.headers.get('Content-Type') || 'image/jpeg',
+                false,
+                false
+              );
+              return true;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Error checking SW shared screenshot cache:', err);
+      }
+      return false;
+    };
+
     const processSharedScreenshot = (): boolean => {
       if (typeof window === 'undefined') return false;
 
@@ -386,9 +416,18 @@ export function ClipboardScreenshotDetector() {
         }
 
         const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('shared') === 'sw') {
+          window.history.replaceState({}, document.title, window.location.pathname);
+          checkServiceWorkerSharedCache();
+          return true;
+        }
         if (urlParams.get('scan') === 'auto' || urlParams.get('scan') === 'open') {
           window.history.replaceState({}, document.title, window.location.pathname);
-          openTransactionMenuWithScreenshot(undefined, undefined, true, true);
+          checkServiceWorkerSharedCache().then((foundInSw) => {
+            if (!foundInSw) {
+              openTransactionMenuWithScreenshot(undefined, undefined, true, true);
+            }
+          });
           return true;
         }
       } catch (err) {
@@ -398,24 +437,25 @@ export function ClipboardScreenshotDetector() {
     };
 
     if (processSharedScreenshot()) return;
+    checkServiceWorkerSharedCache();
 
     /**
      * When the user enters or returns to the app on Android:
-     * 1. If returning from an external app (like SeaBank after taking SS), immediately open
-     *    AddTransactionModal (Catat Transaksi) and let AddTransactionModal run its sequential
-     *    clipboard reader without any competing timers!
-     * 2. Otherwise on initial fresh app open, do a sequential check for a new clipboard image.
+     * 1. First check if a screenshot was shared via Service Worker cache.
+     * 2. If returning from an external app (like SeaBank after taking SS), immediately open
+     *    AddTransactionModal (Catat Transaksi).
      */
     const handleAppEnterOrReturn = async (wasReturningFromExternalApp: boolean) => {
+      if (await checkServiceWorkerSharedCache()) return;
       if (!detectIsAndroidDevice() || !isAndroidAutoSsEnabled()) return;
 
       if (wasReturningFromExternalApp) {
         lastInSessionFpRef.current = '';
         if (!isAddTransactionOpen && !isScanModalOpen) {
-          openTransactionMenuWithScreenshot(undefined, undefined, false, true);
+          openTransactionMenuWithScreenshot(undefined, undefined, true, true);
         } else {
-          // Modal is already open — notify it to re-poll the latest clipboard image!
           setPendingScreenshotForModal({
+            awaitingTouchUnlock: true,
             isPollingNewScreenshot: true,
             timestamp: Date.now(),
           });
@@ -423,17 +463,14 @@ export function ClipboardScreenshotDetector() {
         return;
       }
 
-      // Fresh app launch: check sequentially (wait for each read to finish before next attempt)
-      for (let attempt = 0; attempt < 4; attempt++) {
-        const clipImg = await readLatestImageFromClipboard(false);
-        if (clipImg?.base64) {
-          const fp = computeScreenshotFingerprint(clipImg.base64);
-          if (fp && fp !== lastInSessionFpRef.current && !hasScreenshotBeenProcessed(fp)) {
-            openTransactionMenuWithScreenshot(clipImg.base64, clipImg.mimeType, false, false);
-            return;
-          }
+      // Fresh app launch: quick check for clipboard image
+      const clipImg = await readLatestImageFromClipboard(false);
+      if (clipImg?.base64) {
+        const fp = computeScreenshotFingerprint(clipImg.base64);
+        if (fp && fp !== lastInSessionFpRef.current && !hasScreenshotBeenProcessed(fp)) {
+          openTransactionMenuWithScreenshot(clipImg.base64, clipImg.mimeType, false, false);
+          return;
         }
-        await new Promise((r) => setTimeout(r, 400));
       }
     };
 
@@ -467,14 +504,26 @@ export function ClipboardScreenshotDetector() {
       }
     };
 
+    const handleSwMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'DOMPT_SHARED_SCREENSHOT') {
+        checkServiceWorkerSharedCache();
+      }
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('pagehide', recordAppLeave);
     window.addEventListener('blur', recordAppLeave);
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    }
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', recordAppLeave);
       window.removeEventListener('blur', recordAppLeave);
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

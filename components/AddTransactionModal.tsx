@@ -239,35 +239,26 @@ function AddTransactionForm() {
 
   /**
    * Reads the latest screenshot from the Android Clipboard.
-   * Uses the single-flight mutex in readLatestImageFromClipboard(true) so large screenshot
-   * decoding is never interrupted.
+   * If Chrome Android blocks background/JPEG clipboard access and openPickerOnFallback is true,
+   * immediately opens Android's Recent Screenshot Picker in the same tap gesture.
    */
-  const tryUnlockAndReadScreenshot = async (showNoticeIfEmpty = false) => {
+  const tryUnlockAndReadScreenshot = async (openPickerOnFallback = false) => {
     if (isAnalyzingScreenshot) return false;
 
-    // 1. Check Android Clipboard (always ignoreProcessedHash = true when modal is open & empty!)
     const clipImg = await readLatestImageFromClipboard(true);
     if (clipImg?.base64) {
+      setIsPollingScreenshot(false);
       await analyzeScreenshotInModal(clipImg.base64, clipImg.mimeType);
       return true;
     }
 
-    // 2. Also try programmatic paste on our hidden contentEditable paste catcher
-    try {
-      if (pasteCatcherRef.current && typeof document.execCommand === 'function') {
-        pasteCatcherRef.current.focus();
-        document.execCommand('paste');
-      }
-    } catch {
-      // Ignore execCommand errors
+    setIsPollingScreenshot(false);
+    if (!hasDetectedInModalRef.current) {
+      setAwaitingTouchUnlock(true);
     }
 
-    if (showNoticeIfEmpty && !hasDetectedInModalRef.current) {
-      addToast(
-        'Tempel Screenshot dari Keyboard atau Pilih SS',
-        'Ketuk ikon gambar screenshot di baris atas keyboard HP Anda atau pilih gambar lewat tombol Pilih SS.',
-        'info'
-      );
+    if (openPickerOnFallback && !hasDetectedInModalRef.current) {
+      quickFileInputRef.current?.click();
     }
     return false;
   };
@@ -328,7 +319,7 @@ function AddTransactionForm() {
     e.target.value = '';
   };
 
-  // Sequential async polling loop when AddTransactionModal opens (never aborts in-flight clipboard reads!)
+  // Fast clipboard check when AddTransactionModal opens (never blocks UI if Android sandboxes .jpg screenshots)
   useEffect(() => {
     if (editingTransaction) return;
 
@@ -340,27 +331,20 @@ function AddTransactionForm() {
       isLoopRunning = true;
 
       if (returnedFromExternalApp) {
-        setIsPollingScreenshot(true);
+        setAwaitingTouchUnlock(true);
       }
 
-      const maxAttempts = returnedFromExternalApp ? 10 : 3;
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        if (cancelled || hasDetectedInModalRef.current) break;
+      const found = await tryUnlockAndReadScreenshot(false);
+      if (found || hasDetectedInModalRef.current || cancelled) {
+        setIsPollingScreenshot(false);
+        isLoopRunning = false;
+        return;
+      }
 
-        const found = await tryUnlockAndReadScreenshot(false);
-        if (found || hasDetectedInModalRef.current) {
-          setIsPollingScreenshot(false);
-          isLoopRunning = false;
-          return;
-        }
-
-        // After 4 full sequential attempts, show the 1-tap clipboard button while continuing to poll in background!
-        if (returnedFromExternalApp && attempt === 3 && !hasDetectedInModalRef.current && !cancelled) {
-          setIsPollingScreenshot(false);
-          setAwaitingTouchUnlock(true);
-        }
-
-        await new Promise((r) => setTimeout(r, 420));
+      // Single fast retry after 250ms in case clipboard just finished encoding
+      await new Promise((r) => setTimeout(r, 250));
+      if (!cancelled && !hasDetectedInModalRef.current) {
+        await tryUnlockAndReadScreenshot(false);
       }
 
       if (!cancelled && !hasDetectedInModalRef.current) {
@@ -944,8 +928,8 @@ function AddTransactionForm() {
       </div>
 
       <div className="overflow-y-auto flex-1 p-5 space-y-4 no-scrollbar">
-        {/* Polling / AI Screenshot Analyzing Banner */}
-        {(isAnalyzingScreenshot || isPollingScreenshot) && (
+        {/* AI Screenshot Analyzing Banner */}
+        {isAnalyzingScreenshot && (
           <div className="p-3.5 rounded-2xl bg-teal-950/90 text-white border border-teal-500/40 flex items-center justify-between gap-3 shadow-md">
             <div className="flex items-center gap-3 min-w-0 flex-1">
               {screenshotPreview ? (
@@ -963,35 +947,19 @@ function AddTransactionForm() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-extrabold text-[#D4F826]">
-                    {isAnalyzingScreenshot
-                      ? 'Mendeteksi Nominal & Keterangan Screenshot...'
-                      : 'Membaca Clipboard Screenshot Terakhir...'}
+                    Mendeteksi Nominal & Keterangan Screenshot...
                   </span>
                 </div>
                 <p className="text-[11px] text-teal-100/90 truncate mt-0.5">
-                  {isAnalyzingScreenshot
-                    ? screenshotStepText
-                    : 'Ketuk tombol di samping jika Chrome meminta izin baca clipboard...'}
+                  {screenshotStepText}
                 </p>
               </div>
             </div>
-            {!isAnalyzingScreenshot && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  tryUnlockAndReadScreenshot(true);
-                }}
-                className="px-3 py-2 rounded-xl bg-[#D4F826] text-slate-950 font-black text-xs shrink-0 cursor-pointer"
-              >
-                Tempel SS
-              </button>
-            )}
           </div>
         )}
 
         {/* Screenshot Pre-filled Confirmation Banner (Shows Nominal AND Keterangan clearly!) */}
-        {!isAnalyzingScreenshot && !isPollingScreenshot && detectedSourceApp && (
+        {!isAnalyzingScreenshot && detectedSourceApp && (
           <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700/70 flex items-center justify-between gap-2.5">
             <div className="flex items-center gap-2.5 min-w-0">
               {screenshotPreview ? (
@@ -1028,32 +996,74 @@ function AddTransactionForm() {
           </div>
         )}
 
-        {/* 1-Tap Clipboard Unlock Banner (Only shown if Chrome Android blocked background clipboard read without touch) */}
+        {/* 1-Tap Android Screenshot Card (When returning from SeaBank/m-Banking without Share Target) */}
         {!editingTransaction &&
           !isAnalyzingScreenshot &&
-          !isPollingScreenshot &&
           !detectedSourceApp &&
-          awaitingTouchUnlock && (
-            <div className="p-3.5 rounded-2xl bg-slate-900 text-white border border-[#D4F826]/40 flex items-center justify-between gap-3 shadow-md">
-              <div className="min-w-0 flex-1">
-                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#D4F826] text-slate-950">
-                  Screenshot Terdeteksi di Clipboard
-                </span>
-                <p className="text-[11px] text-slate-200 mt-1 leading-snug">
-                  Ketuk tombol di samping untuk langsung mengisi nominal & keterangan dari clipboard terakhir:
-                </p>
+          (awaitingTouchUnlock || isPollingScreenshot) && (
+            <div className="p-3.5 rounded-2xl bg-slate-900 text-white border border-[#D4F826]/40 space-y-2.5 shadow-md">
+              <div className="flex items-center justify-between gap-2.5">
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#D4F826] text-slate-950">
+                    Ambil Screenshot Terakhir
+                  </span>
+                  <p className="text-[11px] text-slate-200 mt-1 leading-snug">
+                    Android membatasi PWA membaca file Galeri secara diam-diam. Pilih salah satu cara 1-ketuk ini:
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    tryUnlockAndReadScreenshot(true);
+                  }}
+                  className="py-2.5 px-3.5 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
+                >
+                  <FileImage size={14} strokeWidth={2.5} />
+                  <span>Pilih SS Terakhir</span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  tryUnlockAndReadScreenshot(true);
+
+              {/* Visible Rich ContentEditable Box so Samsung Keyboard / Gboard shows the 1-tap Screenshot chip! */}
+              <div
+                contentEditable
+                suppressContentEditableWarning
+                role="textbox"
+                aria-label="Tempel Screenshot dari Keyboard"
+                onClick={(e) => e.stopPropagation()}
+                onPaste={handlePasteFromElement}
+                onInput={(e) => {
+                  const el = e.currentTarget;
+                  const img = el.querySelector('img');
+                  if (img?.src) {
+                    const src = img.src;
+                    el.innerHTML = '';
+                    if (src.startsWith('data:image/')) {
+                      analyzeScreenshotInModal(src, 'image/jpeg');
+                    } else if (src.startsWith('blob:')) {
+                      fetch(src)
+                        .then((r) => r.blob())
+                        .then((blob) => {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            const b64 = ev.target?.result as string;
+                            if (b64) analyzeScreenshotInModal(b64, blob.type || 'image/jpeg');
+                          };
+                          reader.readAsDataURL(blob);
+                        })
+                        .catch(() => {});
+                    }
+                  } else {
+                    el.innerHTML = '';
+                  }
                 }}
-                className="py-2.5 px-3.5 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
-              >
-                <Clipboard size={14} strokeWidth={2.5} />
-                <span>Baca Clipboard</span>
-              </button>
+                data-placeholder="⌨️ Atau ketuk kotak ini lalu tap gambar SS di atas Keyboard HP..."
+                className="w-full px-3 py-2 rounded-xl bg-white/10 border border-white/20 focus:border-[#D4F826] text-[11px] text-slate-200 focus:outline-none cursor-text empty:before:content-[attr(data-placeholder)] empty:before:text-slate-300"
+              />
+
+              <p className="text-[10px] text-teal-300/90 leading-snug">
+                💡 <strong>Ingin 100% Otomatis Tanpa Pilih Gambar?</strong> Saat selesai ambil SS di SeaBank, langsung ketuk tombol <strong>Bagikan (Share) → Dompt.</strong> pada popup screenshot Android!
+              </p>
             </div>
           )}
 

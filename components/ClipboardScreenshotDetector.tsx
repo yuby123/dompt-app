@@ -2,9 +2,10 @@
 
 import React, { useEffect, useRef } from 'react';
 import { useApp } from './AppContext';
-import { Wallet, Category, TransactionType } from '@/lib/types';
+import { Wallet, Category, TransactionType, ExpenseNature } from '@/lib/types';
+import { detectExpenseNature } from '@/lib/budgetUtils';
 
-const PROCESSED_HASHES_KEY = 'dompt_processed_ss_hashes_v1';
+const PROCESSED_HASHES_KEY = 'dompt_processed_ss_hashes_v2';
 const ANDROID_AUTOSS_ENABLED_KEY = 'dompt_android_autoss_enabled';
 const LAST_LEAVE_TS_KEY = 'dompt_android_last_leave_ts';
 
@@ -29,6 +30,7 @@ export interface PendingScreenshotForModal {
   mimeType?: string;
   extractedData?: ExtractedScreenshotData;
   awaitingTouchUnlock?: boolean;
+  isPollingNewScreenshot?: boolean;
   timestamp: number;
 }
 
@@ -50,7 +52,8 @@ export function setPendingScreenshotForModal(payload: PendingScreenshotForModal 
 }
 
 /**
- * Resolves the best matching Wallet ID and Category ID from OCR extracted receipt data.
+ * Resolves the best matching Wallet ID, Category ID, ExpenseNature, and formatted Note
+ * from OCR extracted receipt data.
  * Prioritizes exact bank/e-wallet brand match (e.g. SeaBank -> SeaBank wallet) before generic type fallback.
  */
 export function resolveWalletAndCategoryFromOcr(
@@ -58,7 +61,12 @@ export function resolveWalletAndCategoryFromOcr(
   walletsWithBalance: (Wallet & { balance: number })[],
   wallets: Wallet[],
   categories: Category[]
-): { resolvedWalletId: string; resolvedCategoryId: string } {
+): {
+  resolvedWalletId: string;
+  resolvedCategoryId: string;
+  resolvedNature: ExpenseNature;
+  noteStr: string;
+} {
   const query = `${data.sourceApp || ''} ${data.suggestedWallet || ''} ${data.title || ''} ${data.notes || ''}`.toLowerCase();
 
   const brandKeywords = [
@@ -129,12 +137,32 @@ export function resolveWalletAndCategoryFromOcr(
   });
   const resolvedCategoryId = matchCategory ? matchCategory.id : availableCats[0]?.id || '';
 
-  return { resolvedWalletId, resolvedCategoryId };
+  // Build informative note (keterangan) combining title, notes, and sourceApp
+  const rawNotes = (data.notes || '').trim();
+  const rawTitle = (data.title || '').trim();
+  const rawSource = (data.sourceApp || '').trim();
+  let noteStr = rawNotes || rawTitle;
+  if (rawTitle && rawNotes && !rawNotes.toLowerCase().includes(rawTitle.toLowerCase())) {
+    noteStr = `${rawTitle} - ${rawNotes}`;
+  }
+  if (rawSource && noteStr && !noteStr.toLowerCase().includes(rawSource.toLowerCase())) {
+    noteStr = `[${rawSource}] ${noteStr}`;
+  } else if (!noteStr && rawSource) {
+    noteStr = `Transaksi ${rawSource}`;
+  }
+
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+  const resolvedNature: ExpenseNature =
+    data.type === 'expense'
+      ? detectExpenseNature(resolvedCategoryId, noteStr, catMap)
+      : 'variable';
+
+  return { resolvedWalletId, resolvedCategoryId, resolvedNature, noteStr };
 }
 
 /**
  * Generates a fast, deterministic fingerprint for a base64 image
- * so the same screenshot in the Android clipboard is never auto-opened twice.
+ * so an already-confirmed screenshot is not duplicated.
  */
 export function computeScreenshotFingerprint(base64: string): string {
   if (!base64) return '';
@@ -261,8 +289,52 @@ export function setActiveScreenshotsDirHandle(handle: any): void {
 }
 
 /**
+ * Helper to scan a directory handle (and 1 level of common screenshot subfolders like 'Screenshots')
+ * for the most recently modified image file.
+ */
+async function findNewestImageInDirHandle(
+  dirHandle: any,
+  maxAgeMs: number,
+  depth = 0
+): Promise<File | null> {
+  let newestFile: File | null = null;
+  let newestTime = 0;
+  const now = Date.now();
+
+  for await (const entry of dirHandle.values()) {
+    if (entry.kind === 'file' && /\.(png|jpe?g|webp|heic|bmp)$/i.test(entry.name)) {
+      try {
+        const file: File = await entry.getFile();
+        if (file.size > 0 && now - file.lastModified <= maxAgeMs && file.lastModified > newestTime) {
+          newestTime = file.lastModified;
+          newestFile = file;
+        }
+      } catch {
+        // Ignore unreadable file
+      }
+    } else if (
+      depth === 0 &&
+      entry.kind === 'directory' &&
+      /screenshot|seabank|pictures|dcim/i.test(entry.name)
+    ) {
+      try {
+        const subFile = await findNewestImageInDirHandle(entry, maxAgeMs, depth + 1);
+        if (subFile && subFile.lastModified > newestTime) {
+          newestTime = subFile.lastModified;
+          newestFile = subFile;
+        }
+      } catch {
+        // Ignore unreadable subdir
+      }
+    }
+  }
+
+  return newestFile;
+}
+
+/**
  * Scans the connected Android Screenshots directory handle (if granted)
- * for any recent screenshot image created within the last 20 minutes.
+ * for any recent screenshot image created within the last 60 minutes.
  */
 export async function readLatestScreenshotFromConnectedFolder(
   allowRequestPermission = false,
@@ -272,42 +344,38 @@ export async function readLatestScreenshotFromConnectedFolder(
   mimeType: string;
   fileName?: string;
 } | null> {
-  if (!activeScreenshotsDirHandle) {
-    activeScreenshotsDirHandle = await loadDirHandleFromIdb();
+  // Use in-memory handle first so we don't lose transient user activation waiting on IndexedDB!
+  let dirHandle = activeScreenshotsDirHandle;
+  if (!dirHandle) {
+    dirHandle = await loadDirHandleFromIdb();
+    if (dirHandle) {
+      activeScreenshotsDirHandle = dirHandle;
+    }
   }
-  if (!activeScreenshotsDirHandle) return null;
+  if (!dirHandle) return null;
 
   try {
-    if (typeof activeScreenshotsDirHandle.queryPermission === 'function') {
-      let perm = await activeScreenshotsDirHandle.queryPermission({ mode: 'read' });
-      if (perm !== 'granted' && allowRequestPermission && typeof activeScreenshotsDirHandle.requestPermission === 'function') {
-        perm = await activeScreenshotsDirHandle.requestPermission({ mode: 'read' });
+    if (typeof dirHandle.queryPermission === 'function') {
+      let perm = await dirHandle.queryPermission({ mode: 'read' });
+      if (
+        perm !== 'granted' &&
+        allowRequestPermission &&
+        typeof dirHandle.requestPermission === 'function'
+      ) {
+        perm = await dirHandle.requestPermission({ mode: 'read' });
       }
       if (perm !== 'granted') return null;
     }
 
-    let newestFile: File | null = null;
-    let newestTime = 0;
-    const now = Date.now();
-    const maxAgeMs = 20 * 60 * 1000; // 20 minutes
-
-    for await (const entry of activeScreenshotsDirHandle.values()) {
-      if (entry.kind === 'file' && /\.(png|jpe?g|webp)$/i.test(entry.name)) {
-        const file: File = await entry.getFile();
-        if (file.size > 0 && now - file.lastModified <= maxAgeMs && file.lastModified > newestTime) {
-          newestTime = file.lastModified;
-          newestFile = file;
-        }
-      }
-    }
-
+    const maxAgeMs = 60 * 60 * 1000; // 60 minutes
+    const newestFile = await findNewestImageInDirHandle(dirHandle, maxAgeMs, 0);
     if (!newestFile) return null;
 
     const base64 = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve((reader.result as string) || '');
       reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(newestFile!);
+      reader.readAsDataURL(newestFile);
     });
 
     if (!base64) return null;
@@ -324,7 +392,14 @@ export async function readLatestScreenshotFromConnectedFolder(
   }
 }
 
-export async function readLatestImageFromClipboard(): Promise<{
+/**
+ * Reads the latest image from the system clipboard.
+ * IMPORTANT: Calls navigator.clipboard.read() immediately without any prior async await
+ * so Chrome Android's transient user activation is 100% preserved.
+ */
+export async function readLatestImageFromClipboard(
+  ignoreProcessedHash = false
+): Promise<{
   base64: string;
   mimeType: string;
 } | null> {
@@ -346,6 +421,10 @@ export async function readLatestImageFromClipboard(): Promise<{
           reader.readAsDataURL(blob);
         });
         if (base64) {
+          const fp = computeScreenshotFingerprint(base64);
+          if (!ignoreProcessedHash && hasScreenshotBeenProcessed(fp)) {
+            continue;
+          }
           return { base64, mimeType: imageType };
         }
       }
@@ -356,6 +435,10 @@ export async function readLatestImageFromClipboard(): Promise<{
         const htmlText = await htmlBlob.text();
         const match = htmlText.match(/src=["'](data:image\/([a-zA-Z0-9+.-]+);base64,[^"']+)["']/i);
         if (match && match[1]) {
+          const fp = computeScreenshotFingerprint(match[1]);
+          if (!ignoreProcessedHash && hasScreenshotBeenProcessed(fp)) {
+            continue;
+          }
           return {
             base64: match[1],
             mimeType: `image/${match[2] || 'png'}`,
@@ -364,7 +447,7 @@ export async function readLatestImageFromClipboard(): Promise<{
       }
     }
   } catch {
-    // Clipboard read requires focus or user gesture on some mobile browsers
+    // Clipboard read requires focus or user click gesture on some mobile browsers
   }
 
   return null;
@@ -372,56 +455,66 @@ export async function readLatestImageFromClipboard(): Promise<{
 
 export function ClipboardScreenshotDetector() {
   const { openAddTransaction, isAddTransactionOpen, isScanModalOpen, goToCurrentPeriod } = useApp();
-  const lastProcessedRef = useRef<string>('');
-  const pendingGestureCheckRef = useRef<boolean>(true);
+  const lastInSessionFpRef = useRef<string>('');
+  const activePollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const clearPollTimers = () => {
+    activePollTimersRef.current.forEach((t) => clearTimeout(t));
+    activePollTimersRef.current = [];
+  };
 
   /**
    * Opens the Menu Pencatatan Transaksi (AddTransactionModal) directly with the detected screenshot
    * so that all fields are filled automatically and the user only needs to press Confirm.
+   * Note: We do NOT permanently mark the hash in localStorage here yet — only when the user
+   * actually confirms/saves or dismisses, so retrying never blocks!
    */
   const openTransactionMenuWithScreenshot = (
     base64?: string,
     mimeType?: string,
-    awaitingTouchUnlock = false
+    awaitingTouchUnlock = false,
+    isPollingNewScreenshot = false
   ) => {
     if (base64) {
       const fp = computeScreenshotFingerprint(base64);
-      lastProcessedRef.current = fp;
-      markScreenshotProcessed(fp);
+      lastInSessionFpRef.current = fp;
+      clearPollTimers();
     }
     goToCurrentPeriod();
     setPendingScreenshotForModal({
       base64,
       mimeType: mimeType || 'image/jpeg',
       awaitingTouchUnlock,
+      isPollingNewScreenshot,
       timestamp: Date.now(),
     });
     openAddTransaction('expense');
   };
 
   /**
-   * Checks both connected Android Screenshots folder (IndexedDB) and system clipboard
-   * for a NEW, unprocessed screenshot image.
+   * Checks both system clipboard and connected Android Screenshots folder (IndexedDB)
+   * for a new screenshot image.
+   * Calls clipboard FIRST when allowRequestPerm is true so user gesture activation is preserved!
    */
   const checkAndOpenIfNewScreenshot = async (allowRequestPerm = false): Promise<boolean> => {
     if (!isAndroidAutoSsEnabled()) return false;
 
-    // 1. Check connected Android Screenshots folder first
-    const folderImg = await readLatestScreenshotFromConnectedFolder(allowRequestPerm, false);
-    if (folderImg?.base64) {
-      const fp = computeScreenshotFingerprint(folderImg.base64);
-      if (fp && fp !== lastProcessedRef.current && !hasScreenshotBeenProcessed(fp)) {
-        openTransactionMenuWithScreenshot(folderImg.base64, folderImg.mimeType, false);
+    // 1. Check system clipboard immediately (preserves synchronous user gesture activation)
+    const clipImg = await readLatestImageFromClipboard(false);
+    if (clipImg?.base64) {
+      const fp = computeScreenshotFingerprint(clipImg.base64);
+      if (fp && fp !== lastInSessionFpRef.current && !hasScreenshotBeenProcessed(fp)) {
+        openTransactionMenuWithScreenshot(clipImg.base64, clipImg.mimeType, false, false);
         return true;
       }
     }
 
-    // 2. Check system clipboard for a new screenshot image
-    const clipImg = await readLatestImageFromClipboard();
-    if (clipImg?.base64) {
-      const fp = computeScreenshotFingerprint(clipImg.base64);
-      if (fp && fp !== lastProcessedRef.current && !hasScreenshotBeenProcessed(fp)) {
-        openTransactionMenuWithScreenshot(clipImg.base64, clipImg.mimeType, false);
+    // 2. Check connected Android Screenshots folder
+    const folderImg = await readLatestScreenshotFromConnectedFolder(allowRequestPerm, false);
+    if (folderImg?.base64) {
+      const fp = computeScreenshotFingerprint(folderImg.base64);
+      if (fp && fp !== lastInSessionFpRef.current && !hasScreenshotBeenProcessed(fp)) {
+        openTransactionMenuWithScreenshot(folderImg.base64, folderImg.mimeType, false, false);
         return true;
       }
     }
@@ -430,7 +523,7 @@ export function ClipboardScreenshotDetector() {
   };
 
   useEffect(() => {
-    // Hydrate saved directory handle from IndexedDB on mount
+    // Hydrate saved directory handle from IndexedDB on mount into module memory
     loadDirHandleFromIdb().then((handle) => {
       if (handle) {
         activeScreenshotsDirHandle = handle;
@@ -465,14 +558,14 @@ export function ClipboardScreenshotDetector() {
             window.history.replaceState({}, document.title, window.location.pathname);
           }
 
-          openTransactionMenuWithScreenshot(sharedImage, sharedMime, false);
+          openTransactionMenuWithScreenshot(sharedImage, sharedMime, false, false);
           return true;
         }
 
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('scan') === 'auto' || urlParams.get('scan') === 'open') {
           window.history.replaceState({}, document.title, window.location.pathname);
-          openTransactionMenuWithScreenshot(undefined, undefined, true);
+          openTransactionMenuWithScreenshot(undefined, undefined, true, true);
           return true;
         }
       } catch (err) {
@@ -483,55 +576,71 @@ export function ClipboardScreenshotDetector() {
 
     if (processSharedScreenshot()) return;
 
-    // Multi-step retry schedule so we catch clipboard/folder after Android finishes window focus transition
-    const runRetrySchedule = (wasReturningFromExternalApp: boolean) => {
-      const delays = [60, 280, 650, 1200];
-      let resolved = false;
+    /**
+     * Continuous multi-step polling schedule (up to 4 seconds) when returning to the app on Android.
+     * IMPORTANT: Opening AddTransactionModal does NOT stop the background polling!
+     * If Android finishes writing the screenshot file or focusing the window at 600ms, 1200ms, or 2500ms,
+     * the already-open AddTransactionModal automatically receives the image and runs AI OCR!
+     */
+    const runReturnPollingSchedule = (wasReturningFromExternalApp: boolean) => {
+      clearPollTimers();
+      // Reset in-session fingerprint when returning from an external app so a fresh check always runs
+      if (wasReturningFromExternalApp) {
+        lastInSessionFpRef.current = '';
+      }
+
+      const delays = [50, 220, 480, 850, 1350, 2000, 2800, 3800];
+      let imageFound = false;
+      let modalOpenedForReturn = false;
 
       delays.forEach((delay, idx) => {
-        setTimeout(async () => {
-          if (resolved) return;
+        const timer = setTimeout(async () => {
+          if (imageFound) return;
+
           const found = await checkAndOpenIfNewScreenshot(false);
           if (found) {
-            resolved = true;
+            imageFound = true;
+            clearPollTimers();
             return;
           }
-          // If the user on Android just switched back from another app (e.g. SeaBank after taking SS)
-          // and after 300ms silent clipboard/folder read was blocked by Android browser waiting for a touch,
-          // open the Menu Pencatatan Transaksi (AddTransactionModal) immediately so 1 touch loads the SS & confirms!
+
+          // If returning from an external app on Android (e.g. SeaBank after taking SS),
+          // open AddTransactionModal right away in polling mode while continuing to check at 480ms..3800ms!
           if (
             idx === 1 &&
+            !modalOpenedForReturn &&
             wasReturningFromExternalApp &&
             detectIsAndroidDevice() &&
             isAndroidAutoSsEnabled() &&
             !isAddTransactionOpen &&
             !isScanModalOpen
           ) {
-            resolved = true;
-            openTransactionMenuWithScreenshot(undefined, undefined, true);
+            modalOpenedForReturn = true;
+            openTransactionMenuWithScreenshot(undefined, undefined, true, true);
           }
         }, delay);
+
+        activePollTimersRef.current.push(timer);
       });
     };
 
     // Check if Android reloaded the tab right after returning from an external app (like SeaBank)
     const lastLeaveStr = localStorage.getItem(LAST_LEAVE_TS_KEY);
-    const lastLeaveTs = lastLeaveStr ? Number(lastLeaveTsStr(lastLeaveStr)) : 0;
+    const lastLeaveTs = lastLeaveStr ? Number(lastLeaveStr.replace(/\D/g, '')) : 0;
     const msSinceLeave = lastLeaveTs > 0 ? Date.now() - lastLeaveTs : 0;
-    const isColdReturnFromApp = msSinceLeave >= 1500 && msSinceLeave <= 10 * 60 * 1000;
+    const isColdReturnFromApp = msSinceLeave >= 1200 && msSinceLeave <= 15 * 60 * 1000;
     if (lastLeaveTs > 0) {
       localStorage.removeItem(LAST_LEAVE_TS_KEY);
     }
 
     if (detectIsAndroidDevice() && isAndroidAutoSsEnabled()) {
-      runRetrySchedule(isColdReturnFromApp);
+      runReturnPollingSchedule(isColdReturnFromApp);
     }
 
     const recordAppLeave = () => {
       try {
         localStorage.setItem(LAST_LEAVE_TS_KEY, String(Date.now()));
       } catch {}
-      pendingGestureCheckRef.current = true;
     };
 
     const handleVisibilityChange = () => {
@@ -539,22 +648,23 @@ export function ClipboardScreenshotDetector() {
         recordAppLeave();
       } else if (document.visibilityState === 'visible') {
         if (processSharedScreenshot()) return;
-        const storedLeave = Number(localStorage.getItem(LAST_LEAVE_TS_KEY) || '0');
+        const storedLeave = Number((localStorage.getItem(LAST_LEAVE_TS_KEY) || '0').replace(/\D/g, ''));
         const awayMs = storedLeave > 0 ? Date.now() - storedLeave : 0;
         localStorage.removeItem(LAST_LEAVE_TS_KEY);
-        pendingGestureCheckRef.current = true;
 
         if (detectIsAndroidDevice() && isAndroidAutoSsEnabled()) {
-          runRetrySchedule(awayMs >= 1500);
+          runReturnPollingSchedule(awayMs >= 1200);
         }
       }
     };
 
     const handleWindowFocusOrShow = () => {
       if (processSharedScreenshot()) return;
-      pendingGestureCheckRef.current = true;
       if (detectIsAndroidDevice() && isAndroidAutoSsEnabled()) {
-        runRetrySchedule(false);
+        // Only start a lightweight poll if not already polling from visibilitychange
+        if (activePollTimersRef.current.length === 0) {
+          runReturnPollingSchedule(false);
+        }
       }
     };
 
@@ -565,6 +675,7 @@ export function ClipboardScreenshotDetector() {
     window.addEventListener('focus', handleWindowFocusOrShow);
 
     return () => {
+      clearPollTimers();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pagehide', recordAppLeave);
       window.removeEventListener('blur', recordAppLeave);
@@ -573,24 +684,6 @@ export function ClipboardScreenshotDetector() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Capture user gesture (pointerdown / click) on Android to unlock clipboard / directory handle if needed
-  useEffect(() => {
-    const handleGesture = async () => {
-      if (!pendingGestureCheckRef.current) return;
-      if (!detectIsAndroidDevice() || !isAndroidAutoSsEnabled()) return;
-      pendingGestureCheckRef.current = false;
-      await checkAndOpenIfNewScreenshot(true);
-    };
-
-    window.addEventListener('pointerdown', handleGesture, { capture: true, passive: true });
-    window.addEventListener('click', handleGesture, { capture: true, passive: true });
-    return () => {
-      window.removeEventListener('pointerdown', handleGesture, { capture: true });
-      window.removeEventListener('click', handleGesture, { capture: true });
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAddTransactionOpen, isScanModalOpen]);
 
   // Global window paste listener (when user pastes an image via Android keyboard clipboard or Ctrl+V)
   useEffect(() => {
@@ -606,7 +699,7 @@ export function ClipboardScreenshotDetector() {
             reader.onload = (event) => {
               const base64 = event.target?.result as string;
               if (base64) {
-                openTransactionMenuWithScreenshot(base64, blob.type, false);
+                openTransactionMenuWithScreenshot(base64, blob.type, false, false);
               }
             };
             reader.readAsDataURL(blob);
@@ -622,8 +715,4 @@ export function ClipboardScreenshotDetector() {
   }, []);
 
   return null;
-}
-
-function lastLeaveTsStr(val: string): string {
-  return val.replace(/\D/g, '');
 }

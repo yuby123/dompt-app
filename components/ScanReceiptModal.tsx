@@ -36,6 +36,8 @@ import {
   setAndroidAutoSsEnabled,
   getActiveScreenshotsDirHandle,
   setActiveScreenshotsDirHandle,
+  loadDirHandleFromIdb,
+  saveDirHandleToIdb,
 } from './ClipboardScreenshotDetector';
 
 interface ExtractedData {
@@ -51,6 +53,19 @@ interface ExtractedData {
 }
 
 const SAMPLE_RECEIPTS = [
+  {
+    name: 'SeaBank (Transfer / QRIS)',
+    desc: 'Rp 65.000 • Bukti Transaksi SeaBank',
+    type: 'expense' as TransactionType,
+    amount: 65000,
+    title: 'Transaksi SeaBank',
+    suggestedCategory: 'Makanan',
+    suggestedWallet: 'SeaBank',
+    sourceApp: 'SeaBank',
+    notes: 'Transaksi SeaBank Berhasil',
+    date: new Date().toISOString().slice(0, 10),
+    time: '12:10',
+  },
   {
     name: 'QRIS DANA (Kopi Kenangan)',
     desc: 'Rp 42.500 • Kopi Kenangan Mall',
@@ -76,19 +91,6 @@ const SAMPLE_RECEIPTS = [
     notes: 'Transfer m-BCA ke 5270192837 Budi Santoso',
     date: new Date().toISOString().slice(0, 10),
     time: '11:15',
-  },
-  {
-    name: 'Struk Indomaret Kasir',
-    desc: 'Rp 89.200 • Belanja Kebutuhan Harian',
-    type: 'expense' as TransactionType,
-    amount: 89200,
-    title: 'Indomaret Point',
-    suggestedCategory: 'Belanja Harian',
-    suggestedWallet: 'Tunai',
-    sourceApp: 'Struk Kasir Indomaret',
-    notes: 'Struk Belanja Indomaret Point Kemang',
-    date: new Date().toISOString().slice(0, 10),
-    time: '19:40',
   },
 ];
 
@@ -134,7 +136,14 @@ export function ScanReceiptModal() {
   useEffect(() => {
     setIsAndroidDevice(detectIsAndroidDevice());
     setAndroidAutoEnabled(isAndroidAutoSsEnabled());
-    setIsFolderConnected(Boolean(getActiveScreenshotsDirHandle()));
+    const memHandle = getActiveScreenshotsDirHandle();
+    if (memHandle) {
+      setIsFolderConnected(true);
+    } else {
+      loadDirHandleFromIdb().then((h) => {
+        if (h) setIsFolderConnected(true);
+      });
+    }
   }, [isScanModalOpen]);
 
   // Resolve best wallet & category from extracted receipt data
@@ -146,7 +155,7 @@ export function ScanReceiptModal() {
       return (
         wName.includes(query) ||
         query.includes(wName) ||
-        (query.includes('seabank') && (wName.includes('rekening') || w.type === 'bank')) ||
+        (query.includes('seabank') && (wName.includes('seabank') || wName.includes('rekening') || w.type === 'bank')) ||
         (query.includes('bca') && (wName.includes('bca') || w.type === 'bank')) ||
         (query.includes('mandiri') && (wName.includes('mandiri') || w.type === 'bank')) ||
         (query.includes('bri') && (wName.includes('bri') || w.type === 'bank')) ||
@@ -408,7 +417,7 @@ export function ScanReceiptModal() {
 
       if (!imagePreview && !extractedData && !isAnalyzing) {
         // 1. Check connected Android Screenshots folder first
-        const folderImg = await readLatestScreenshotFromConnectedFolder();
+        const folderImg = await readLatestScreenshotFromConnectedFolder(true);
         if (!cancelled && folderImg?.base64) {
           await processBase64Screenshot(folderImg.base64, folderImg.mimeType, true);
           return;
@@ -453,9 +462,9 @@ export function ScanReceiptModal() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isScanModalOpen]);
 
-  // Direct clipboard button handler
+  // Direct clipboard / folder / native picker button handler
   const handleClipboardPasteButton = async () => {
-    const folderImg = await readLatestScreenshotFromConnectedFolder();
+    const folderImg = await readLatestScreenshotFromConnectedFolder(true);
     if (folderImg?.base64) {
       await processBase64Screenshot(folderImg.base64, folderImg.mimeType, true);
       return;
@@ -466,11 +475,10 @@ export function ScanReceiptModal() {
       await processBase64Screenshot(clipImg.base64, clipImg.mimeType, true);
       return;
     }
-    showToast(
-      'Clipboard Kosong / Perlu Izin',
-      'Ambil screenshot terlebih dahulu atau pilih gambar screenshot terbaru dari Galeri.',
-      'info'
-    );
+
+    // If Android clipboard doesn't hold the SeaBank screenshot (because Android saved it to Pictures/Screenshots),
+    // automatically open the recent/screenshots picker so the user only taps once!
+    fileInputRef.current?.click();
   };
 
   const handleToggleAndroidAuto = () => {
@@ -494,13 +502,14 @@ export function ScanReceiptModal() {
         });
         if (dirHandle) {
           setActiveScreenshotsDirHandle(dirHandle);
+          await saveDirHandleToIdb(dirHandle);
           setIsFolderConnected(true);
           showToast(
             'Folder Screenshots Terhubung!',
-            'Screenshot baru di folder ini akan langsung dicatat ke Transaksi Hari Ini.',
+            'Screenshot baru di SeaBank / m-Banking akan langsung dicatat otomatis ke Transaksi Hari Ini.',
             'success'
           );
-          const folderImg = await readLatestScreenshotFromConnectedFolder();
+          const folderImg = await readLatestScreenshotFromConnectedFolder(true);
           if (folderImg?.base64) {
             await processBase64Screenshot(folderImg.base64, folderImg.mimeType, true);
           }
@@ -771,7 +780,7 @@ export function ScanReceiptModal() {
                     </p>
                   </div>
 
-                  {/* Primary Action: Read Clipboard Directly */}
+                  {/* Primary Action: Read Clipboard / Folder Directly */}
                   <div className="space-y-2 max-w-md mx-auto">
                     <button
                       type="button"
@@ -800,6 +809,33 @@ export function ScanReceiptModal() {
                         <Camera size={14} strokeWidth={2.3} />
                         <span>Foto Struk</span>
                       </button>
+                    </div>
+
+                    {/* Gboard / Android Keyboard Quick Paste Box */}
+                    <div className="pt-1">
+                      <input
+                        type="text"
+                        readOnly={false}
+                        placeholder="📋 Atau ketuk di sini lalu tempel SS dari atas keyboard..."
+                        onChange={(e) => {
+                          e.target.value = '';
+                        }}
+                        onPaste={(e) => {
+                          const items = e.clipboardData?.items;
+                          if (!items) return;
+                          for (let i = 0; i < items.length; i++) {
+                            if (items[i].type.startsWith('image/')) {
+                              const blob = items[i].getAsFile();
+                              if (blob) {
+                                e.preventDefault();
+                                handleFile(blob);
+                                break;
+                              }
+                            }
+                          }
+                        }}
+                        className="w-full py-2 px-3 rounded-xl bg-white dark:bg-gray-900 border border-dashed border-gray-300 dark:border-gray-700 text-[11px] font-semibold text-gray-700 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:border-teal-500 text-center"
+                      />
                     </div>
                   </div>
                 </div>

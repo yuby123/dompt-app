@@ -51,16 +51,19 @@ export async function POST(req: NextRequest) {
     };
 
     const promptText = `
-Analisis bukti transaksi/transfer (SeaBank, BCA, Mandiri, BRI, BNI, Jago, DANA, GoPay, OVO, ShopeePay, QRIS, Struk Kasir):
-1. amount: Nominal angka bulat (integer Rupiah) yang dibayarkan/diterima/ditransfer.
-2. type: 'expense' (pembayaran/transfer keluar/struk belanja), 'income' (dana masuk/terima transfer), atau 'transfer' (antar rekening sendiri).
-3. title: Nama merchant, toko, nama penerima atau pengirim transfer.
-4. sourceApp: Nama bank/aplikasi (misal: "SeaBank", "BCA", "DANA", "GoPay", "ShopeePay", "Mandiri", "QRIS", "Indomaret").
+Analisis screenshot bukti transaksi/transfer dari HP Android (khususnya SeaBank, BCA / myBCA, Mandiri Livin', BRI BRImo, BNI Wondr, Bank Jago, Blu, DANA, GoPay, OVO, ShopeePay, QRIS, atau Struk Kasir):
+1. amount: Nominal angka bulat (integer Rupiah tanpa titik/desimal, contoh Rp 50.000 menjadi 50000) yang dibayarkan/ditransfer/diterima. Jika ada biaya admin terpisah, ambil total yang didebet atau nominal utamanya.
+2. type:
+   - Gunakan 'expense' untuk semua pembayaran QRIS, belanja, top-up e-wallet, pembayaran tagihan, atau transfer keluar dari SeaBank/bank pengguna ke pihak lain ("Transaksi Berhasil", "Transfer Berhasil", "Pembayaran Berhasil").
+   - Gunakan 'income' HANYA jika jelas-jelas tertulis dana masuk / menerima uang ke rekening pengguna.
+   - Gunakan 'transfer' hanya jika jelas pindah dana antar dompet milik pengguna sendiri.
+3. title: Nama penerima transfer, merchant QRIS, tujuan top-up, atau toko (contoh: "Transfer SeaBank ke Budi", "Top Up ShopeePay", "QRIS Warung Makan").
+4. sourceApp: Nama bank/aplikasi asal screenshot (contoh: "SeaBank", "BCA", "DANA", "GoPay", "ShopeePay", "Mandiri", "QRIS").
 5. suggestedCategory: Kategori paling cocok (Makanan, Minuman, Belanja Harian, Transportasi, Tagihan & Langganan, Kesehatan, Hiburan, Top Up, Gaji Pokok, Lainnya).
-6. suggestedWallet: Nama dompet/bank yang terdeteksi (misal: "SeaBank", "Rekening Bank", "E-Wallet", "ShopeePay", "BCA", "Tunai").
+6. suggestedWallet: Nama dompet/bank yang terdeteksi dari bukti (contoh: "SeaBank", "Rekening Bank", "E-Wallet", "ShopeePay", "BCA", "Tunai").
 7. date: Tanggal transaksi YYYY-MM-DD jika tertera.
 8. time: Waktu transaksi HH:mm jika tertera.
-9. notes: Keterangan singkat atau nomor referensi transaksi.
+9. notes: Ringkasan jelas transaksi (contoh: "SeaBank - Transfer ke Budi Santoso").
     `.trim();
 
     const config = {

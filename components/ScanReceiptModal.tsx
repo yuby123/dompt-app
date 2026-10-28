@@ -36,8 +36,8 @@ import {
   setAndroidAutoSsEnabled,
   getActiveScreenshotsDirHandle,
   setActiveScreenshotsDirHandle,
-  loadDirHandleFromIdb,
-  saveDirHandleToIdb,
+  setPendingScreenshotForModal,
+  resolveWalletAndCategoryFromOcr,
 } from './ClipboardScreenshotDetector';
 
 interface ExtractedData {
@@ -53,19 +53,6 @@ interface ExtractedData {
 }
 
 const SAMPLE_RECEIPTS = [
-  {
-    name: 'SeaBank (Transfer / QRIS)',
-    desc: 'Rp 65.000 • Bukti Transaksi SeaBank',
-    type: 'expense' as TransactionType,
-    amount: 65000,
-    title: 'Transaksi SeaBank',
-    suggestedCategory: 'Makanan',
-    suggestedWallet: 'SeaBank',
-    sourceApp: 'SeaBank',
-    notes: 'Transaksi SeaBank Berhasil',
-    date: new Date().toISOString().slice(0, 10),
-    time: '12:10',
-  },
   {
     name: 'QRIS DANA (Kopi Kenangan)',
     desc: 'Rp 42.500 • Kopi Kenangan Mall',
@@ -92,6 +79,19 @@ const SAMPLE_RECEIPTS = [
     date: new Date().toISOString().slice(0, 10),
     time: '11:15',
   },
+  {
+    name: 'Struk Indomaret Kasir',
+    desc: 'Rp 89.200 • Belanja Kebutuhan Harian',
+    type: 'expense' as TransactionType,
+    amount: 89200,
+    title: 'Indomaret Point',
+    suggestedCategory: 'Belanja Harian',
+    suggestedWallet: 'Tunai',
+    sourceApp: 'Struk Kasir Indomaret',
+    notes: 'Struk Belanja Indomaret Point Kemang',
+    date: new Date().toISOString().slice(0, 10),
+    time: '19:40',
+  },
 ];
 
 export function ScanReceiptModal() {
@@ -107,6 +107,7 @@ export function ScanReceiptModal() {
     updateTransaction,
     deleteTransaction,
     transferFunds,
+    openAddTransaction,
     goToCurrentPeriod,
     addToast: showToast,
   } = useApp();
@@ -136,125 +137,35 @@ export function ScanReceiptModal() {
   useEffect(() => {
     setIsAndroidDevice(detectIsAndroidDevice());
     setAndroidAutoEnabled(isAndroidAutoSsEnabled());
-    const memHandle = getActiveScreenshotsDirHandle();
-    if (memHandle) {
-      setIsFolderConnected(true);
-    } else {
-      loadDirHandleFromIdb().then((h) => {
-        if (h) setIsFolderConnected(true);
-      });
-    }
+    setIsFolderConnected(Boolean(getActiveScreenshotsDirHandle()));
   }, [isScanModalOpen]);
 
   // Resolve best wallet & category from extracted receipt data
   const resolveWalletAndCategory = (data: ExtractedData) => {
-    const query = `${data.suggestedWallet || ''} ${data.sourceApp || ''}`.toLowerCase();
-    const matchedByName = walletsWithBalance.find((w) => {
-      if (!query.trim()) return false;
-      const wName = w.name.toLowerCase();
-      return (
-        wName.includes(query) ||
-        query.includes(wName) ||
-        (query.includes('seabank') && (wName.includes('seabank') || wName.includes('rekening') || w.type === 'bank')) ||
-        (query.includes('bca') && (wName.includes('bca') || w.type === 'bank')) ||
-        (query.includes('mandiri') && (wName.includes('mandiri') || w.type === 'bank')) ||
-        (query.includes('bri') && (wName.includes('bri') || w.type === 'bank')) ||
-        (query.includes('bank') && w.type === 'bank') ||
-        (query.includes('shopee') && (wName.includes('shopee') || wName.includes('ewallet') || w.type === 'ewallet')) ||
-        (query.includes('dana') && (wName.includes('dana') || wName.includes('ewallet') || w.type === 'ewallet')) ||
-        (query.includes('gopay') && (wName.includes('gopay') || wName.includes('ewallet') || w.type === 'ewallet')) ||
-        (query.includes('ovo') && (wName.includes('ovo') || wName.includes('ewallet') || w.type === 'ewallet'))
-      );
-    });
-
-    const isOutflow = data.type === 'expense' || data.type === 'transfer';
-    let bestWallet = matchedByName;
-    if (isOutflow && (!bestWallet || bestWallet.balance < data.amount)) {
-      const fundedMatch = walletsWithBalance.find(
-        (w) => w.type !== 'credit' && w.type !== 'paylater' && w.balance >= data.amount
-      );
-      if (fundedMatch) bestWallet = fundedMatch;
-    }
-    const resolvedWalletId = bestWallet?.id || walletsWithBalance[0]?.id || wallets[0]?.id || '';
-
-    const targetCatType = data.type === 'income' ? 'income' : 'expense';
-    const availableCats = categories.filter((c) => c.type === targetCatType);
-    const matchCategory = availableCats.find((c) => {
-      if (!data.suggestedCategory) return false;
-      const s = data.suggestedCategory.toLowerCase();
-      return c.name.toLowerCase().includes(s) || s.includes(c.name.toLowerCase());
-    });
-    const resolvedCategoryId = matchCategory ? matchCategory.id : availableCats[0]?.id || '';
-
+    const { resolvedWalletId, resolvedCategoryId } = resolveWalletAndCategoryFromOcr(
+      data,
+      walletsWithBalance,
+      wallets,
+      categories
+    );
     return { resolvedWalletId, resolvedCategoryId };
   };
 
-  // Automatically save extracted transaction immediately to TODAY's transactions (trx hari ini)
-  const autoSaveExtractedData = (
+  // Hand off extracted screenshot directly to Menu Pencatatan Trx (AddTransactionModal) so user only needs to press Confirm!
+  const handOffToTransactionModal = (
     data: ExtractedData,
-    walletIdToUse: string,
-    categoryIdToUse: string,
-    noteToUse: string
+    previewBase64?: string | null,
+    previewMime?: string
   ) => {
-    if (!data.amount || data.amount <= 0) return;
-
-    // Always record to today's transaction (trx hari ini) as requested by user
-    const dateToUse = new Date().toISOString();
     goToCurrentPeriod();
-
-    if (data.type === 'transfer') {
-      const targetW = walletsWithBalance.find((w) => w.id !== walletIdToUse);
-      const ok = transferFunds(
-        walletIdToUse,
-        targetW?.id || walletsWithBalance[1]?.id || wallets[1]?.id || '',
-        data.amount,
-        noteToUse.trim() || 'Transfer otomatis dari screenshot',
-        dateToUse
-      );
-      if (ok) {
-        setAutoSavedTxId('transfer-saved');
-        showToast(
-          'Otomatis Tercatat ke Trx Hari Ini!',
-          `${formatRupiah(data.amount)} (${data.sourceApp || 'Screenshot'}) langsung dicatat hari ini.`,
-          'success'
-        );
-      }
-      return;
-    }
-
-    const chosenCat = categories.find((c) => c.id === categoryIdToUse);
-    const catMap = new Map(categories.map((c) => [c.id, c]));
-    const detectedNature =
-      data.type === 'expense'
-        ? detectExpenseNature(categoryIdToUse, noteToUse, catMap)
-        : undefined;
-    const effectiveBudgetGroup =
-      data.type === 'expense'
-        ? detectedNature === 'savings'
-          ? 'tabungan'
-          : chosenCat?.budgetGroup
-        : undefined;
-
-    const createdId = addTransaction({
-      type: data.type,
-      amount: data.amount,
-      walletId: walletIdToUse,
-      categoryId: categoryIdToUse || null,
-      budgetGroup: effectiveBudgetGroup,
-      expenseNature: detectedNature,
-      transferWalletId: null,
-      date: dateToUse,
-      note: noteToUse.trim() || data.title || 'Transaksi dari screenshot',
+    setPendingScreenshotForModal({
+      base64: previewBase64 || imagePreview || undefined,
+      mimeType: previewMime || mimeType || 'image/jpeg',
+      extractedData: data,
+      timestamp: Date.now(),
     });
-
-    if (createdId) {
-      setAutoSavedTxId(createdId);
-      showToast(
-        'Otomatis Tercatat ke Trx Hari Ini!',
-        `${formatRupiah(data.amount)} • ${noteToUse.trim() || data.title || 'Screenshot'} berhasil masuk ke transaksi hari ini.`,
-        'success'
-      );
-    }
+    handleClose();
+    openAddTransaction(data.type || 'expense');
   };
 
   // Analyze image with AI endpoint and immediately auto-record the transaction
@@ -311,9 +222,9 @@ export function ScanReceiptModal() {
       setSelectedWalletId(resolvedWalletId);
       setSelectedCategoryId(resolvedCategoryId);
 
-      // Automatically record the transaction right away as requested by user!
+      // Immediately open Menu Pencatatan Trx (AddTransactionModal) pre-filled so user just presses Confirm!
       if (shouldAutoSave && data.amount > 0) {
-        autoSaveExtractedData(data, resolvedWalletId, resolvedCategoryId, noteStr);
+        handOffToTransactionModal(data, base64, type);
       }
     } catch (err: any) {
       clearTimeout(step1);
@@ -417,7 +328,7 @@ export function ScanReceiptModal() {
 
       if (!imagePreview && !extractedData && !isAnalyzing) {
         // 1. Check connected Android Screenshots folder first
-        const folderImg = await readLatestScreenshotFromConnectedFolder(true);
+        const folderImg = await readLatestScreenshotFromConnectedFolder();
         if (!cancelled && folderImg?.base64) {
           await processBase64Screenshot(folderImg.base64, folderImg.mimeType, true);
           return;
@@ -462,9 +373,9 @@ export function ScanReceiptModal() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isScanModalOpen]);
 
-  // Direct clipboard / folder / native picker button handler
+  // Direct clipboard button handler
   const handleClipboardPasteButton = async () => {
-    const folderImg = await readLatestScreenshotFromConnectedFolder(true);
+    const folderImg = await readLatestScreenshotFromConnectedFolder();
     if (folderImg?.base64) {
       await processBase64Screenshot(folderImg.base64, folderImg.mimeType, true);
       return;
@@ -475,10 +386,11 @@ export function ScanReceiptModal() {
       await processBase64Screenshot(clipImg.base64, clipImg.mimeType, true);
       return;
     }
-
-    // If Android clipboard doesn't hold the SeaBank screenshot (because Android saved it to Pictures/Screenshots),
-    // automatically open the recent/screenshots picker so the user only taps once!
-    fileInputRef.current?.click();
+    showToast(
+      'Clipboard Kosong / Perlu Izin',
+      'Ambil screenshot terlebih dahulu atau pilih gambar screenshot terbaru dari Galeri.',
+      'info'
+    );
   };
 
   const handleToggleAndroidAuto = () => {
@@ -502,14 +414,13 @@ export function ScanReceiptModal() {
         });
         if (dirHandle) {
           setActiveScreenshotsDirHandle(dirHandle);
-          await saveDirHandleToIdb(dirHandle);
           setIsFolderConnected(true);
           showToast(
             'Folder Screenshots Terhubung!',
-            'Screenshot baru di SeaBank / m-Banking akan langsung dicatat otomatis ke Transaksi Hari Ini.',
+            'Screenshot baru di folder ini akan langsung dicatat ke Transaksi Hari Ini.',
             'success'
           );
-          const folderImg = await readLatestScreenshotFromConnectedFolder(true);
+          const folderImg = await readLatestScreenshotFromConnectedFolder();
           if (folderImg?.base64) {
             await processBase64Screenshot(folderImg.base64, folderImg.mimeType, true);
           }
@@ -520,17 +431,10 @@ export function ScanReceiptModal() {
     }
   };
 
-  // Handle test sample click (also auto-records immediately)
+  // Handle test sample click (opens Menu Pencatatan Trx pre-filled for confirmation)
   const handleSelectSample = (sample: (typeof SAMPLE_RECEIPTS)[0]) => {
     setErrorMsg(null);
-    const { resolvedWalletId, resolvedCategoryId } = resolveWalletAndCategory(sample);
-    setExtractedData(sample);
-    setCustomAmount(sample.amount);
-    setCustomType(sample.type);
-    setCustomNote(sample.notes);
-    setSelectedWalletId(resolvedWalletId);
-    setSelectedCategoryId(resolvedCategoryId);
-    autoSaveExtractedData(sample, resolvedWalletId, resolvedCategoryId, sample.notes);
+    handOffToTransactionModal(sample, null, 'image/jpeg');
   };
 
   // Save or update extracted transaction (always to TODAY's transaction / trx hari ini)
@@ -780,7 +684,7 @@ export function ScanReceiptModal() {
                     </p>
                   </div>
 
-                  {/* Primary Action: Read Clipboard / Folder Directly */}
+                  {/* Primary Action: Read Clipboard Directly */}
                   <div className="space-y-2 max-w-md mx-auto">
                     <button
                       type="button"
@@ -809,33 +713,6 @@ export function ScanReceiptModal() {
                         <Camera size={14} strokeWidth={2.3} />
                         <span>Foto Struk</span>
                       </button>
-                    </div>
-
-                    {/* Gboard / Android Keyboard Quick Paste Box */}
-                    <div className="pt-1">
-                      <input
-                        type="text"
-                        readOnly={false}
-                        placeholder="📋 Atau ketuk di sini lalu tempel SS dari atas keyboard..."
-                        onChange={(e) => {
-                          e.target.value = '';
-                        }}
-                        onPaste={(e) => {
-                          const items = e.clipboardData?.items;
-                          if (!items) return;
-                          for (let i = 0; i < items.length; i++) {
-                            if (items[i].type.startsWith('image/')) {
-                              const blob = items[i].getAsFile();
-                              if (blob) {
-                                e.preventDefault();
-                                handleFile(blob);
-                                break;
-                              }
-                            }
-                          }
-                        }}
-                        className="w-full py-2 px-3 rounded-xl bg-white dark:bg-gray-900 border border-dashed border-gray-300 dark:border-gray-700 text-[11px] font-semibold text-gray-700 dark:text-gray-200 placeholder:text-gray-400 focus:outline-none focus:border-teal-500 text-center"
-                      />
                     </div>
                   </div>
                 </div>

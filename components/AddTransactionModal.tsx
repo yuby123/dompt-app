@@ -2,11 +2,23 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Delete, Check, Sparkles, AlertTriangle } from 'lucide-react';
+import {
+   X,
+  Delete,
+  Check,
+  Sparkles,
+  AlertTriangle,
+  CheckCircle2,
+  Clipboard,
+  FolderOpen,
+  FileImage,
+  RefreshCw,
+} from 'lucide-react';
 import { useApp } from './AppContext';
 import { ExpenseNature, TransactionType } from '@/lib/types';
 import { CategoryIcon } from './CategoryIcon';
 import { formatNumberOnly, formatRupiah } from '@/lib/formatters';
+import { compressImageForOcr } from '@/lib/imageUtils';
 import {
   detectExpenseNature,
   isDateInBudgetPeriod,
@@ -15,6 +27,18 @@ import {
   normalizeBudgetMatchText,
   parseLocalDay,
 } from '@/lib/budgetUtils';
+import {
+  ExtractedScreenshotData,
+  getPendingScreenshotForModal,
+  setPendingScreenshotForModal,
+  resolveWalletAndCategoryFromOcr,
+  readLatestImageFromClipboard,
+  readLatestScreenshotFromConnectedFolder,
+  computeScreenshotFingerprint,
+  markScreenshotProcessed,
+  getActiveScreenshotsDirHandle,
+  setActiveScreenshotsDirHandle,
+} from './ClipboardScreenshotDetector';
 
 function AddTransactionForm() {
   const {
@@ -98,12 +122,244 @@ function AddTransactionForm() {
     Boolean(editingTransaction?.transaction.expenseNature)
   );
 
+  // Automatic Screenshot Detection & Pre-fill State inside AddTransactionModal
+  const [isAnalyzingScreenshot, setIsAnalyzingScreenshot] = useState<boolean>(false);
+  const [screenshotStepText, setScreenshotStepText] = useState<string>(
+    'AI sedang membaca nominal & detail screenshot...'
+  );
+  const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
+  const [screenshotMime, setScreenshotMime] = useState<string>('image/jpeg');
+  const [detectedSourceApp, setDetectedSourceApp] = useState<string | null>(null);
+  const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [awaitingTouchUnlock, setAwaitingTouchUnlock] = useState<boolean>(false);
+  const [isFolderConnected, setIsFolderConnected] = useState<boolean>(() =>
+    Boolean(getActiveScreenshotsDirHandle())
+  );
+  const quickFileInputRef = useRef<HTMLInputElement | null>(null);
+  const isUnlockingRef = useRef<boolean>(false);
+
+  const applyExtractedScreenshotData = (data: ExtractedScreenshotData) => {
+    const {
+      resolvedWalletId,
+      resolvedCategoryId,
+      resolvedNature,
+      noteStr,
+    } = resolveWalletAndCategoryFromOcr(data, walletsWithBalance, wallets, categories);
+
+    const nextType: TransactionType = data.type || 'expense';
+    setType(nextType);
+    if (data.amount && data.amount > 0) {
+      setAmountStr(String(Math.round(data.amount)));
+    }
+    if (resolvedWalletId) {
+      setSelectedWalletId(resolvedWalletId);
+      if (nextType === 'transfer') {
+        const altW = walletsWithBalance.find((w) => w.id !== resolvedWalletId);
+        if (altW) setTransferTargetWalletId(altW.id);
+      }
+    }
+    if (resolvedCategoryId && nextType !== 'transfer') {
+      setSelectedCategoryId(resolvedCategoryId);
+    }
+    if (resolvedNature && nextType === 'expense') {
+      setExpenseNature(resolvedNature);
+      setIsManualExpenseNature(true);
+    }
+    if (noteStr) {
+      setNote(noteStr.slice(0, 60));
+    }
+
+    // Always set date to today (trx hari ini)
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(
+      now.getDate()
+    ).padStart(2, '0')}`;
+    setSelectedDate(todayStr);
+
+    setDetectedSourceApp(
+      data.sourceApp || data.suggestedWallet || data.title || 'Screenshot Transaksi'
+    );
+    setAwaitingTouchUnlock(false);
+    setScreenshotError(null);
+  };
+
+  const analyzeScreenshotInModal = async (rawBase64: string, rawMime: string) => {
+    setIsAnalyzingScreenshot(true);
+    setScreenshotError(null);
+    setAwaitingTouchUnlock(false);
+    setScreenshotStepText('Mendeteksi nominal & rekening dari screenshot...');
+
+    const fp = computeScreenshotFingerprint(rawBase64);
+    if (fp) markScreenshotProcessed(fp);
+
+    let finalBase64 = rawBase64;
+    let finalMime = rawMime || 'image/jpeg';
+
+    try {
+      const compressed = await compressImageForOcr(rawBase64, 1200, 0.82);
+      finalBase64 = compressed.base64;
+      finalMime = compressed.mimeType;
+    } catch {
+      // Fallback to raw image
+    }
+
+    setScreenshotPreview(finalBase64);
+    setScreenshotMime(finalMime);
+
+    try {
+      const res = await fetch('/api/scan-receipt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+        },
+        cache: 'no-store',
+        body: JSON.stringify({
+          imageBase64: finalBase64,
+          mimeType: finalMime,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success || !json.data) {
+        throw new Error(json.error || 'Gagal membaca nominal dari screenshot');
+      }
+
+      const data: ExtractedScreenshotData = json.data;
+      applyExtractedScreenshotData(data);
+    } catch (err: any) {
+      setScreenshotError(
+        err?.message || 'Gagal menganalisis screenshot secara otomatis. Silakan coba lagi.'
+      );
+    } finally {
+      setIsAnalyzingScreenshot(false);
+    }
+  };
+
+  const tryUnlockAndReadScreenshot = async (showEmptyNotice = false) => {
+    if (isUnlockingRef.current || isAnalyzingScreenshot) return false;
+    isUnlockingRef.current = true;
+    try {
+      // 1. Check connected Android Screenshots folder (with permission prompt unlocked by user touch)
+      const folderImg = await readLatestScreenshotFromConnectedFolder(true, true);
+      if (folderImg?.base64) {
+        setIsFolderConnected(Boolean(getActiveScreenshotsDirHandle()));
+        await analyzeScreenshotInModal(folderImg.base64, folderImg.mimeType);
+        return true;
+      }
+
+      // 2. Check Android Clipboard (now unlocked by user touch gesture)
+      const clipImg = await readLatestImageFromClipboard();
+      if (clipImg?.base64) {
+        await analyzeScreenshotInModal(clipImg.base64, clipImg.mimeType);
+        return true;
+      }
+
+      if (showEmptyNotice) {
+        addToast(
+          'Pilih Screenshot atau Hubungkan Folder SS',
+          'Jika HP Android tidak menyalin SS otomatis ke clipboard, ketuk "Hubungkan Folder SS" sekali saja atau "Pilih SS".',
+          'info'
+        );
+      }
+      return false;
+    } finally {
+      isUnlockingRef.current = false;
+    }
+  };
+
+  const handleConnectFolderInModal = async () => {
+    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
+      try {
+        const dirHandle = await (window as any).showDirectoryPicker({
+          mode: 'read',
+        });
+        if (dirHandle) {
+          setActiveScreenshotsDirHandle(dirHandle);
+          setIsFolderConnected(true);
+          addToast(
+            'Folder Screenshots Terhubung!',
+            'Setiap Anda screenshot di SeaBank/m-Banking lalu buka Dompt, transaksi langsung terisi otomatis.',
+            'success'
+          );
+          const folderImg = await readLatestScreenshotFromConnectedFolder(true, true);
+          if (folderImg?.base64) {
+            await analyzeScreenshotInModal(folderImg.base64, folderImg.mimeType);
+          }
+        }
+      } catch {
+        // User cancelled directory picker
+      }
+    } else {
+      quickFileInputRef.current?.click();
+    }
+  };
+
+  const handleQuickFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const compressed = await compressImageForOcr(file, 1200, 0.82);
+      await analyzeScreenshotInModal(compressed.base64, compressed.mimeType);
+    } catch {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const b64 = ev.target?.result as string;
+        if (b64) analyzeScreenshotInModal(b64, file.type || 'image/jpeg');
+      };
+      reader.readAsDataURL(file);
+    }
+    e.target.value = '';
+  };
+
+  // Consume PendingScreenshotForModal on mount & when 'dompt-pending-ss-modal' fires
+  useEffect(() => {
+    if (editingTransaction) return;
+
+    const consumePending = async () => {
+      const pending = getPendingScreenshotForModal();
+      if (pending) {
+        setPendingScreenshotForModal(null);
+        if (pending.extractedData) {
+          if (pending.base64) {
+            setScreenshotPreview(pending.base64);
+            setScreenshotMime(pending.mimeType || 'image/jpeg');
+          }
+          applyExtractedScreenshotData(pending.extractedData);
+          return;
+        }
+        if (pending.base64) {
+          await analyzeScreenshotInModal(pending.base64, pending.mimeType || 'image/jpeg');
+          return;
+        }
+        if (pending.awaitingTouchUnlock) {
+          setAwaitingTouchUnlock(true);
+          // Also try immediately in case focus just settled
+          await tryUnlockAndReadScreenshot(false);
+          return;
+        }
+      }
+    };
+
+    consumePending();
+
+    const handlePendingEvent = () => {
+      consumePending();
+    };
+    window.addEventListener('dompt-pending-ss-modal', handlePendingEvent);
+    return () => {
+      window.removeEventListener('dompt-pending-ss-modal', handlePendingEvent);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingTransaction]);
+
   useEffect(() => {
     const timer = setTimeout(() => {
-      amountInputRef.current?.focus();
+      if (!isAnalyzingScreenshot && !awaitingTouchUnlock) {
+        amountInputRef.current?.focus();
+      }
     }, 80);
     return () => clearTimeout(timer);
-  }, []);
+  }, [isAnalyzingScreenshot, awaitingTouchUnlock]);
 
   // Filter categories by type
   const availableCategories = categories.filter((c) => c.type === (type === 'income' ? 'income' : 'expense'));
@@ -501,26 +757,59 @@ function AddTransactionForm() {
   };
 
   return (
-    <div className="w-full max-w-lg landscape:max-w-xl max-h-[92vh] landscape:max-h-[96vh] flex flex-col bg-white dark:bg-[#11131E] rounded-t-3xl sm:rounded-3xl landscape:rounded-3xl shadow-2xl overflow-hidden border border-slate-200/80 dark:border-white/10">
+    <div
+      onPointerDown={() => {
+        if (awaitingTouchUnlock && !isAnalyzingScreenshot && !detectedSourceApp && !amountStr) {
+          tryUnlockAndReadScreenshot(false);
+        }
+      }}
+      className="w-full max-w-lg landscape:max-w-xl max-h-[92vh] landscape:max-h-[96vh] flex flex-col bg-white dark:bg-[#11131E] rounded-t-3xl sm:rounded-3xl landscape:rounded-3xl shadow-2xl overflow-hidden border border-slate-200/80 dark:border-white/10"
+    >
+      {/* Hidden Quick Screenshot Picker */}
+      <input
+        ref={quickFileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleQuickFileChange}
+        className="hidden"
+      />
+
       {/* Header */}
       <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-slate-100 dark:border-white/[0.08]">
-        <h2 className="font-display text-base sm:text-lg font-extrabold text-slate-900 dark:text-white">
-          {editingTransaction ? 'Edit Transaksi' : 'Catat Transaksi'}
-        </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <h2 className="font-display text-base sm:text-lg font-extrabold text-slate-900 dark:text-white truncate">
+            {editingTransaction
+              ? 'Edit Transaksi'
+              : detectedSourceApp
+              ? 'Konfirmasi Transaksi Screenshot'
+              : 'Catat Transaksi'}
+          </h2>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
           {!editingTransaction && (
-            <button
-              type="button"
-              onClick={() => {
-                setIsAddTransactionOpen(false);
-                openScanModal();
-              }}
-              className="px-2.5 py-1 text-xs font-bold rounded-xl bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 flex items-center gap-1 hover:bg-teal-100 transition-colors cursor-pointer"
-              title="Scan Struk / Bukti Transfer"
-            >
-              <Sparkles size={13} />
-              <span>Scan Struk</span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => quickFileInputRef.current?.click()}
+                className="px-2.5 py-1 text-xs font-bold rounded-xl bg-slate-100 dark:bg-white/[0.07] text-slate-700 dark:text-slate-200 hover:bg-slate-200 transition-colors flex items-center gap-1 cursor-pointer"
+                title="Pilih Screenshot dari Galeri"
+              >
+                <FileImage size={13} />
+                <span>Pilih SS</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAddTransactionOpen(false);
+                  openScanModal();
+                }}
+                className="px-2.5 py-1 text-xs font-bold rounded-xl bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 flex items-center gap-1 hover:bg-teal-100 transition-colors cursor-pointer"
+                title="Scan Struk / Bukti Transfer"
+              >
+                <Sparkles size={13} />
+                <span>Scan AI</span>
+              </button>
+            </>
           )}
           {editingTransaction && (
             <button
@@ -548,6 +837,127 @@ function AddTransactionForm() {
       </div>
 
       <div className="overflow-y-auto flex-1 p-5 space-y-4 no-scrollbar">
+        {/* AI Screenshot Analyzing Banner */}
+        {isAnalyzingScreenshot && (
+          <div className="p-3.5 rounded-2xl bg-teal-950/90 text-white border border-teal-500/40 flex items-center gap-3 shadow-md">
+            {screenshotPreview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={screenshotPreview}
+                alt="Screenshot"
+                className="w-11 h-11 rounded-xl object-cover border border-white/20 shrink-0"
+              />
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-400/40 flex items-center justify-center shrink-0">
+                <Sparkles size={18} className="text-[#D4F826] animate-spin" />
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-extrabold text-[#D4F826]">
+                  Mendeteksi Screenshot Transaksi...
+                </span>
+              </div>
+              <p className="text-[11px] text-teal-100/90 truncate mt-0.5">{screenshotStepText}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Screenshot Pre-filled Confirmation Banner */}
+        {!isAnalyzingScreenshot && detectedSourceApp && (
+          <div className="p-3 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700/70 flex items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              {screenshotPreview ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={screenshotPreview}
+                  alt="Screenshot"
+                  className="w-10 h-10 rounded-xl object-cover border border-emerald-400/40 shrink-0"
+                />
+              ) : (
+                <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
+                  <CheckCircle2 size={18} />
+                </div>
+              )}
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-600 text-white">
+                    {detectedSourceApp}
+                  </span>
+                  <span className="text-[11px] font-extrabold text-emerald-800 dark:text-emerald-300 truncate">
+                    Otomatis Terisi
+                  </span>
+                </div>
+                <p className="text-[11px] text-emerald-700 dark:text-emerald-200/80 mt-0.5">
+                  Data transaksi sudah disesuaikan. Tinggal tekan <strong>Konfirmasi</strong> di bawah!
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Touch-to-Unlock / Instant Screenshot Detect Banner when returning from SeaBank/m-Banking */}
+        {!editingTransaction && !isAnalyzingScreenshot && !detectedSourceApp && awaitingTouchUnlock && (
+          <div className="p-3.5 rounded-2xl bg-slate-900 text-white border border-[#D4F826]/40 space-y-2.5 shadow-md">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#D4F826] text-slate-950">
+                  Baru Saja Screenshot Transaksi?
+                </span>
+                <p className="text-xs font-bold text-white mt-1.5">
+                  Ketuk tombol di bawah untuk langsung mengisi otomatis dari screenshot terakhir Anda:
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => tryUnlockAndReadScreenshot(true)}
+                className="flex-1 py-2.5 px-3 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Clipboard size={14} strokeWidth={2.5} />
+                <span>Tempel & Isi Otomatis SS Terakhir</span>
+              </button>
+              {typeof window !== 'undefined' && 'showDirectoryPicker' in window && !isFolderConnected && (
+                <button
+                  type="button"
+                  onClick={handleConnectFolderInModal}
+                  className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-[#D4F826] font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                  title="Hubungkan folder Screenshots sekali saja agar SS SeaBank langsung terbaca otomatis"
+                >
+                  <FolderOpen size={14} />
+                  <span>Hubungkan Folder SS</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => quickFileInputRef.current?.click()}
+                className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <FileImage size={14} />
+                <span>Pilih SS</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Screenshot Error Retry Banner */}
+        {screenshotError && !isAnalyzingScreenshot && (
+          <div className="p-3 rounded-2xl bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-800 flex items-center justify-between gap-2 text-xs text-red-700 dark:text-red-300">
+            <span className="font-semibold flex-1">{screenshotError}</span>
+            {screenshotPreview && (
+              <button
+                type="button"
+                onClick={() => analyzeScreenshotInModal(screenshotPreview, screenshotMime)}
+                className="px-2.5 py-1.5 rounded-xl bg-red-600 text-white font-bold flex items-center gap-1 shrink-0 cursor-pointer"
+              >
+                <RefreshCw size={12} />
+                <span>Coba Lagi</span>
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Segmented Type Selector */}
         <div className="grid grid-cols-3 p-1 bg-slate-100 dark:bg-white/[0.06] rounded-2xl">
           <button
@@ -1110,17 +1520,24 @@ function AddTransactionForm() {
         <button
           type="button"
           onClick={() => setIsAddTransactionOpen(false)}
-          className="flex-1 py-2.5 text-xs font-bold rounded-xl bg-slate-200/80 dark:bg-white/[0.08] text-slate-700 dark:text-slate-300 hover:bg-slate-300 transition-colors cursor-pointer"
+          className="flex-1 py-3 text-xs font-bold rounded-xl bg-slate-200/80 dark:bg-white/[0.08] text-slate-700 dark:text-slate-300 hover:bg-slate-300 transition-colors cursor-pointer"
         >
           Batal
         </button>
         <button
           type="button"
           onClick={handleSave}
-          disabled={currentAmount <= 0 || isWalletInsufficient}
-          className="flex-2 py-2.5 text-xs font-extrabold rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black shadow-xs active:scale-98 transition-all disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+          disabled={currentAmount <= 0 || isWalletInsufficient || isAnalyzingScreenshot}
+          className="flex-2 py-3 text-xs font-extrabold rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-black shadow-xs active:scale-98 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer"
         >
-          {editingTransaction ? 'Simpan' : 'Catat'}
+          <Check size={15} strokeWidth={2.8} />
+          <span>
+            {editingTransaction
+              ? 'Simpan Perubahan'
+              : detectedSourceApp
+              ? 'Konfirmasi & Catat Transaksi'
+              : 'Konfirmasi & Catat'}
+          </span>
         </button>
       </div>
     </div>

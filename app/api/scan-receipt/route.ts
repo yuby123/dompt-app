@@ -113,12 +113,9 @@ Analisis screenshot bukti transaksi/transfer dari HP Android (khususnya SeaBank,
     };
 
     const modelsToTry = [
-      'gemini-2.5-flash',
-      'gemini-3-flash-preview',
+      'gemini-3.8-flash',
       'gemini-flash-latest',
       'gemini-3.1-flash-lite',
-      'gemini-3.8-flash',
-      'gemini-2.5-flash-lite',
     ];
 
     let response: any = null;
@@ -139,7 +136,6 @@ Analisis screenshot bukti transaksi/transfer dari HP Android (khususnya SeaBank,
       } catch (err: any) {
         lastError = err;
         const errMsg = String(err?.message || err || '');
-        console.warn(`Scan receipt model ${modelName} failed:`, errMsg);
 
         // If 503 high demand / overloaded, wait briefly before trying next fallback model
         if (
@@ -148,7 +144,7 @@ Analisis screenshot bukti transaksi/transfer dari HP Android (khususnya SeaBank,
           errMsg.toLowerCase().includes('high demand') ||
           errMsg.includes('429')
         ) {
-          await new Promise((r) => setTimeout(r, 600));
+          await new Promise((r) => setTimeout(r, 500));
         }
       }
     }

@@ -361,7 +361,7 @@ Pastikan "type" bernilai "expense" atau "income", dan "amount" angka bulat Rupia
       });
     }
 
-    const modelsToTry = ['gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-flash-latest'];
+    const modelsToTry = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
     let responseText = '';
 
     for (const modelName of modelsToTry) {
@@ -378,8 +378,8 @@ Pastikan "type" bernilai "expense" atau "income", dan "amount" angka bulat Rupia
           responseText = response.text;
           break;
         }
-      } catch (modelErr) {
-        console.warn(`AI Advisor model ${modelName} error:`, modelErr);
+      } catch {
+        // Fallback to next model in list
       }
     }
 

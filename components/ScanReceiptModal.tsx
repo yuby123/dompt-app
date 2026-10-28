@@ -18,13 +18,25 @@ import {
   Tag,
   Wallet as WalletIcon,
   Trash2,
+  Smartphone,
+  FolderOpen,
 } from 'lucide-react';
 import { useApp } from './AppContext';
 import { formatRupiah } from '@/lib/formatters';
 import { TransactionType } from '@/lib/types';
 import { compressImageForOcr } from '@/lib/imageUtils';
 import { detectExpenseNature } from '@/lib/budgetUtils';
-import { readLatestImageFromClipboard } from './ClipboardScreenshotDetector';
+import {
+  readLatestImageFromClipboard,
+  readLatestScreenshotFromConnectedFolder,
+  computeScreenshotFingerprint,
+  markScreenshotProcessed,
+  detectIsAndroidDevice,
+  isAndroidAutoSsEnabled,
+  setAndroidAutoSsEnabled,
+  getActiveScreenshotsDirHandle,
+  setActiveScreenshotsDirHandle,
+} from './ClipboardScreenshotDetector';
 
 interface ExtractedData {
   amount: number;
@@ -93,6 +105,7 @@ export function ScanReceiptModal() {
     updateTransaction,
     deleteTransaction,
     transferFunds,
+    goToCurrentPeriod,
     addToast: showToast,
   } = useApp();
 
@@ -104,6 +117,9 @@ export function ScanReceiptModal() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(false);
   const [autoSavedTxId, setAutoSavedTxId] = useState<string | null>(null);
+  const [isAndroidDevice, setIsAndroidDevice] = useState<boolean>(false);
+  const [androidAutoEnabled, setAndroidAutoEnabled] = useState<boolean>(true);
+  const [isFolderConnected, setIsFolderConnected] = useState<boolean>(false);
 
   // Form override inputs for user confirmation / quick edit
   const [selectedWalletId, setSelectedWalletId] = useState<string>('');
@@ -114,6 +130,12 @@ export function ScanReceiptModal() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setIsAndroidDevice(detectIsAndroidDevice());
+    setAndroidAutoEnabled(isAndroidAutoSsEnabled());
+    setIsFolderConnected(Boolean(getActiveScreenshotsDirHandle()));
+  }, [isScanModalOpen]);
 
   // Resolve best wallet & category from extracted receipt data
   const resolveWalletAndCategory = (data: ExtractedData) => {
@@ -158,7 +180,7 @@ export function ScanReceiptModal() {
     return { resolvedWalletId, resolvedCategoryId };
   };
 
-  // Automatically save extracted transaction immediately after AI detection
+  // Automatically save extracted transaction immediately to TODAY's transactions (trx hari ini)
   const autoSaveExtractedData = (
     data: ExtractedData,
     walletIdToUse: string,
@@ -167,7 +189,9 @@ export function ScanReceiptModal() {
   ) => {
     if (!data.amount || data.amount <= 0) return;
 
-    const dateToUse = data.date ? new Date(data.date).toISOString() : new Date().toISOString();
+    // Always record to today's transaction (trx hari ini) as requested by user
+    const dateToUse = new Date().toISOString();
+    goToCurrentPeriod();
 
     if (data.type === 'transfer') {
       const targetW = walletsWithBalance.find((w) => w.id !== walletIdToUse);
@@ -181,8 +205,8 @@ export function ScanReceiptModal() {
       if (ok) {
         setAutoSavedTxId('transfer-saved');
         showToast(
-          'Otomatis Tercatat!',
-          `${formatRupiah(data.amount)} (${data.sourceApp || 'Screenshot'}) langsung dicatat.`,
+          'Otomatis Tercatat ke Trx Hari Ini!',
+          `${formatRupiah(data.amount)} (${data.sourceApp || 'Screenshot'}) langsung dicatat hari ini.`,
           'success'
         );
       }
@@ -217,8 +241,8 @@ export function ScanReceiptModal() {
     if (createdId) {
       setAutoSavedTxId(createdId);
       showToast(
-        'Nominal Otomatis Tercatat!',
-        `${formatRupiah(data.amount)} • ${noteToUse.trim() || data.title || 'Screenshot'} berhasil masuk ke transaksi.`,
+        'Otomatis Tercatat ke Trx Hari Ini!',
+        `${formatRupiah(data.amount)} • ${noteToUse.trim() || data.title || 'Screenshot'} berhasil masuk ke transaksi hari ini.`,
         'success'
       );
     }
@@ -316,7 +340,10 @@ export function ScanReceiptModal() {
     setExtractedData(null);
     setAutoSavedTxId(null);
     setIsAnalyzing(true);
-    setLoadingStep('Membaca screenshot terakhir dari clipboard...');
+    setLoadingStep('Membaca screenshot terakhir & mencatat ke Trx Hari Ini...');
+
+    const fp = computeScreenshotFingerprint(rawBase64);
+    if (fp) markScreenshotProcessed(fp);
 
     try {
       const compressed = await compressImageForOcr(rawBase64, 1200, 0.82);
@@ -341,10 +368,12 @@ export function ScanReceiptModal() {
     setExtractedData(null);
     setAutoSavedTxId(null);
     setIsAnalyzing(true);
-    setLoadingStep('Mengoptimalkan & membaca screenshot...');
+    setLoadingStep('Mengoptimalkan screenshot & mencatat ke Trx Hari Ini...');
 
     try {
       const compressed = await compressImageForOcr(file, 1200, 0.82);
+      const fp = computeScreenshotFingerprint(compressed.base64);
+      if (fp) markScreenshotProcessed(fp);
       setImagePreview(compressed.base64);
       setMimeType(compressed.mimeType);
       await analyzeImage(compressed.base64, compressed.mimeType, true);
@@ -352,6 +381,8 @@ export function ScanReceiptModal() {
       const reader = new FileReader();
       reader.onload = (e) => {
         const base64 = e.target?.result as string;
+        const fp = computeScreenshotFingerprint(base64);
+        if (fp) markScreenshotProcessed(fp);
         setImagePreview(base64);
         setMimeType(file.type);
         analyzeImage(base64, file.type, true);
@@ -362,7 +393,7 @@ export function ScanReceiptModal() {
 
   // When modal opens:
   // 1) If scanInitialImage was passed (from ClipboardScreenshotDetector or Share Target), process it immediately.
-  // 2) Otherwise, automatically read the latest image from navigator.clipboard right away without asking user to upload!
+  // 2) Otherwise, check connected Android Screenshots folder or navigator.clipboard right away!
   useEffect(() => {
     if (!isScanModalOpen) return;
 
@@ -375,8 +406,15 @@ export function ScanReceiptModal() {
         return;
       }
 
-      // If no initial image was passed and no preview is active, automatically check clipboard!
       if (!imagePreview && !extractedData && !isAnalyzing) {
+        // 1. Check connected Android Screenshots folder first
+        const folderImg = await readLatestScreenshotFromConnectedFolder();
+        if (!cancelled && folderImg?.base64) {
+          await processBase64Screenshot(folderImg.base64, folderImg.mimeType, true);
+          return;
+        }
+
+        // 2. Check clipboard
         const clipImg = await readLatestImageFromClipboard();
         if (!cancelled && clipImg?.base64) {
           await processBase64Screenshot(clipImg.base64, clipImg.mimeType, true);
@@ -417,6 +455,12 @@ export function ScanReceiptModal() {
 
   // Direct clipboard button handler
   const handleClipboardPasteButton = async () => {
+    const folderImg = await readLatestScreenshotFromConnectedFolder();
+    if (folderImg?.base64) {
+      await processBase64Screenshot(folderImg.base64, folderImg.mimeType, true);
+      return;
+    }
+
     const clipImg = await readLatestImageFromClipboard();
     if (clipImg?.base64) {
       await processBase64Screenshot(clipImg.base64, clipImg.mimeType, true);
@@ -424,9 +468,47 @@ export function ScanReceiptModal() {
     }
     showToast(
       'Clipboard Kosong / Perlu Izin',
-      'Salin screenshot terlebih dahulu atau tempel (Paste) gambar di sini.',
+      'Ambil screenshot terlebih dahulu atau pilih gambar screenshot terbaru dari Galeri.',
       'info'
     );
+  };
+
+  const handleToggleAndroidAuto = () => {
+    const next = !androidAutoEnabled;
+    setAndroidAutoEnabled(next);
+    setAndroidAutoSsEnabled(next);
+    showToast(
+      next ? 'Auto-Deteksi Android Aktif' : 'Auto-Deteksi Android Nonaktif',
+      next
+        ? 'Setiap screenshot baru di Android akan otomatis dideteksi & dicatat ke Trx Hari Ini.'
+        : 'Deteksi otomatis saat kembali ke aplikasi dimatikan.',
+      'info'
+    );
+  };
+
+  const handleConnectScreenshotsFolder = async () => {
+    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
+      try {
+        const dirHandle = await (window as any).showDirectoryPicker({
+          mode: 'read',
+        });
+        if (dirHandle) {
+          setActiveScreenshotsDirHandle(dirHandle);
+          setIsFolderConnected(true);
+          showToast(
+            'Folder Screenshots Terhubung!',
+            'Screenshot baru di folder ini akan langsung dicatat ke Transaksi Hari Ini.',
+            'success'
+          );
+          const folderImg = await readLatestScreenshotFromConnectedFolder();
+          if (folderImg?.base64) {
+            await processBase64Screenshot(folderImg.base64, folderImg.mimeType, true);
+          }
+        }
+      } catch {
+        // User cancelled
+      }
+    }
   };
 
   // Handle test sample click (also auto-records immediately)
@@ -442,14 +524,13 @@ export function ScanReceiptModal() {
     autoSaveExtractedData(sample, resolvedWalletId, resolvedCategoryId, sample.notes);
   };
 
-  // Save or update extracted transaction
+  // Save or update extracted transaction (always to TODAY's transaction / trx hari ini)
   const handleSaveTransaction = () => {
     const finalAmount = customAmount || extractedData?.amount || 0;
     if (finalAmount <= 0) return;
 
-    const dateToUse = extractedData?.date
-      ? new Date(extractedData.date).toISOString()
-      : new Date().toISOString();
+    const dateToUse = new Date().toISOString();
+    goToCurrentPeriod();
 
     const chosenCat = categories.find((c) => c.id === selectedCategoryId);
     const catMap = new Map(categories.map((c) => [c.id, c]));
@@ -473,6 +554,7 @@ export function ScanReceiptModal() {
         categoryId: selectedCategoryId || null,
         budgetGroup: effectiveBudgetGroup,
         expenseNature: detectedNature,
+        date: dateToUse,
         note: customNote.trim() || undefined,
       });
       handleClose();
@@ -510,8 +592,8 @@ export function ScanReceiptModal() {
     }
 
     showToast(
-      'Transaksi Berhasil Dicatat!',
-      `${formatRupiah(finalAmount)} dari ${extractedData?.sourceApp || 'screenshot'} tersimpan`,
+      'Tercatat ke Trx Hari Ini!',
+      `${formatRupiah(finalAmount)} dari ${extractedData?.sourceApp || 'screenshot'} tersimpan di transaksi hari ini.`,
       'success'
     );
     handleClose();
@@ -554,10 +636,16 @@ export function ScanReceiptModal() {
               <h2 className="text-base font-black text-gray-900 dark:text-gray-100">
                 Auto-Deteksi Screenshot
               </h2>
+              {isAndroidDevice && (
+                <span className="px-2 py-0.5 rounded-full bg-[#D4F826]/20 text-slate-900 dark:text-[#D4F826] border border-[#D4F826]/40 text-[10px] font-black flex items-center gap-1">
+                  <Smartphone size={11} />
+                  <span>Mode Android</span>
+                </span>
+              )}
               {autoSavedTxId && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-black flex items-center gap-1">
                   <CheckCircle2 size={11} />
-                  <span>Tercatat Otomatis</span>
+                  <span>Masuk Trx Hari Ini</span>
                 </span>
               )}
             </div>
@@ -574,6 +662,67 @@ export function ScanReceiptModal() {
           </div>
 
           <div className="overflow-y-auto flex-1 p-5 space-y-4 no-scrollbar">
+            {/* Android Auto-Screenshot Detector Card */}
+            <div className="p-3.5 rounded-2xl bg-slate-900 text-white border border-white/10 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-[#D4F826]/20 border border-[#D4F826]/40 text-[#D4F826] flex items-center justify-center shrink-0">
+                    <Smartphone size={16} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-extrabold text-white truncate">
+                        Pendeteksi Otomatis Android
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
+                          androidAutoEnabled
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-white/10 text-slate-400'
+                        }`}
+                      >
+                        {androidAutoEnabled ? 'Aktif' : 'Nonaktif'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-snug mt-0.5">
+                      Otomatis mendeteksi screenshot bukti transaksi & langsung mencatatnya ke{' '}
+                      <strong className="text-[#D4F826]">Transaksi Hari Ini</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleToggleAndroidAuto}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-extrabold shrink-0 cursor-pointer transition-colors ${
+                    androidAutoEnabled
+                      ? 'bg-[#D4F826] text-slate-950'
+                      : 'bg-white/10 text-slate-300 hover:bg-white/15'
+                  }`}
+                >
+                  {androidAutoEnabled ? 'ON' : 'OFF'}
+                </button>
+              </div>
+
+              {typeof window !== 'undefined' && 'showDirectoryPicker' in window && (
+                <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-slate-300">
+                    {isFolderConnected
+                      ? '✅ Folder Screenshots Android terhubung otomatis'
+                      : 'Hubungkan folder Screenshots agar terdeteksi tanpa perlu salin clipboard:'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleConnectScreenshotsFolder}
+                    className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-[11px] font-bold text-[#D4F826] flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    <FolderOpen size={13} />
+                    <span>{isFolderConnected ? 'Ganti Folder' : 'Hubungkan Folder SS'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Guide Info Banner */}
             {showGuide && (
               <motion.div
@@ -597,7 +746,7 @@ export function ScanReceiptModal() {
                 </div>
                 <div className="space-y-2 text-[11px] leading-relaxed">
                   <p>
-                    1. <strong>Dari Clipboard Terakhir:</strong> Begitu Anda screenshot bukti pembayaran dan kembali ke aplikasi, gambar di clipboard otomatis dibaca dan nominalnya langsung dicatat ke transaksi.
+                    1. <strong>Dari Clipboard Terakhir:</strong> Begitu Anda screenshot bukti pembayaran dan kembali ke aplikasi, gambar di clipboard otomatis dibaca dan nominalnya langsung dicatat ke transaksi hari ini.
                   </p>
                   <p>
                     2. <strong>Bagikan (Share) ke Dompt:</strong> Dari popup hasil screenshot HP, pilih <strong>Bagikan ➔ Dompt.</strong> untuk langsung mencatat nominal tanpa buka galeri.
@@ -615,10 +764,10 @@ export function ScanReceiptModal() {
                   </div>
                   <div>
                     <h4 className="text-sm font-extrabold text-gray-900 dark:text-white">
-                      Deteksi dari Clipboard Gambar Terakhir
+                      Deteksi dari Screenshot Terakhir
                     </h4>
                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 max-w-xs mx-auto mt-1">
-                      Ketuk tombol di bawah untuk langsung membaca screenshot terakhir dari clipboard HP Anda & mencatat nominalnya otomatis.
+                      Ketuk tombol di bawah untuk langsung membaca screenshot terakhir dari HP Anda & mencatat nominalnya ke Transaksi Hari Ini.
                     </p>
                   </div>
 
@@ -630,7 +779,7 @@ export function ScanReceiptModal() {
                       className="w-full py-3.5 px-4 bg-[#D4F826] hover:bg-[#c6ec15] text-black font-black text-xs rounded-2xl shadow-sm transition-transform active:scale-95 cursor-pointer flex items-center justify-center gap-2"
                     >
                       <Clipboard size={16} strokeWidth={2.5} />
-                      <span>Deteksi dari Clipboard Sekarang</span>
+                      <span>Deteksi Screenshot Sekarang</span>
                     </button>
 
                     <div className="grid grid-cols-2 gap-2 pt-1">

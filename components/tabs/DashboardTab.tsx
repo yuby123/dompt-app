@@ -40,6 +40,10 @@ import {
   parseLocalDay,
   resolveEffectivePeriodIncome,
 } from '@/lib/budgetUtils';
+import {
+  detectIsAndroidDevice,
+  isAndroidAutoSsEnabled,
+} from '../ClipboardScreenshotDetector';
 
 export function DashboardTab() {
   const {
@@ -73,6 +77,19 @@ export function DashboardTab() {
 
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
   const [confirmDeleteTxId, setConfirmDeleteTxId] = useState<string | null>(null);
+  const [isAndroid, setIsAndroid] = useState<boolean>(false);
+  const [androidAutoSsOn, setAndroidAutoSsOn] = useState<boolean>(true);
+
+  useEffect(() => {
+    setIsAndroid(detectIsAndroidDevice());
+    setAndroidAutoSsOn(isAndroidAutoSsEnabled());
+    const onAutoSsChange = (e: Event) => {
+      const custom = e as CustomEvent<{ enabled: boolean }>;
+      setAndroidAutoSsOn(Boolean(custom.detail?.enabled));
+    };
+    window.addEventListener('dompt-android-autoss-changed', onAutoSsChange);
+    return () => window.removeEventListener('dompt-android-autoss-changed', onAutoSsChange);
+  }, []);
 
   useEffect(() => {
     if (!confirmDeleteTxId) return;
@@ -683,7 +700,7 @@ export function DashboardTab() {
       {/* 1. Header Greeting + Active Period Navigation */}
       <div className="pt-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h1 className="font-display text-2xl sm:text-[28px] font-extrabold text-slate-900 dark:text-white tracking-tight leading-none truncate">
               Ringkasan Utama
             </h1>
@@ -691,6 +708,20 @@ export function DashboardTab() {
               <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold whitespace-nowrap shrink-0">
                 · Cloud Aktif
               </span>
+            )}
+            {isAndroid && (
+              <button
+                type="button"
+                onClick={() => openScanModal()}
+                className={`text-[11px] font-bold px-2 py-0.5 rounded-lg border transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  androidAutoSsOn
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-[#D4F826] border-emerald-500/30 dark:border-[#D4F826]/30'
+                    : 'bg-slate-100 dark:bg-white/[0.06] text-slate-500 dark:text-slate-400 border-slate-200 dark:border-white/10'
+                }`}
+                title="Pendeteksi Screenshot Otomatis Android"
+              >
+                {androidAutoSsOn ? '📱 Auto-SS Aktif' : '📱 Auto-SS Off'}
+              </button>
             )}
           </div>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1 truncate">

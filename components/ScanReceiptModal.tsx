@@ -616,24 +616,6 @@ export function ScanReceiptModal() {
                   {androidAutoEnabled ? 'ON' : 'OFF'}
                 </button>
               </div>
-
-              {typeof window !== 'undefined' && 'showDirectoryPicker' in window && (
-                <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-slate-300">
-                    {isFolderConnected
-                      ? '✅ Folder Screenshots Android terhubung otomatis'
-                      : 'Hubungkan folder Screenshots agar terdeteksi tanpa perlu salin clipboard:'}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleConnectScreenshotsFolder}
-                    className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-[11px] font-bold text-[#D4F826] flex items-center gap-1.5 shrink-0 cursor-pointer"
-                  >
-                    <FolderOpen size={13} />
-                    <span>{isFolderConnected ? 'Ganti Folder' : 'Hubungkan Folder SS'}</span>
-                  </button>
-                </div>
-              )}
             </div>
 
             {/* Guide Info Banner */}

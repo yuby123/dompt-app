@@ -3,14 +3,13 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-   X,
+  X,
   Delete,
   Check,
   Sparkles,
   AlertTriangle,
   CheckCircle2,
   Clipboard,
-  FolderOpen,
   FileImage,
   RefreshCw,
 } from 'lucide-react';
@@ -33,11 +32,8 @@ import {
   setPendingScreenshotForModal,
   resolveWalletAndCategoryFromOcr,
   readLatestImageFromClipboard,
-  readLatestScreenshotFromConnectedFolder,
   computeScreenshotFingerprint,
   markScreenshotProcessed,
-  getActiveScreenshotsDirHandle,
-  setActiveScreenshotsDirHandle,
 } from './ClipboardScreenshotDetector';
 
 function AddTransactionForm() {
@@ -133,11 +129,8 @@ function AddTransactionForm() {
   const [detectedSourceApp, setDetectedSourceApp] = useState<string | null>(null);
   const [screenshotError, setScreenshotError] = useState<string | null>(null);
   const [awaitingTouchUnlock, setAwaitingTouchUnlock] = useState<boolean>(false);
-  const [isFolderConnected, setIsFolderConnected] = useState<boolean>(() =>
-    Boolean(getActiveScreenshotsDirHandle())
-  );
   const quickFileInputRef = useRef<HTMLInputElement | null>(null);
-  const isUnlockingRef = useRef<boolean>(false);
+  const pasteCatcherRef = useRef<HTMLDivElement | null>(null);
   const currentScreenshotFpRef = useRef<string>('');
   const hasDetectedInModalRef = useRef<boolean>(false);
 
@@ -245,68 +238,76 @@ function AddTransactionForm() {
   };
 
   /**
-   * Reads screenshot from Clipboard or Connected Folder.
-   * IMPORTANT: Calls readLatestImageFromClipboard FIRST so Chrome Android's synchronous
-   * user activation gesture on 'click' is never lost!
+   * Reads the latest screenshot from the Android Clipboard.
+   * Uses the single-flight mutex in readLatestImageFromClipboard(true) so large screenshot
+   * decoding is never interrupted.
    */
-  const tryUnlockAndReadScreenshot = async (
-    openPickerIfEmpty = false,
-    ignoreProcessedHash = false
-  ) => {
-    if (isUnlockingRef.current || isAnalyzingScreenshot) return false;
-    isUnlockingRef.current = true;
-    try {
-      // 1. Check Android Clipboard FIRST (synchronous user gesture preservation)
-      const clipImg = await readLatestImageFromClipboard(ignoreProcessedHash);
-      if (clipImg?.base64) {
-        await analyzeScreenshotInModal(clipImg.base64, clipImg.mimeType);
-        return true;
-      }
+  const tryUnlockAndReadScreenshot = async (showNoticeIfEmpty = false) => {
+    if (isAnalyzingScreenshot) return false;
 
-      // 2. Check connected Android Screenshots folder (with permission prompt unlocked by click gesture)
-      const folderImg = await readLatestScreenshotFromConnectedFolder(true, ignoreProcessedHash);
-      if (folderImg?.base64) {
-        setIsFolderConnected(Boolean(getActiveScreenshotsDirHandle()));
-        await analyzeScreenshotInModal(folderImg.base64, folderImg.mimeType);
-        return true;
-      }
-
-      // 3. If user explicitly clicked the button and both clipboard & folder were empty,
-      // open the image picker right away so they don't hit a dead-end toast!
-      if (openPickerIfEmpty) {
-        quickFileInputRef.current?.click();
-      }
-      return false;
-    } finally {
-      isUnlockingRef.current = false;
+    // 1. Check Android Clipboard (always ignoreProcessedHash = true when modal is open & empty!)
+    const clipImg = await readLatestImageFromClipboard(true);
+    if (clipImg?.base64) {
+      await analyzeScreenshotInModal(clipImg.base64, clipImg.mimeType);
+      return true;
     }
+
+    // 2. Also try programmatic paste on our hidden contentEditable paste catcher
+    try {
+      if (pasteCatcherRef.current && typeof document.execCommand === 'function') {
+        pasteCatcherRef.current.focus();
+        document.execCommand('paste');
+      }
+    } catch {
+      // Ignore execCommand errors
+    }
+
+    if (showNoticeIfEmpty && !hasDetectedInModalRef.current) {
+      addToast(
+        'Tempel Screenshot dari Keyboard atau Pilih SS',
+        'Ketuk ikon gambar screenshot di baris atas keyboard HP Anda atau pilih gambar lewat tombol Pilih SS.',
+        'info'
+      );
+    }
+    return false;
   };
 
-  const handleConnectFolderInModal = async (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (typeof window !== 'undefined' && 'showDirectoryPicker' in window) {
-      try {
-        const dirHandle = await (window as any).showDirectoryPicker({
-          mode: 'read',
-        });
-        if (dirHandle) {
-          setActiveScreenshotsDirHandle(dirHandle);
-          setIsFolderConnected(true);
-          addToast(
-            'Folder Screenshots Terhubung!',
-            'Setiap Anda screenshot di SeaBank/m-Banking lalu masuk ke Dompt, nominal & keterangan langsung terisi otomatis.',
-            'success'
-          );
-          const folderImg = await readLatestScreenshotFromConnectedFolder(true, true);
-          if (folderImg?.base64) {
-            await analyzeScreenshotInModal(folderImg.base64, folderImg.mimeType);
+  const handlePasteFromElement = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    const files = e.clipboardData?.files;
+
+    if (files && files.length > 0) {
+      for (let i = 0; i < files.length; i++) {
+        if (files[i].type.startsWith('image/')) {
+          e.preventDefault();
+          const f = files[i];
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const b64 = ev.target?.result as string;
+            if (b64) analyzeScreenshotInModal(b64, f.type || 'image/jpeg');
+          };
+          reader.readAsDataURL(f);
+          return;
+        }
+      }
+    }
+
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) {
+          const blob = items[i].getAsFile();
+          if (blob) {
+            e.preventDefault();
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+              const b64 = ev.target?.result as string;
+              if (b64) analyzeScreenshotInModal(b64, blob.type || 'image/jpeg');
+            };
+            reader.readAsDataURL(blob);
+            return;
           }
         }
-      } catch {
-        // User cancelled directory picker
       }
-    } else {
-      quickFileInputRef.current?.click();
     }
   };
 
@@ -327,33 +328,48 @@ function AddTransactionForm() {
     e.target.value = '';
   };
 
-  // Consume PendingScreenshotForModal on mount, listen to 'dompt-pending-ss-modal',
-  // and run active polling inside the modal if returning from an external app (e.g. SeaBank)
+  // Sequential async polling loop when AddTransactionModal opens (never aborts in-flight clipboard reads!)
   useEffect(() => {
     if (editingTransaction) return;
 
     let cancelled = false;
-    const pollTimers: ReturnType<typeof setTimeout>[] = [];
+    let isLoopRunning = false;
 
-    const startModalPolling = () => {
-      setIsPollingScreenshot(true);
-      const delays = [80, 350, 750, 1250, 1900, 2700];
-      delays.forEach((delay, idx) => {
-        const t = setTimeout(async () => {
-          if (cancelled || hasDetectedInModalRef.current) return;
-          const found = await tryUnlockAndReadScreenshot(false, false);
-          if (found || hasDetectedInModalRef.current) {
-            setIsPollingScreenshot(false);
-            return;
-          }
-          // After 1.25s if Android blocked silent read without touch, show the 1-tap action bar while still polling up to 2.7s
-          if (idx >= 3 && !hasDetectedInModalRef.current) {
-            setIsPollingScreenshot(false);
-            setAwaitingTouchUnlock(true);
-          }
-        }, delay);
-        pollTimers.push(t);
-      });
+    const runSequentialClipboardLoop = async (returnedFromExternalApp: boolean) => {
+      if (isLoopRunning || hasDetectedInModalRef.current) return;
+      isLoopRunning = true;
+
+      if (returnedFromExternalApp) {
+        setIsPollingScreenshot(true);
+      }
+
+      const maxAttempts = returnedFromExternalApp ? 10 : 3;
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (cancelled || hasDetectedInModalRef.current) break;
+
+        const found = await tryUnlockAndReadScreenshot(false);
+        if (found || hasDetectedInModalRef.current) {
+          setIsPollingScreenshot(false);
+          isLoopRunning = false;
+          return;
+        }
+
+        // After 4 full sequential attempts, show the 1-tap clipboard button while continuing to poll in background!
+        if (returnedFromExternalApp && attempt === 3 && !hasDetectedInModalRef.current && !cancelled) {
+          setIsPollingScreenshot(false);
+          setAwaitingTouchUnlock(true);
+        }
+
+        await new Promise((r) => setTimeout(r, 420));
+      }
+
+      if (!cancelled && !hasDetectedInModalRef.current) {
+        setIsPollingScreenshot(false);
+        if (returnedFromExternalApp) {
+          setAwaitingTouchUnlock(true);
+        }
+      }
+      isLoopRunning = false;
     };
 
     const consumePending = async () => {
@@ -375,12 +391,11 @@ function AddTransactionForm() {
           return;
         }
         if (pending.isPollingNewScreenshot || pending.awaitingTouchUnlock) {
-          startModalPolling();
+          runSequentialClipboardLoop(true);
           return;
         }
       } else if (!hasDetectedInModalRef.current) {
-        // Also do a silent quick check when user opens Catat Transaksi manually in case they have a fresh SS
-        tryUnlockAndReadScreenshot(false, false);
+        runSequentialClipboardLoop(false);
       }
     };
 
@@ -389,17 +404,11 @@ function AddTransactionForm() {
     const handlePendingEvent = () => {
       consumePending();
     };
-    const handleFolderChanged = () => {
-      setIsFolderConnected(Boolean(getActiveScreenshotsDirHandle()));
-    };
 
     window.addEventListener('dompt-pending-ss-modal', handlePendingEvent);
-    window.addEventListener('dompt-android-folder-changed', handleFolderChanged);
     return () => {
       cancelled = true;
-      pollTimers.forEach((t) => clearTimeout(t));
       window.removeEventListener('dompt-pending-ss-modal', handlePendingEvent);
-      window.removeEventListener('dompt-android-folder-changed', handleFolderChanged);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingTransaction]);
@@ -815,26 +824,54 @@ function AddTransactionForm() {
 
   return (
     <div
+      onPaste={handlePasteFromElement}
       onClick={() => {
-        // Use onClick (trusted user activation in Chrome Android) instead of onPointerDown
-        if (
-          (awaitingTouchUnlock || isPollingScreenshot) &&
-          !isAnalyzingScreenshot &&
-          !detectedSourceApp &&
-          !amountStr
-        ) {
-          tryUnlockAndReadScreenshot(false, false);
+        if (!isAnalyzingScreenshot && !detectedSourceApp && !amountStr) {
+          tryUnlockAndReadScreenshot(false);
         }
       }}
       className="w-full max-w-lg landscape:max-w-xl max-h-[92vh] landscape:max-h-[96vh] flex flex-col bg-white dark:bg-[#11131E] rounded-t-3xl sm:rounded-3xl landscape:rounded-3xl shadow-2xl overflow-hidden border border-slate-200/80 dark:border-white/10"
     >
-      {/* Hidden Quick Screenshot Picker */}
+      {/* Hidden Quick Screenshot Picker & Rich ContentEditable Paste Receiver for Android */}
       <input
         ref={quickFileInputRef}
         type="file"
         accept="image/*"
         onChange={handleQuickFileChange}
         className="hidden"
+      />
+      <div
+        ref={pasteCatcherRef}
+        contentEditable
+        suppressContentEditableWarning
+        onPaste={handlePasteFromElement}
+        onInput={(e) => {
+          const el = e.currentTarget;
+          const img = el.querySelector('img');
+          if (img?.src) {
+            const src = img.src;
+            el.innerHTML = '';
+            if (src.startsWith('data:image/')) {
+              analyzeScreenshotInModal(src, 'image/jpeg');
+            } else if (src.startsWith('blob:')) {
+              fetch(src)
+                .then((r) => r.blob())
+                .then((blob) => {
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    const b64 = ev.target?.result as string;
+                    if (b64) analyzeScreenshotInModal(b64, blob.type || 'image/jpeg');
+                  };
+                  reader.readAsDataURL(blob);
+                })
+                .catch(() => {});
+            }
+          } else {
+            el.innerHTML = '';
+          }
+        }}
+        className="sr-only"
+        aria-hidden="true"
       />
 
       {/* Header */}
@@ -909,33 +946,47 @@ function AddTransactionForm() {
       <div className="overflow-y-auto flex-1 p-5 space-y-4 no-scrollbar">
         {/* Polling / AI Screenshot Analyzing Banner */}
         {(isAnalyzingScreenshot || isPollingScreenshot) && (
-          <div className="p-3.5 rounded-2xl bg-teal-950/90 text-white border border-teal-500/40 flex items-center gap-3 shadow-md">
-            {screenshotPreview ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={screenshotPreview}
-                alt="Screenshot"
-                className="w-11 h-11 rounded-xl object-cover border border-white/20 shrink-0"
-              />
-            ) : (
-              <div className="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-400/40 flex items-center justify-center shrink-0">
-                <Sparkles size={18} className="text-[#D4F826] animate-spin" />
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs font-extrabold text-[#D4F826]">
+          <div className="p-3.5 rounded-2xl bg-teal-950/90 text-white border border-teal-500/40 flex items-center justify-between gap-3 shadow-md">
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              {screenshotPreview ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={screenshotPreview}
+                  alt="Screenshot"
+                  className="w-11 h-11 rounded-xl object-cover border border-white/20 shrink-0"
+                />
+              ) : (
+                <div className="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-400/40 flex items-center justify-center shrink-0">
+                  <Sparkles size={18} className="text-[#D4F826] animate-spin" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-extrabold text-[#D4F826]">
+                    {isAnalyzingScreenshot
+                      ? 'Mendeteksi Nominal & Keterangan Screenshot...'
+                      : 'Membaca Clipboard Screenshot Terakhir...'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-teal-100/90 truncate mt-0.5">
                   {isAnalyzingScreenshot
-                    ? 'Mendeteksi Nominal & Keterangan Screenshot...'
-                    : 'Mencari Screenshot Transaksi Terbaru...'}
-                </span>
+                    ? screenshotStepText
+                    : 'Ketuk tombol di samping jika Chrome meminta izin baca clipboard...'}
+                </p>
               </div>
-              <p className="text-[11px] text-teal-100/90 truncate mt-0.5">
-                {isAnalyzingScreenshot
-                  ? screenshotStepText
-                  : 'Membaca otomatis dari folder Screenshots & clipboard HP Anda...'}
-              </p>
             </div>
+            {!isAnalyzingScreenshot && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  tryUnlockAndReadScreenshot(true);
+                }}
+                className="px-3 py-2 rounded-xl bg-[#D4F826] text-slate-950 font-black text-xs shrink-0 cursor-pointer"
+              >
+                Tempel SS
+              </button>
+            )}
           </div>
         )}
 
@@ -977,54 +1028,32 @@ function AddTransactionForm() {
           </div>
         )}
 
-        {/* One-Time Folder Connect / Instant Unlock Banner when Android OS didn't put SS in clipboard */}
+        {/* 1-Tap Clipboard Unlock Banner (Only shown if Chrome Android blocked background clipboard read without touch) */}
         {!editingTransaction &&
           !isAnalyzingScreenshot &&
           !isPollingScreenshot &&
           !detectedSourceApp &&
           awaitingTouchUnlock && (
-            <div className="p-3.5 rounded-2xl bg-slate-900 text-white border border-[#D4F826]/40 space-y-2.5 shadow-md">
-              <div className="min-w-0">
+            <div className="p-3.5 rounded-2xl bg-slate-900 text-white border border-[#D4F826]/40 flex items-center justify-between gap-3 shadow-md">
+              <div className="min-w-0 flex-1">
                 <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#D4F826] text-slate-950">
-                  {isFolderConnected
-                    ? 'Ketuk 1x untuk Membaca Screenshot Terakhir'
-                    : 'Aktifkan Auto-Deteksi Folder Screenshots (Cukup 1x)'}
+                  Screenshot Terdeteksi di Clipboard
                 </span>
-                <p className="text-[11px] text-slate-200 mt-1.5 leading-snug">
-                  {isFolderConnected
-                    ? 'Ketuk tombol di bawah untuk langsung memuat nominal & keterangan dari folder Screenshots Anda:'
-                    : 'Di HP Samsung/Android, hasil screenshot disimpan ke folder DCIM/Screenshots (bukan clipboard). Hubungkan folder Screenshots 1x saja agar setiap SS SeaBank berikutnya otomatis terisi saat masuk aplikasi!'}
+                <p className="text-[11px] text-slate-200 mt-1 leading-snug">
+                  Ketuk tombol di samping untuk langsung mengisi nominal & keterangan dari clipboard terakhir:
                 </p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {typeof window !== 'undefined' &&
-                  'showDirectoryPicker' in window &&
-                  !isFolderConnected && (
-                    <button
-                      type="button"
-                      onClick={handleConnectFolderInModal}
-                      className="flex-1 py-2.5 px-3 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-                    >
-                      <FolderOpen size={14} strokeWidth={2.5} />
-                      <span>Hubungkan Folder Screenshots (1x Selamanya)</span>
-                    </button>
-                  )}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    tryUnlockAndReadScreenshot(true, true);
-                  }}
-                  className={`${
-                    isFolderConnected || !('showDirectoryPicker' in (typeof window !== 'undefined' ? window : {}))
-                      ? 'flex-1 bg-[#D4F826] hover:bg-[#c6ec15] text-slate-950 font-black'
-                      : 'bg-white/10 hover:bg-white/15 text-white font-bold'
-                  } py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer`}
-                >
-                  <Clipboard size={14} strokeWidth={2.3} />
-                  <span>{isFolderConnected ? 'Muat Screenshot Terbaru Sekarang' : 'Ambil SS Terakhir'}</span>
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  tryUnlockAndReadScreenshot(true);
+                }}
+                className="py-2.5 px-3.5 rounded-xl bg-[#D4F826] hover:bg-[#c6ec15] text-slate-950 font-black text-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
+              >
+                <Clipboard size={14} strokeWidth={2.5} />
+                <span>Baca Clipboard</span>
+              </button>
             </div>
           )}
 
@@ -1101,7 +1130,6 @@ function AddTransactionForm() {
               type="text"
               inputMode="numeric"
               autoComplete="off"
-              autoFocus
               placeholder="0"
               value={currentAmount > 0 ? formatNumberOnly(currentAmount) : ''}
               onChange={handleAmountInputChange}
